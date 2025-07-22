@@ -10,8 +10,29 @@ library(tidyverse)
 ```
 
 ```{r}
-data <- read_csv("sorghum-rye/data/processed/processed_flux_data.csv")
+data <- read_csv("sorghum-rye/data/processed_flux_data.csv")
 ```
+
+Be sure to remove leading zero from plot, this should have been done in the orginal
+processing script, but this is here just in case. Then we will re-join the metadata
+```{r}
+data <- data %>%
+    mutate(plot = as.factor(sub("^0+", "", as.character(plot))))
+```
+
+```{r}
+metadata <- read_csv("sorghum-rye/data/metadata/plot_treatments.csv",
+                     show_col_types = FALSE) %>%
+  clean_names() %>%
+  mutate(plot = as.factor(plot))
+
+compare_df_cols_same(data, metadata)
+compare_df_cols(data, metadata)
+
+# Join metadata to flux data
+data <- left_join(data, metadata, by = c("plot", "date"))
+```
+
 
 ```{r}
 library(tidyverse)
@@ -31,7 +52,7 @@ treatment_colors <- c(
 # Format data
 data <- data %>%
   mutate(
-    treatment = factor(treatment, levels = c("Sorghum", "Sorghum + Rye", "Corn", "Soy")),
+    treatment = factor(treatment.y, levels = c("Sorghum", "Sorghum + Rye", "Corn", "Soy")),
     day = ymd(date),
     location = as.character(location),
     plot = as.character(plot)
@@ -40,16 +61,24 @@ data <- data %>%
 # Y-axis label
 flux_label <- expression("N"[2]*"O-N Flux (g N ha"^{-1}*" day"^{-1}*")")
 
-# Plot
-p <- ggplot(data, aes(x = day, y = selected_flux, fill = treatment)) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.8, width = 0.6, position = position_dodge(0.7)) +
+data <- data %>%
+  mutate(day_factor = factor(day, levels = sort(unique(day))),
+         day_label = format(day, "%b %d"))
+
+# Plot using interaction(date, treatment) to align boxplots and points
+p <- ggplot(data, aes(x = interaction(day, treatment.y), y = selected_flux, fill = treatment.y)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8, width = 0.6) +
   geom_jitter(
-  aes(color = treatment),
-  size = 4,
-  alpha = 0.9,
-  position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.7)) +
+    aes(color = treatment.y),
+    size = 3,
+    alpha = 0.9,
+    width = 0.2
+  ) +
   scale_y_continuous(name = flux_label) +
-  scale_x_date(name = "Measurement Date", date_breaks = "1 week", date_labels = "%b %d") +
+  scale_x_discrete(
+    name = "Measurement Date",
+    labels = function(x) format(as.Date(sapply(strsplit(as.character(x), "\\."), `[`, 1)), "%b %d")
+  ) +
   scale_fill_manual(values = treatment_colors, name = "Treatment") +
   scale_color_manual(values = treatment_colors, guide = "none") +
   theme_minimal(base_size = 14) +
@@ -59,7 +88,7 @@ p <- ggplot(data, aes(x = day, y = selected_flux, fill = treatment)) +
     legend.position = "top",
     legend.title = element_text(face = "bold"),
     plot.title = element_text(face = "bold", size = 16)
-  ) 
+  )
 
 print(p)
 ```

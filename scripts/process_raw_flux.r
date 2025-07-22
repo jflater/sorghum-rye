@@ -38,12 +38,17 @@ data <- data %>%
 # Here is the processed data, before proceding, check if any dates already exist in processed data
 #sorghum-rye/data/processed/processed_flux_data.csv
 
-already_done <- read_csv("sorghum-rye/data/processed/processed_flux_data.csv",
-                        show_col_types = FALSE) 
+already_done <- read_csv("sorghum-rye/data/processed_flux_data.csv",
+                        show_col_types = FALSE) %>%
+                        mutate(plot = as.factor(plot))
 
 # Remove already processed dates from current data
 data <- data %>%
   filter(!(plot %in% already_done$plot & date %in% already_done$date))
+
+# Remove leading zeros from plot
+data <- data %>%
+    mutate(plot = as.factor(sub("^0+", "", as.character(plot))))
 
 # metadata
 metadata <- read_csv("sorghum-rye/data/metadata/plot_treatments.csv",
@@ -77,8 +82,13 @@ nmols_to_grams_hectare_day <- function(nmols) {
 data <- data %>%
   mutate(flux_g_n_ha_day = nmols_to_grams_hectare_day(selected_flux))
 
-# Save processed data
-write_csv(data, "sorghum-rye/data/processed/processed_flux_data.csv")
+# append to processed data and save as new processed data file
+updated <- bind_rows(already_done, data)
+
+# Save processed data, add date to filename
+write_csv(updated, paste0("sorghum-rye/data/processed_flux_data_",
+                           Sys.Date(), ".csv"))
+write_csv(updated, "sorghum-rye/data/processed_flux_data.csv")
 
 # Move input files to archive
 file.rename(from = file_list, to = file.path("sorghum-rye/data/archive", basename(file_list)))
