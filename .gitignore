@@ -1,0 +1,14 @@
+# Data
+/data/raw/
+/data/processed/
+!data/metadata/README.md
+
+# R and Quarto
+.Rhistory
+.RData
+__pycache__/
+/*.html
+/_site/
+
+# VS Code
+.vscode/
