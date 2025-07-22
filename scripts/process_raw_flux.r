@@ -35,6 +35,16 @@ data <- data %>%
                         format = "%Y/%m/%d"),
          plot = as.factor(plot))
 
+# Here is the processed data, before proceding, check if any dates already exist in processed data
+#sorghum-rye/data/processed/processed_flux_data.csv
+
+already_done <- read_csv("sorghum-rye/data/processed/processed_flux_data.csv",
+                        show_col_types = FALSE) 
+
+# Remove already processed dates from current data
+data <- data %>%
+  filter(!(plot %in% already_done$plot & date %in% already_done$date))
+
 # metadata
 metadata <- read_csv("sorghum-rye/data/metadata/plot_treatments.csv",
                      show_col_types = FALSE) %>%
@@ -57,7 +67,6 @@ data <- data %>%
 
 # Convert flux to g n ha per day
 nmols_to_grams_hectare_day <- function(nmols) {
-  print("Converting nmols n2o per meter squared per second to grams per hectare per day of nitorgen")
   mols <- nmols / 1e9
   grams_n <- mols * 28.0134
   grams_per_m2_per_day <- grams_n * 86400
@@ -70,3 +79,6 @@ data <- data %>%
 
 # Save processed data
 write_csv(data, "sorghum-rye/data/processed/processed_flux_data.csv")
+
+# Move input files to archive
+file.rename(from = file_list, to = file.path("sorghum-rye/data/archive", basename(file_list)))

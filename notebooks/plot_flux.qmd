@@ -1,0 +1,67 @@
+---
+title: "Untitled"
+format: html
+---
+
+The data lives in this folder and this .csv file: sorghum-rye/data/processed
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+data <- read_csv("sorghum-rye/data/processed/processed_flux_data.csv")
+```
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(MetBrewer)
+
+colors <- met.brewer("Hokusai3", 4)
+
+# Custom treatment colors (Hokusai3-inspired)
+treatment_colors <- c(
+  "Sorghum"        = "#D8D97A",  # yellowish green
+  "Sorghum + Rye"  = "#95C36E",  # darker green
+  "Corn"           = "#5a97c1",  # earthy yellow
+  "Soy"            = "#295384"   # muted blue-green
+)
+
+# Format data
+data <- data %>%
+  mutate(
+    treatment = factor(treatment, levels = c("Sorghum", "Sorghum + Rye", "Corn", "Soy")),
+    day = ymd(date),
+    location = as.character(location),
+    plot = as.character(plot)
+  )
+
+# Y-axis label
+flux_label <- expression("N"[2]*"O-N Flux (g N ha"^{-1}*" day"^{-1}*")")
+
+# Plot
+p <- ggplot(data, aes(x = day, y = selected_flux, fill = treatment)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8, width = 0.6, position = position_dodge(0.7)) +
+  geom_jitter(
+  aes(color = treatment),
+  size = 4,
+  alpha = 0.9,
+  position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.7)) +
+  scale_y_continuous(name = flux_label) +
+  scale_x_date(name = "Measurement Date", date_breaks = "1 week", date_labels = "%b %d") +
+  scale_fill_manual(values = treatment_colors, name = "Treatment") +
+  scale_color_manual(values = treatment_colors, guide = "none") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank(),
+    legend.position = "top",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", size = 16)
+  ) 
+
+print(p)
+```
+
