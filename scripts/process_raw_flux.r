@@ -3,6 +3,7 @@ library("readr")
 library("dplyr")
 library("purrr")
 library("janitor")
+
 # Path to .csv files exported from LI-COR software
 data_path <- "sorghum-rye/data/processed/"
 
@@ -11,8 +12,6 @@ file_list <- list.files(path = data_path, pattern = "*.csv", full.names = TRUE)
 file_list
 
 # Read in all .csv files, skipping the first row and merging the second and third rows as the header
-
-
 custom_read_csv <- function(file) {
   # Read first three rows
   header_rows <- readr::read_csv(file, n_max = 3, col_names = FALSE, show_col_types = FALSE)
@@ -55,6 +54,19 @@ data <- data %>%
     fn2o_dry_nmol_1m_2s_1,
     fn2o_dry_lin_nmol_1m_2s_1)
     )
+
+# Convert flux to g n ha per day
+nmols_to_grams_hectare_day <- function(nmols) {
+  print("Converting nmols n2o per meter squared per second to grams per hectare per day of nitorgen")
+  mols <- nmols / 1e9
+  grams_n <- mols * 28.0134
+  grams_per_m2_per_day <- grams_n * 86400
+  grams_per_hectare_per_day <- grams_per_m2_per_day * 10000
+  return(grams_per_hectare_per_day)
+}
+
+data <- data %>%
+  mutate(flux_g_n_ha_day = nmols_to_grams_hectare_day(selected_flux))
 
 # Save processed data
 write_csv(data, "sorghum-rye/data/processed/processed_flux_data.csv")
