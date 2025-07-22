@@ -32,10 +32,29 @@ data <- bind_rows(flux_data) %>%
 # Separate label_number into plot and location on "_" or "-"
 data <- data %>%
   separate(label_number, into = c("plot", "location"), sep = "[-_]") %>%
-  mutate(date = as.Date(date_time_initial_value_yyyy_mm_dd_hh_mm_ss, format = "%Y/%m/%d"))
+  mutate(date = as.Date(date_time_initial_value_yyyy_mm_dd_hh_mm_ss,
+                        format = "%Y/%m/%d"),
+         plot = as.factor(plot))
 
 # metadata
-metadata <- read_csv("sorghum-rye/data/metadata/plot_treatments.csv", show_col_types = FALSE) %>%
-  clean_names()
+metadata <- read_csv("sorghum-rye/data/metadata/plot_treatments.csv",
+                     show_col_types = FALSE) %>%
+  clean_names() %>%
+  mutate(plot = as.factor(plot))
 
-# Join data with metadata on plot and date columns
+compare_df_cols_same(data, metadata)
+compare_df_cols(data, metadata)
+
+# Join metadata to flux data
+data <- left_join(data, metadata, by = c("plot", "date"))
+
+# Select the best flux column based on r2 values
+data <- data %>%
+  mutate(selected_flux = if_else(
+    fn2o_dry_r2_number >= fn2o_dry_lin_r2_number,
+    fn2o_dry_nmol_1m_2s_1,
+    fn2o_dry_lin_nmol_1m_2s_1)
+    )
+
+# Save processed data
+write_csv(data, "sorghum-rye/data/processed/processed_flux_data.csv")
