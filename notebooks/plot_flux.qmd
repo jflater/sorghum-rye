@@ -13,7 +13,6 @@ library(tidyverse)
 data <- read_csv("sorghum-rye/data/processed/processed_flux_data.csv")
 ```
 
-
 ```{r}
 library(tidyverse)
 library(lubridate)
