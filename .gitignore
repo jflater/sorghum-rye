@@ -1,9 +1,3 @@
-# Data
-/data/raw/
-/data/processed/
-/data/archive/
-!data/metadata/README.md
-
 # R and Quarto
 .Rhistory
 .RData
