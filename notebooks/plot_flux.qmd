@@ -7,6 +7,7 @@ The data lives in this folder and this .csv file: sorghum-rye/data/processed
 
 ```{r}
 library(tidyverse)
+library(janitor)
 ```
 
 ```{r}
@@ -21,6 +22,7 @@ data <- data %>%
 ```
 
 ```{r}
+getwd()
 metadata <- read_csv("sorghum-rye/data/metadata/plot_treatments.csv",
                      show_col_types = FALSE) %>%
   clean_names() %>%
