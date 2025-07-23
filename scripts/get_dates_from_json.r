@@ -1,35 +1,45 @@
-# This script will loop through all JSON files in the data/raw folder.
-# It will then extract the dates from the JSON and write them to a CSV file.
-# The CSV file will have 4 columns - file_name, date, x, and y.
-
 library(jsonlite)
-library(tidyverse)
 library(purrr)
+library(dplyr)
+library(lubridate)
 
-# Path to JSON files
 data_path <- "sorghum-rye/data/raw/"
+file_list <- list.files(data_path, "\\.json$", full.names = TRUE)
 
-# List all .json files in the data_path directory
-file_list <- list.files(path = data_path,
-                        pattern = "*.json",
-                        full.names = FALSE)
-file_list
-
-# Function to extract dates and coordinates from a JSON file
-
-data <- fromJSON(file.path(data_path, file_list[1]))
-
-extract_dates <- function(file) {
-  json_data <- fromJSON(file)
-  # Extract relevant fields
-  data_frame <- tibble(
-    file_name = basename(file),
-    date = as.Date(json_data$measurements$date),
-    x = json_data$location$x,
-    y = json_data$location$y
-  )
-  data_frame
+extract_dates_coords <- function(fp) {
+  js <- fromJSON(fp, simplifyVector = FALSE)
+  # js$datasets is a list of length ~30; each element is a 1‑key list
+  map_dfr(js$datasets, function(ds_entry) {
+    # pull out the single key (e.g. "15_i" or "11_I")
+    ds_name <- names(ds_entry)[1]
+    ds_val  <- ds_entry[[ds_name]]
+    # now grab the REP_1 header
+    hdr <- ds_val$reps$REP_1$header
+    # parse once
+    dt <- ymd_hms(hdr$Date, tz = hdr$TimeZone)
+    tibble(
+      file       = basename(fp),
+      dataset    = ds_name,
+      datetime   = dt,
+      date       = as_date(dt),
+      latitude   = hdr$latitude,
+      longitude  = hdr$longitude
+    )
+  })
 }
 
-# lapply the function to all files and combine the results
-data <- map_dfr(file.path(data_path, file_list), extract_dates)
+all_records <- map_dfr(file_list, extract_dates_coords)
+
+# you should now see ~16 + 30 = 46 rows (or whatever your JSON counts are)
+print(all_records)
+
+
+summary_by_file <- all_records %>%
+  group_by(file, date) %>%
+  summarise(
+    mean_latitude  = mean(latitude,  na.rm = TRUE),
+    mean_longitude = mean(longitude, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(summary_by_file)
