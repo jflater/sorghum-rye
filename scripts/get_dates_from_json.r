@@ -31,7 +31,7 @@ extract_dates_coords <- function(fp) {
 all_records <- map_dfr(file_list, extract_dates_coords)
 
 # you should now see ~16 + 30 = 46 rows (or whatever your JSON counts are)
-print(all_records)
+head(all_records)
 
 
 summary_by_file <- all_records %>%
@@ -42,4 +42,5 @@ summary_by_file <- all_records %>%
     .groups = "drop"
   )
 
-print(summary_by_file)
+head(summary_by_file)
+write_csv(summary_by_file, "sorghum-rye/data/unique_dates_coords_by_file_date_flux.csv")
