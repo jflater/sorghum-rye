@@ -270,13 +270,19 @@ library(lubridate)
 
 
 # Get a smoothed line for each year (using loess)
+# rain_smooth <- rain %>%
+#   group_by(year) %>%
+#   arrange(doy) %>%
+#   mutate(
+#     smoothed_precip = as.numeric(loess(cumulative_precip ~ doy, span = 0.3)$fitted)
+#   )
+
 rain_smooth <- rain %>%
   group_by(year) %>%
   arrange(doy) %>%
   mutate(
-    smoothed_precip = as.numeric(loess(cumulative_precip ~ doy, span = 0.3)$fitted)
+    smoothed_precip = as.numeric(isoreg(doy, cumulative_precip)$yf)
   )
-
 # Now calculate the min/max range for each doy from smoothed curves, excluding 2023 and 2024 if desired
 hist_env_smooth <- rain_smooth %>%
   filter(!(year %in% c(2023, 2024))) %>%
