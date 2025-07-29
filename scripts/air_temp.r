@@ -1,9 +1,8 @@
 library(readxl)
 library(tidyverse)
+library(lubridate)
 
 gdd <- read_xlsx("sorghum-rye/data/rain/historical_rain.xlsx")
-
-colnames(gdd)
 
 gdd <- gdd %>%
   select(day, doy, gdd_50_86) %>%
@@ -15,19 +14,24 @@ gdd <- gdd %>%
   arrange(date) %>%
   mutate(cumulative_gdd = cumsum(gdd_50_86))
 
+gdd <- gdd %>%
+  mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
+
 gdd %>%
-  ggplot(aes(x = doy, y = cumulative_gdd, group = year)) +
+  ggplot(aes(x = doy_date, y = cumulative_gdd, group = year)) +
   # All years gray
-  geom_line(data = filter(gdd, !(year %in% c(2023, 2024))),
-            color = "gray",
-            size = 0.8,
-            alpha = .5) +
+  geom_line(
+    data = filter(gdd, !(year %in% c(2023, 2024))),
+    color = "gray",
+    size = 0.8,
+    alpha = .5
+  ) +
   # 2023 and 2024 colored
   geom_line(data = filter(gdd, year == 2023), color = "#E41A1C", size = 1.2) +
   geom_line(data = filter(gdd, year == 2024), color = "#377EB8", size = 1.2) +
-  scale_x_continuous(
-    breaks = seq(1, 366, by = 30),
-    labels = function(x) format(as.Date(x - 1, origin = "2000-01-01"), "%b")
+  scale_x_date(
+    date_breaks = "1 month", # Breaks at each month
+    date_labels = "%b" # Label as abbreviated month names
   ) +
   labs(
     x = "Month",
@@ -37,14 +41,14 @@ gdd %>%
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 mean_gdd <- gdd %>%
-  group_by(doy) %>%
+  group_by(doy_date) %>%
   summarize(mean_gdd_d = mean(cumulative_gdd, na.rm = TRUE)) %>%
   mutate(year = "Mean") %>%
-  filter(doy != 366)
+  filter(doy_date != "2000-12-31")
 
 hist_env <- gdd %>%
   filter(!(year %in% c(2023, 2024))) %>%
-  group_by(doy) %>%
+  group_by(doy_date) %>%
   summarize(
     min_gdd = min(gdd_50_86, na.rm = TRUE),
     max_gdd = max(gdd_50_86, na.rm = TRUE)
