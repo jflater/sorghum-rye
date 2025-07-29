@@ -92,16 +92,16 @@ gdd_plot
 
 #### Version 2
 # Exclude current years from the envelope
-hist_env <- rain %>%
+hist_env <- gdd %>%
   filter(!(year %in% c(2023, 2024))) %>%
   group_by(doy_date) %>%
   summarize(
-    min_cum = min(cumulative_precip, na.rm = TRUE),
-    max_cum = max(cumulative_precip, na.rm = TRUE)
+    min_cum = min(cumulative_gdd, na.rm = TRUE),
+    max_cum = max(cumulative_gdd, na.rm = TRUE)
   )
 
-rain_2023 <- filter(rain, year == 2023)
-rain_2024 <- filter(rain, year == 2024)
+gdd_2023 <- filter(gdd, year == 2023)
+gdd_2024 <- filter(gdd, year == 2024)
 
 ggplot() +
   # Shaded region for historical envelope
@@ -112,14 +112,14 @@ ggplot() +
   ) +
   # 2023 solid line
   geom_line(
-    data = rain_2023,
-    aes(x = doy_date, y = cumulative_precip),
+    data = gdd_2023,
+    aes(x = doy_date, y = cumulative_gdd),
     color = "#E41A1C", size = 1.2, linetype = "solid"
   ) +
   # 2024 dashed line
   geom_line(
-    data = rain_2024,
-    aes(x = doy_date, y = cumulative_precip),
+    data = gdd_2024,
+    aes(x = doy_date, y = cumulative_gdd),
     color = "#377EB8", size = 1.2, linetype = "dashed"
   ) +
   scale_x_date(
@@ -143,7 +143,7 @@ ggplot() +
     values = c("2023" = "solid", "2024" = "dashed")
   )
 
-rain_highlight <- rain %>%
+gdd_highlight <- gdd %>%
   filter(year %in% c(2023, 2024)) %>%
   mutate(year = as.character(year))
 
@@ -154,8 +154,8 @@ ggplot() +
     fill = "gray80", alpha = 0.6
   ) +
   geom_line(
-    data = rain_highlight,
-    aes(x = doy_date, y = cumulative_precip, color = year, linetype = year),
+    data = gdd_highlight,
+    aes(x = doy_date, y = cumulative_gdd, color = year, linetype = year),
     size = 1.2
   ) +
   scale_color_manual(
@@ -175,7 +175,7 @@ ggplot() +
   labs(
     title = "Cumulative Rainfall: Historical Range vs. Recent Years",
     x = "Day of Year",
-    y = "Cumulative Precipitation (mm)"
+    y = "Cumulative Growing Degree Days (GDD)"
   ) +
   theme_minimal() +
   theme(
@@ -183,27 +183,27 @@ ggplot() +
     legend.position = "top"
   )
 
-mean_cum <- rain %>%
+mean_cum <- gdd %>%
   filter(!(year %in% c(2023, 2024))) %>% # use only historical for mean
   group_by(doy_date) %>%
-  summarize(cumulative_precip = mean(cumulative_precip, na.rm = TRUE)) %>%
+  summarize(cumulative_gdd = mean(cumulative_gdd, na.rm = TRUE)) %>%
   mutate(year = "Mean") %>%
   filter(doy_date != "2000-12-31")
 
-rain_highlight <- rain %>%
+gdd_highlight <- gdd %>%
   filter(year %in% c(2023, 2024)) %>%
   mutate(year = as.character(year)) %>%
   bind_rows(mean_cum)
 
-rain_plot_v2 <- ggplot() +
+gdd_plot_v2 <- ggplot() +
   geom_ribbon(
     data = hist_env,
     aes(x = doy_date, ymin = min_cum, ymax = max_cum),
     fill = "gray80", alpha = 0.6
   ) +
   geom_line(
-    data = rain_highlight,
-    aes(x = doy_date, y = cumulative_precip, color = year, linetype = year),
+    data = gdd_highlight,
+    aes(x = doy_date, y = cumulative_gdd, color = year, linetype = year),
     size = 1.2
   ) +
   scale_color_manual(
@@ -238,7 +238,7 @@ rain_plot_v2 <- ggplot() +
   ) +
   labs(
     x = "Day of Year",
-    y = "Cumulative Precipitation (mm)"
+    y = "Cumulative Growing Degree Days (GDD)"
   ) +
   theme_minimal() +
   theme(
@@ -246,4 +246,22 @@ rain_plot_v2 <- ggplot() +
     legend.position = "top"
   )
 
-rain_plot_v2
+gdd_plot_v2
+
+# Extract the legend from one of the plots (e.g., gdd_plot_v2)
+legend <- get_legend(
+  gdd_plot_v2 # Ensure the legend is at the top
+)
+
+# Combine the legend and the plots
+combined_plot_with_legend <- plot_grid(
+  legend, # Add the legend at the top
+  plot_grid(rain_plot_v2, gdd_plot_v2,
+    ncol = 2, labels = c("A", "B")
+  ), # Combine the plots
+  ncol = 1, # Arrange in a single column
+  rel_heights = c(0.1, 1) # Adjust the relative height of the legend and plots
+)
+
+# Display the combined plot
+combined_plot_with_legend
