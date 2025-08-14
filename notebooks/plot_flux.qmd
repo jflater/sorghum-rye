@@ -11,7 +11,7 @@ library(janitor)
 ```
 
 ```{r}
-data <- read_csv("sorghum-rye/data/processed_flux_data.csv")
+data <- read_csv("data/processed_flux_data.csv")
 ```
 
 Be sure to remove leading zero from plot, this should have been done in the orginal
@@ -23,7 +23,7 @@ data <- data %>%
 
 ```{r}
 getwd()
-metadata <- read_csv("sorghum-rye/data/metadata/plot_treatments.csv",
+metadata <- read_csv("data/metadata/plot_treatments.csv",
                      show_col_types = FALSE) %>%
   clean_names() %>%
   mutate(plot = as.factor(plot))
@@ -37,7 +37,6 @@ data <- left_join(data, metadata, by = c("plot", "date"))
 
 
 ```{r}
-library(tidyverse)
 library(lubridate)
 library(MetBrewer)
 
