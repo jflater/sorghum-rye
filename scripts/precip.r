@@ -2,7 +2,7 @@ library(tidyverse)
 library(readxl)
 library(lubridate)
 
-rain <- read_xlsx("sorghum-rye/data/rain/historical_rain.xlsx")
+rain <- read_xlsx("data/rain/historical_rain.xlsx")
 
 rain <- rain %>%
   select(day, doy, precipmm) %>%
@@ -247,3 +247,54 @@ rain_plot_v2 <- ggplot() +
   )
 
 rain_plot_v2
+# Rain mean and sd
+# get max cumulative precip for all years
+max_cum_precip <- rain %>%
+  filter(year >= 1995 & year <= 2024) %>% # Filter for years of interest
+  group_by(year) %>%
+  summarize(max_cumulative_precip = max(cumulative_precip, na.rm = TRUE)) %>%
+  ungroup()
+
+# Calculate mean and sd for cumulative preci
+max_cum_precip %>%
+  summarize(
+    mean_max_cum = mean(max_cumulative_precip, na.rm = TRUE),
+    sd_max_cum = sd(max_cumulative_precip, na.rm = TRUE)
+  )
+
+# Air temperature mean and sd
+air <- read_xlsx("data/rain/historical_rain.xlsx") %>%
+  transmute(
+    date = as_date(day),
+    year = year(date),
+    meanC = as.numeric(meanC)
+  ) %>%
+  filter(!is.na(date), !is.na(meanC))
+
+# Per-year coverage + annual means of daily mean temp
+annual <- air %>%
+  group_by(year) %>%
+  summarise(
+    n_days = n(),
+    yearly_meanC = mean(meanC, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(complete = n_days >= 365) # tighten if you want ≥ 365 for no missing
+
+# Choose your 30-yr window: official normals (1991–2020) or rolling (1995–2024)
+window_years <- 1995:2024 # change to 1995:2024 if desired
+
+stat <- annual %>%
+  filter(year %in% window_years, complete) %>%
+  summarise(
+    mean_annual_temp_C = mean(yearly_meanC),
+    sd_interannual_C   = sd(yearly_meanC),
+    n_years            = n()
+  )
+
+round(stat, 2)
+# Optional pretty line for the paper:
+sprintf(
+  "Mean (± interannual SD) annual air temperature: %.1f ± %.1f °C (%d years, %d–%d).",
+  stat$mean_annual_temp_C, stat$sd_interannual_C, stat$n_years, min(window_years), max(window_years)
+)
