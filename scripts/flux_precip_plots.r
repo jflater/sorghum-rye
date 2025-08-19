@@ -26,9 +26,6 @@ daily <- daily_precip %>%
 
 write_csv(daily, "data/daily_precip_flux_combined.csv")
 
-library(tidyverse)
-library(lubridate)
-
 treatment_colors <- c(
   "Corn" = "#fda500",
   "Soy" = "#E9967A",
@@ -119,7 +116,8 @@ p4 <- ggplot(df, aes(x = day, y = value, color = treatment)) +
     legend.position = c(0.1, 0.9),
     legend.background = element_rect(fill = "transparent"),
     legend.box.background = element_rect(color = "black")
-  )
+  ) +
+  scale_y_continuous(limits = c(0, 100))
 p4
 diff_thresh <- 5 # change as needed
 
@@ -242,8 +240,12 @@ p6 <- ggplot(df, aes(x = day, y = value, color = treatment)) +
   theme(
     legend.position = c(0.1, 0.9),
     legend.background = element_rect(fill = "transparent"),
-    legend.box.background = element_rect(color = "black")
-  )
+    legend.box.background = element_rect(color = "black"),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  scale_y_continuous(limits = c(0, 100))
 p6
 diff_thresh <- 5 # change as needed
 
@@ -288,13 +290,19 @@ p7 <- ggplot(daily_precip, aes(day, precipmm)) +
     legend.position = "none",
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
-    axis.title.x = element_blank()
+    axis.title.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title.y = element_blank()
   )
+
+
 p7
 
 # Combine plots
 library(patchwork)
 combined_plot2 <- ((p7 + theme(plot.margin = margin(0, 0, 0, 0))) /
-  (p6 + theme(plot.margin = margin(0, 0, 0, 0)))) +
+  (p6 + theme(plot.margin = margin(0, 0, 0, 0), legend.position = "none"))) +
   plot_annotation(theme = theme_sabr())
-combined_plot2 + combined_plot
+combined_plot2
+combined_plot | combined_plot2
