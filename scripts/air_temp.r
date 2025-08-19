@@ -2,7 +2,7 @@ library(readxl)
 library(tidyverse)
 library(lubridate)
 
-gdd <- read_xlsx("sorghum-rye/data/rain/historical_rain.xlsx")
+gdd <- read_xlsx("data/rain/historical_rain.xlsx")
 
 gdd <- gdd %>%
   select(day, doy, gdd_50_86) %>%
@@ -246,22 +246,23 @@ gdd_plot_v2 <- ggplot() +
     legend.position = "top"
   )
 
-gdd_plot_v2
+gdd_plot_v2 <- gdd_plot_v2 + guides(color = "none", fill = "none", linetype = "none", shape = "none")
 
-# Extract the legend from one of the plots (e.g., gdd_plot_v2)
-legend <- get_legend(
-  gdd_plot_v2 # Ensure the legend is at the top
+pdplot <- rain_plot_v2 | gdd_plot_v2 +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    # <- this theme applies to the *patchwork container* (incl. collected legend)
+    theme = theme_sabr() + theme(
+      legend.position = "bottom",
+      legend.justification = "center",
+      legend.direction = "horizontal",
+      legend.box.just = "center",
+      legend.box.margin = margin(t = 6)
+    )
+  )
+
+ggsave(
+  "figures/gdd_plot_v2.png",
+  pdplot,
+  width = 8.5, height = 11, dpi = 350
 )
-
-# Combine the legend and the plots
-combined_plot_with_legend <- plot_grid(
-  legend, # Add the legend at the top
-  plot_grid(rain_plot_v2, gdd_plot_v2,
-    ncol = 2, labels = c("A", "B")
-  ), # Combine the plots
-  ncol = 1, # Arrange in a single column
-  rel_heights = c(0.1, 1) # Adjust the relative height of the legend and plots
-)
-
-# Display the combined plot
-combined_plot_with_legend

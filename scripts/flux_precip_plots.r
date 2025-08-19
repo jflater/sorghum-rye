@@ -101,7 +101,7 @@ p4 <- ggplot(df, aes(x = day, y = value, color = treatment)) +
   ) +
   scale_x_date(
     limits = c(start, end),
-    breaks = seq(start, end, by = "1 week"),
+    breaks = seq(start, end, by = "1 month"),
     date_labels = "%b %d" # e.g. Jan 01, Jan 08, ...
   ) +
   labs(
@@ -112,12 +112,14 @@ p4 <- ggplot(df, aes(x = day, y = value, color = treatment)) +
   theme_sabr() +
   scale_color_manual(values = c(treatment_colors, "Fertilizer Date" = "red")) +
   # place legend in the inside the plot area
+  scale_y_continuous(limits = c(0, 100)) +
   theme(
-    legend.position = c(0.1, 0.9),
-    legend.background = element_rect(fill = "transparent"),
-    legend.box.background = element_rect(color = "black")
-  ) +
-  scale_y_continuous(limits = c(0, 100))
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal"
+  )
 p4
 diff_thresh <- 5 # change as needed
 
@@ -154,7 +156,7 @@ p5 <- ggplot(daily_precip, aes(day, precipmm)) +
   geom_col(fill = "#0080b3", color = "black", width = 1) +
   scale_x_date(
     limits = c(start, end),
-    breaks = seq(start, end, by = "1 week"),
+    breaks = seq(start, end, by = "1 month"),
     date_labels = "%b %d"
   ) +
   scale_y_reverse(limits = c(y_top, 0), name = "Daily Precipitation (mm)") +
@@ -226,7 +228,7 @@ p6 <- ggplot(df, aes(x = day, y = value, color = treatment)) +
   ) +
   scale_x_date(
     limits = c(start, end),
-    breaks = seq(start, end, by = "1 week"),
+    breaks = seq(start, end, by = "1 month"),
     date_labels = "%b %d" # e.g. Jan 01, Jan 08, ...
   ) +
   labs(
@@ -243,7 +245,10 @@ p6 <- ggplot(df, aes(x = day, y = value, color = treatment)) +
     legend.box.background = element_rect(color = "black"),
     axis.text.y = element_blank(),
     axis.ticks.y = element_blank(),
-    axis.title.y = element_blank()
+    axis.title.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank()
   ) +
   scale_y_continuous(limits = c(0, 100))
 p6
@@ -281,7 +286,7 @@ p7 <- ggplot(daily_precip, aes(day, precipmm)) +
   geom_col(fill = "#0080b3", color = "black", width = 1) +
   scale_x_date(
     limits = c(start, end),
-    breaks = seq(start, end, by = "1 week"),
+    breaks = seq(start, end, by = "1 month"),
     date_labels = "%b %d"
   ) +
   scale_y_reverse(limits = c(y_top, 0), name = "Daily Precipitation (mm)") +
@@ -300,9 +305,205 @@ p7 <- ggplot(daily_precip, aes(day, precipmm)) +
 p7
 
 # Combine plots
-library(patchwork)
 combined_plot2 <- ((p7 + theme(plot.margin = margin(0, 0, 0, 0))) /
   (p6 + theme(plot.margin = margin(0, 0, 0, 0), legend.position = "none"))) +
   plot_annotation(theme = theme_sabr())
 combined_plot2
 combined_plot | combined_plot2
+
+
+# ---- load daily means + SE for 2023 ----
+daily_se <- read_csv("data/seasonal_flux_combined.csv") %>%
+  rename(day = year_month_day) %>%
+  filter(Treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(day = as.Date(day)) %>%
+  filter(year(day) == 2023) %>%
+  group_by(Treatment, day) %>%
+  summarise(
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    se_flux = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# ---- full daily grid for the year ----
+start <- as.Date("2023-01-01")
+end <- as.Date("2023-12-31")
+grid <- expand_grid(
+  Treatment = c("Sorghum", "Sorghum + Rye"),
+  day = seq.Date(start, end, by = "day")
+)
+
+# ---- join to grid and linearly interpolate within observed ranges ----
+interp <- grid %>%
+  left_join(daily_se, by = c("Treatment", "day")) %>%
+  arrange(Treatment, day) %>%
+  group_by(Treatment) %>%
+  mutate(
+    # interpolate interior gaps; outside the observed range stays NA (rule = 1)
+    mean_flux_lin = approx(
+      x = day[!is.na(mean_flux)],
+      y = mean_flux[!is.na(mean_flux)],
+      xout = day, rule = 1, ties = "ordered"
+    )$y,
+    se_flux_lin = approx(
+      x = day[!is.na(se_flux)],
+      y = se_flux[!is.na(se_flux)],
+      xout = day, rule = 1, ties = "ordered"
+    )$y
+  ) %>%
+  # treat days outside measurement range as 0 increment
+  mutate(
+    mean_flux_lin = replace_na(mean_flux_lin, 0),
+    se_flux_lin   = replace_na(se_flux_lin, 0)
+  ) %>%
+  # cumulative sums: SE combined assuming independence day-to-day
+  mutate(
+    cum_flux = cumsum(mean_flux_lin),
+    cum_se   = sqrt(cumsum(se_flux_lin^2))
+  ) %>%
+  ungroup()
+
+# ---- plot cumulative with ribbon ----
+treatment_colors <- c("Sorghum" = "#D2B48C", "Sorghum + Rye" = "#8B4513")
+
+p_cum <- ggplot(interp, aes(day, cum_flux, color = Treatment, fill = Treatment)) +
+  geom_ribbon(aes(ymin = cum_flux - cum_se, ymax = cum_flux + cum_se),
+    alpha = 0.2, linewidth = 0
+  ) +
+  geom_line(linewidth = 1.1) +
+  scale_color_manual(values = treatment_colors) +
+  scale_fill_manual(values = treatment_colors) +
+  scale_x_date(
+    limits = c(start, end),
+    breaks = seq(start, end, by = "1 month"),
+    date_labels = "%b %d"
+  ) +
+  labs(
+    x = "2023",
+    y = expression("Cumulative N"[2] * "O Flux (g N ha"^{
+      -1
+    } * ")"),
+    color = NULL, fill = NULL
+  ) +
+  theme_sabr() +
+  theme(legend.position = "none") +
+  scale_y_continuous(limits = c(0, 2100))
+
+p_cum
+
+# ---- load daily means + SE for 2024 ----
+daily_se <- read_csv("data/seasonal_flux_combined.csv") %>%
+  rename(day = year_month_day) %>%
+  filter(Treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(day = as.Date(day)) %>%
+  filter(year(day) == 2024) %>%
+  group_by(Treatment, day) %>%
+  summarise(
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    se_flux = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# ---- full daily grid for the year ----
+start <- as.Date("2024-01-01")
+end <- as.Date("2024-12-30")
+grid <- expand_grid(
+  Treatment = c("Sorghum", "Sorghum + Rye"),
+  day = seq.Date(start, end, by = "day")
+)
+
+# ---- join to grid and linearly interpolate within observed ranges ----
+interp <- grid %>%
+  left_join(daily_se, by = c("Treatment", "day")) %>%
+  arrange(Treatment, day) %>%
+  group_by(Treatment) %>%
+  mutate(
+    # interpolate interior gaps; outside the observed range stays NA (rule = 1)
+    mean_flux_lin = approx(
+      x = day[!is.na(mean_flux)],
+      y = mean_flux[!is.na(mean_flux)],
+      xout = day, rule = 1, ties = "ordered"
+    )$y,
+    se_flux_lin = approx(
+      x = day[!is.na(se_flux)],
+      y = se_flux[!is.na(se_flux)],
+      xout = day, rule = 1, ties = "ordered"
+    )$y
+  ) %>%
+  # treat days outside measurement range as 0 increment
+  mutate(
+    mean_flux_lin = replace_na(mean_flux_lin, 0),
+    se_flux_lin   = replace_na(se_flux_lin, 0)
+  ) %>%
+  # cumulative sums: SE combined assuming independence day-to-day
+  mutate(
+    cum_flux = cumsum(mean_flux_lin),
+    cum_se   = sqrt(cumsum(se_flux_lin^2))
+  ) %>%
+  ungroup()
+
+# ---- plot cumulative with ribbon ----
+treatment_colors <- c("Sorghum" = "#D2B48C", "Sorghum + Rye" = "#8B4513")
+
+p_cum2 <- ggplot(interp, aes(day, cum_flux, color = Treatment, fill = Treatment)) +
+  geom_ribbon(aes(ymin = cum_flux - cum_se, ymax = cum_flux + cum_se),
+    alpha = 0.2, linewidth = 0
+  ) +
+  geom_line(linewidth = 1.1) +
+  scale_color_manual(values = treatment_colors) +
+  scale_fill_manual(values = treatment_colors) +
+  scale_x_date(
+    limits = c(start, end),
+    breaks = seq(start, end, by = "1 month"),
+    date_labels = "%b %d"
+  ) +
+  labs(
+    x = "2024",
+    y = expression("Cumulative N"[2] * "O Flux (g N ha"^{
+      -1
+    } * ")"),
+    color = NULL, fill = NULL
+  ) +
+  theme_sabr() +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title.y = element_blank()
+  ) +
+  scale_y_continuous(limits = c(0, 2100))
+
+p_cum2
+library(patchwork)
+
+# 1) who contributes a legend?
+p4_leg <- p4 + theme(legend.position = "bottom") # keep
+p5_nl <- p5 + guides(color = "none", fill = "none", linetype = "none", shape = "none")
+p6_nl <- p6 + guides(color = "none", fill = "none", linetype = "none", shape = "none")
+p7_nl <- p7 + guides(color = "none", fill = "none", linetype = "none", shape = "none")
+pcum_nl <- p_cum + guides(color = "none", fill = "none", linetype = "none")
+pcum2_nl <- p_cum2 + guides(color = "none", fill = "none", linetype = "none")
+
+# 2–3) compose, collect, and place legend at bottom-center
+final_plot <-
+  ((p5_nl | p7_nl) /
+    (p4_leg | p6_nl) /
+    (pcum_nl | pcum2_nl)) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    # <- this theme applies to the *patchwork container* (incl. collected legend)
+    theme = theme_sabr() + theme(
+      legend.position = "bottom",
+      legend.justification = "center",
+      legend.direction = "horizontal",
+      legend.box.just = "center",
+      legend.box.margin = margin(t = 6)
+    )
+  )
+
+final_plot
+
+
+ggsave("figures/flux_precip_combined_2023_2024.png", final_plot,
+  width = 8.5, height = 11, units = "in", dpi = 350
+)
