@@ -43,8 +43,8 @@ The following table shows the 12 dates present in `unique_dates_coords_by_file_d
 |------|------|------|
 | 2023-04-12 | 20230412_small_plots.json | Only test data |
 | 2023-06-19 | 2023_06_19_small_plots.json | Added to folder on desktop |
-| 2023-06-21 | 2023_06_21_small_plots.json |
-| 2023-06-23 | 2023_06_23_small_plots.json |
+| 2023-06-21 | 2023_06_21_small_plots.json | Added to folder on desktop |
+| 2023-06-23 | 2023_06_23_small_plots.json | Added to folder on desktop |
 | 2023-06-26 | 2023_06_26_small_plots.json |
 | 2023-06-28 | 2023_06_28_small_plots.json |
 | 2023-07-06 | 2023_07_06_small_plots.json |
