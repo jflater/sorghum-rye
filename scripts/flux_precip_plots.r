@@ -1,4 +1,5 @@
 library(tidyverse)
+library(ggplot2)
 library(janitor)
 
 daily_precip <- read_csv("data/rain/daily_precip_2023_2024.csv") %>%
@@ -53,8 +54,14 @@ fert_events <- data.frame(
 )
 
 df <- daily %>%
-  pivot_longer(c(Sorghum, `Sorghum + Rye`), names_to = "treatment", values_to = "value") %>%
-  mutate(treatment = factor(treatment, levels = c("Sorghum", "Sorghum + Rye"))) %>%
+  pivot_longer(
+    c(Sorghum, `Sorghum + Rye`),
+    names_to = "treatment",
+    values_to = "value"
+  ) %>%
+  mutate(
+    treatment = factor(treatment, levels = c("Sorghum", "Sorghum + Rye"))
+  ) %>%
   select(day, treatment, value, se_flux) %>%
   filter(!is.na(value) & year(day) %in% c(2023))
 
@@ -170,8 +177,10 @@ p5 <- ggplot(daily_precip, aes(day, precipmm)) +
 p5
 # Combine plots
 library(patchwork)
-combined_plot <- ((p5 + theme(plot.margin = margin(0, 0, 0, 0))) /
-  (p4 + theme(plot.margin = margin(0, 0, 0, 0)))) +
+combined_plot <- (
+  (p5 + theme(plot.margin = margin(0, 0, 0, 0))) /
+    (p4 + theme(plot.margin = margin(0, 0, 0, 0)))
+) +
   plot_annotation(theme = theme_sabr())
 
 combined_plot
@@ -180,8 +189,14 @@ combined_plot
 ###############################################################################
 ########### 2024###############################################################
 df <- daily %>%
-  pivot_longer(c(Sorghum, `Sorghum + Rye`), names_to = "treatment", values_to = "value") %>%
-  mutate(treatment = factor(treatment, levels = c("Sorghum", "Sorghum + Rye"))) %>%
+  pivot_longer(
+    c(Sorghum, `Sorghum + Rye`),
+    names_to = "treatment",
+    values_to = "value"
+  ) %>%
+  mutate(
+    treatment = factor(treatment, levels = c("Sorghum", "Sorghum + Rye"))
+  ) %>%
   select(day, treatment, value, se_flux) %>%
   filter(!is.na(value) & year(day) %in% c(2024))
 
@@ -305,8 +320,9 @@ p7 <- ggplot(daily_precip, aes(day, precipmm)) +
 p7
 
 # Combine plots
-combined_plot2 <- ((p7 + theme(plot.margin = margin(0, 0, 0, 0))) /
-  (p6 + theme(plot.margin = margin(0, 0, 0, 0), legend.position = "none"))) +
+combined_plot2 <- (
+  (p7 + theme(plot.margin = margin(0, 0, 0, 0))) /
+    (p6 + theme(plot.margin = margin(0, 0, 0, 0), legend.position = "none"))) +
   plot_annotation(theme = theme_sabr())
 combined_plot2
 combined_plot | combined_plot2
