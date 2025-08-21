@@ -45,11 +45,13 @@ The following table shows the 12 dates present in `unique_dates_coords_by_file_d
 | 2023-06-19 | 2023_06_19_small_plots.json | Added to folder on desktop |
 | 2023-06-21 | 2023_06_21_small_plots.json | Added to folder on desktop |
 | 2023-06-23 | 2023_06_23_small_plots.json | Added to folder on desktop |
-| 2023-06-26 | 2023_06_26_small_plots.json |
-| 2023-06-28 | 2023_06_28_small_plots.json |
-| 2023-07-06 | 2023_07_06_small_plots.json |
-| 2023-08-16 | SABR_N2O_Methods.json |
-| 2023-08-17 | SABR_N2O_Methods_Day2.json |
-| 2024-02-07 | 20240131_small_plots.json |
-| 2024-07-09 | Test-7-9-2024.json |
-| 2024-12-17 | 20241217_small_plots.json |
+| 2023-06-26 | 2023_06_26_small_plots.json | Added to folder on desktop |
+| 2023-06-28 | 2023_06_28_small_plots.json | Added to folder on desktop |
+| 2023-07-06 | 2023_07_06_small_plots.json | Only test data |
+| 2023-08-16 | SABR_N2O_Methods.json | Not for this study |
+| 2023-08-17 | SABR_N2O_Methods_Day2.json | Not for this study |
+| 2024-02-07 | 20240131_small_plots.json | Added to folder on desktop |
+| 2024-07-09 | Test-7-9-2024.json | Added to folder, this date was spread across two days |
+| 2024-12-17 | 20241217_small_plots.json | Incomplete, not added |
+
+BEFORE ADDING, WE MUST REMOVE `*_F` readings
