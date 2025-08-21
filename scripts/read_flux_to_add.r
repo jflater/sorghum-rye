@@ -1,6 +1,7 @@
 library(readr)
 library(dplyr)
 library(purrr)
+library(tidyverse)
 
 flux_folder <- "../data/flux_to_add_to_analysis"
 
@@ -40,3 +41,8 @@ print(basename(file_list))
 if ("LABEL" %in% colnames(flux_data)) {
   flux_data <- flux_data %>% filter(!grepl("[fF]", LABEL, ignore.case = FALSE))
 }
+
+# separate the LABEL column on _ or - into plot and location using separate
+
+flux_data <- flux_data %>%
+  separate(LABEL, into = c("plot", "location"), sep = "[-_]", extra = "merge")
