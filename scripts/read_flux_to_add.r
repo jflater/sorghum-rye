@@ -7,9 +7,27 @@ flux_folder <- "../data/flux_to_add_to_analysis"
 file_list <- list.files(flux_folder, pattern = "*.csv", full.names = TRUE)
 
 read_flux_file <- function(file_path) {
-  data <- read_csv(file_path, skip = 3, show_col_types = FALSE)
+  # Read the header from row 2 (skip first row, read headers from row 2,
+  # then skip row 3 with units)
+  col_names <- read_csv(
+    file_path,
+    skip = 1,
+    n_max = 1,
+    col_names = FALSE,
+    show_col_types = FALSE
+  )
+  col_names <- as.character(col_names[1, ])
+
+  # Read the actual data starting from row 4 (skip first 3 rows)
+  # with proper column names
+  data <- read_csv(
+    file_path,
+    skip = 3,
+    col_names = col_names,
+    show_col_types = FALSE
+  )
   data$source_file <- basename(file_path)
-  return(data)
+  data
 }
 
 flux_data <- map_dfr(file_list, read_flux_file)
@@ -17,3 +35,8 @@ flux_data <- map_dfr(file_list, read_flux_file)
 print(paste("Read", nrow(flux_data), "rows from", length(file_list), "files"))
 print("Files processed:")
 print(basename(file_list))
+
+# Remove rows that contain 'f' or 'F' in the LABEL column
+if ("LABEL" %in% colnames(flux_data)) {
+  flux_data <- flux_data %>% filter(!grepl("[fF]", LABEL, ignore.case = FALSE))
+}
