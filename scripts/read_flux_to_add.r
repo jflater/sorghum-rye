@@ -2,6 +2,7 @@ library(readr)
 library(dplyr)
 library(purrr)
 library(tidyverse)
+library(janitor)
 
 flux_folder <- "data/flux_to_add_to_analysis"
 
@@ -48,3 +49,8 @@ flux_data <- flux_data %>%
   separate(LABEL, into = c("plot", "location"), sep = "[-_]", extra = "merge")
 
 # read in seasonal flux
+seasonal_flux <- read_csv(
+  "data/seasonal_flux_combined.csv",
+  show_col_types = FALSE
+)
+compare_df_cols(flux_data, seasonal_flux)
