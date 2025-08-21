@@ -3,7 +3,7 @@ library(dplyr)
 library(purrr)
 library(tidyverse)
 
-flux_folder <- "../data/flux_to_add_to_analysis"
+flux_folder <- "data/flux_to_add_to_analysis"
 
 file_list <- list.files(flux_folder, pattern = "*.csv", full.names = TRUE)
 
@@ -46,3 +46,5 @@ if ("LABEL" %in% colnames(flux_data)) {
 
 flux_data <- flux_data %>%
   separate(LABEL, into = c("plot", "location"), sep = "[-_]", extra = "merge")
+
+# read in seasonal flux
