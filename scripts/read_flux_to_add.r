@@ -56,12 +56,15 @@ colnames(flux_data)
 
 # We want leading zeros on plot if it is a single digit
 flux_data <- flux_data %>%
-  mutate(plot = sprintf("%02d", as.numeric(plot)))
+  mutate(plot = sprintf("%02d", as.numeric(plot))) %>%
+  clean_names()
+
+colnames(flux_data)
 unique(flux_data$plot)
 # get best flux and convert to gnha
 flux_data <- flux_data %>%
   mutate(
-    year_month_day = as.Date(date_time),
+    year_month_day = as.Date(date_time_initial_value),
     # Calculate best flux
     best_flux_nmol_1m_2s_1 = ifelse(
       fn2o_dry_lin_r2 > fn2o_dry_r2,
@@ -69,18 +72,6 @@ flux_data <- flux_data %>%
     ),
     gnha_day = nmols_to_grams_hectare_day(as.numeric(best_flux_nmol_1m_2s_1)),
     gnha_day_no_negative = ifelse(gnha_day < 0, 0, gnha_day)
-  ) %>%
-  select(
-    year_month_day,
-    growing_season,
-    plot,
-    Treatment,
-    RowvsInterrow,
-    best_flux_nmol_1m_2s_1,
-    ts_2_mean,
-    swc_2_mean,
-    gnha_day,
-    gnha_day_no_negative
   )
 
 
