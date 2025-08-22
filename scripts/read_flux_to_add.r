@@ -4,6 +4,10 @@ library(purrr)
 library(tidyverse)
 library(janitor)
 
+source("scripts/myfunctions.r")
+
+# These were found to be missing in seasonal_flux_combined.
+# I processed them separately.
 flux_folder <- "data/flux_to_add_to_analysis"
 
 file_list <- list.files(flux_folder, pattern = "*.csv", full.names = TRUE)
@@ -48,9 +52,19 @@ if ("LABEL" %in% colnames(flux_data)) {
 flux_data <- flux_data %>%
   separate(LABEL, into = c("plot", "location"), sep = "[-_]", extra = "merge")
 
+colnames(flux_data)
+
+# We want leading zeros on plot if it is a single digit
+flux_data <- flux_data %>%
+  mutate(plot = sprintf("%02d", as.numeric(plot)))
+unique(flux_data$plot)
+# get best flux and convert to gnha
+
+
 # read in seasonal flux
 seasonal_flux <- read_csv(
   "data/seasonal_flux_combined.csv",
   show_col_types = FALSE
 )
-compare_df_cols(flux_data, seasonal_flux)
+
+unique(seasonal_flux$plot)
