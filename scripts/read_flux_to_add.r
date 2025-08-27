@@ -60,6 +60,7 @@ flux_data <- flux_data %>%
   clean_names()
 
 colnames(flux_data)
+
 unique(flux_data$plot)
 # get best flux and convert to gnha
 flux_data <- flux_data %>%
