@@ -83,7 +83,13 @@ flux_data <- flux_data %>%
     str_detect(location, "[fF]$|^Fertilizer_band$") ~ "Fertilizer_band",
     location == "" ~ "No Location",
     TRUE ~ "Unclassified"
-  ))
+  )) %>%
+  select(
+    year_month_day, best_flux_nmol_1m_2s_1, ts_2_mean, swc_2_mean,
+    gnha_day, gnha_day_no_negative
+  )
+
+
 
 
 # read in seasonal flux
@@ -91,7 +97,6 @@ seasonal_flux <- read_csv(
   "data/seasonal_flux_combined.csv",
   show_col_types = FALSE
 )
-
 
 unique(seasonal_flux$plot)
 unique(seasonal_flux$RowvsInterrow)
