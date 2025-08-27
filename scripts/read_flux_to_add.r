@@ -57,11 +57,13 @@ colnames(flux_data)
 # We want leading zeros on plot if it is a single digit
 flux_data <- flux_data %>%
   mutate(plot = sprintf("%02d", as.numeric(plot))) %>%
-  clean_names()
+  clean_names() %>%
+  select(-longitude, -latitude, -remark, -source_file)
+
+unique(flux_data$plot)
 
 colnames(flux_data)
 
-unique(flux_data$plot)
 # get best flux and convert to gnha
 flux_data <- flux_data %>%
   mutate(
@@ -73,7 +75,15 @@ flux_data <- flux_data %>%
     ),
     gnha_day = nmols_to_grams_hectare_day(as.numeric(best_flux_nmol_1m_2s_1)),
     gnha_day_no_negative = ifelse(gnha_day < 0, 0, gnha_day)
-  )
+  ) %>%
+  # Classify location into categories more robustly
+  mutate(RowvsInterrow = case_when(
+    str_detect(location, "^[iIeE]$|^Interrow$") ~ "Interrow",
+    str_detect(location, "^[rRwW]+?$|^Row$") ~ "Row",
+    str_detect(location, "[fF]$|^Fertilizer_band$") ~ "Fertilizer_band",
+    location == "" ~ "No Location",
+    TRUE ~ "Unclassified"
+  ))
 
 
 # read in seasonal flux
@@ -81,6 +91,7 @@ seasonal_flux <- read_csv(
   "data/seasonal_flux_combined.csv",
   show_col_types = FALSE
 )
+
 
 unique(seasonal_flux$plot)
 unique(seasonal_flux$RowvsInterrow)
