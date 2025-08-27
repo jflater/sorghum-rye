@@ -68,3 +68,7 @@ seasonal_flux <- read_csv(
 )
 
 unique(seasonal_flux$plot)
+unique(seasonal_flux$RowvsInterrow)
+# Let's remove the fertilizer band locations for this analysis
+seasonal_flux <- seasonal_flux %>%
+  filter(RowvsInterrow != "Fertilizer_band")
