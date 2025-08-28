@@ -96,13 +96,39 @@ flux_data <- flux_data %>%
   )
 
 # read in seasonal flux
-seasonal_flux <- read_csv(
+old_flux <- read_csv(
   "data/seasonal_flux_combined.csv",
   show_col_types = FALSE
 )
 
-seasonal_flux <- seasonal_flux %>%
+seasonal_flux <- old_flux %>%
   select(colnames(flux_data)) %>%
   filter(RowvsInterrow != "Fertilizer_band")
 
 compare_df_cols(seasonal_flux, flux_data)
+
+# combine the two dataframes
+combined_flux <- bind_rows(seasonal_flux, flux_data)
+
+# how many observations for each combination of year, plot, and row
+observation_counts <- combined_flux %>%
+  group_by(year_month_day, plot, RowvsInterrow) %>%
+  summarise(observations = n(), .groups = "drop") %>%
+  # if more than 1 observation, note that row
+  mutate(row_note = ifelse(observations > 1, "Multiple observations", "Single observation")) %>%
+  filter(row_note == "Multiple observations")
+
+matched_rows <- merge(old_flux, observation_counts[, 1:3], by = names(observation_counts)[1:3]) %>%
+  # add unique row marker
+  mutate(row_id = row_number())
+
+unique(matched_rows$year_month_day)
+
+# I looked at the raw .json files to choose which duplicate readings are to be kept,
+# the following list are those rows to REMOVE, i removed the row with the lower
+# rsquared value
+remove_rows <- c(2, 5, 7, 10, 11, 13, 16, 19, 20, 23)
+# change row 3 to plot 10
+matched_rows$plot[matched_rows$row_id == 3] <- 10
+# change row 18 to RowvsInterrow row
+matched_rows$RowvsInterrow[matched_rows$row_id == 18] <- "Row"
