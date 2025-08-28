@@ -119,7 +119,8 @@ duplicated_rows <- combined_flux[duplicated(combined_flux) | duplicated(combined
 nrow(combined_flux)
 # drop the duplicated rows from combined flux
 combined_flux <- combined_flux %>%
-  distinct()
+  distinct() %>%
+  mutate(row_id = row_number())
 nrow(combined_flux)
 
 # how many observations for each combination of year, plot, and row
@@ -129,3 +130,10 @@ observation_counts <- combined_flux %>%
   # if more than 1 observation, note that row
   mutate(row_note = ifelse(observations > 1, "Multiple observations", "Single observation")) %>%
   filter(row_note == "Multiple observations")
+
+# open raw .json files to clean up these rows. Some are miss labeled and some
+# have multpiple readings due to high or low flux, choose best r2 and drop other.
+# change plot in row id 252 to 10
+combined_flux$plot[combined_flux$row_id == 252] <- 10
+# drop row_id 249, 258, 288, 433
+clean_flux <- combined_flux %>% filter(row_id != 249 & row_id != 258 & row_id != 288 & row_id != 433)
