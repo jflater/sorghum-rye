@@ -50,7 +50,7 @@ The following table shows the 12 dates present in `unique_dates_coords_by_file_d
 | 2023-07-06 | 2023_07_06_small_plots.json | Only test data |
 | 2023-08-16 | SABR_N2O_Methods.json | Not for this study |
 | 2023-08-17 | SABR_N2O_Methods_Day2.json | Not for this study |
-| 2024-02-07 | 20240131_small_plots.json | Added to folder on desktop |
+| 2024-02-07 | 20240131_small_plots.json | Last two readings were from a different study, DID not add |
 | 2024-07-09 | Test-7-9-2024.json | Added to folder, this date was spread across two days |
 | 2024-12-17 | 20241217_small_plots.json | Incomplete, not added |
 
