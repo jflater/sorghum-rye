@@ -50,7 +50,7 @@ if ("LABEL" %in% colnames(flux_data)) {
 # separate the LABEL column on _ or - into plot and location using separate
 
 flux_data <- flux_data %>%
-  separate(LABEL, into = c("plot", "location"), sep = "[-_]", extra = "merge")
+  separate(LABEL, into = c("plot", "location"), sep = "[-_]", extra = "warn")
 
 colnames(flux_data)
 
@@ -85,12 +85,15 @@ flux_data <- flux_data %>%
     TRUE ~ "Unclassified"
   )) %>%
   select(
-    year_month_day, best_flux_nmol_1m_2s_1, ts_2_mean, swc_2_mean,
-    gnha_day, gnha_day_no_negative
+    year_month_day,
+    plot,
+    RowvsInterrow,
+    best_flux_nmol_1m_2s_1,
+    ts_2_mean,
+    swc_2_mean,
+    gnha_day,
+    gnha_day_no_negative
   )
-
-
-
 
 # read in seasonal flux
 seasonal_flux <- read_csv(
@@ -98,8 +101,8 @@ seasonal_flux <- read_csv(
   show_col_types = FALSE
 )
 
-unique(seasonal_flux$plot)
-unique(seasonal_flux$RowvsInterrow)
-# Let's remove the fertilizer band locations for this analysis
 seasonal_flux <- seasonal_flux %>%
+  select(colnames(flux_data)) %>%
   filter(RowvsInterrow != "Fertilizer_band")
+
+compare_df_cols(seasonal_flux, flux_data)
