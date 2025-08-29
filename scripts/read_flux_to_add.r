@@ -156,4 +156,8 @@ unique(clean_flux$RowvsInterrow)
 unclassified_rows <- clean_flux %>%
   filter(RowvsInterrow == "Unclassified")
 
+# Save unclassified rows as CSV
+write_csv(unclassified_rows, "data/unclassified_rows.csv")
+print(paste("Saved", nrow(unclassified_rows), "unclassified rows to data/unclassified_rows.csv"))
+
 # Run the number of observations function again on the clean_flux
