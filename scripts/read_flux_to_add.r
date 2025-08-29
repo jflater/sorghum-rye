@@ -138,16 +138,15 @@ combined_flux$plot[combined_flux$row_id == 252] <- 10
 combined_flux$RowvsInterrow[combined_flux$row_id == 659] <- "Row"
 combined_flux$RowvsInterrow[combined_flux$row_id == 1336] <- "Interrow"
 combined_flux$RowvsInterrow[combined_flux$row_id == 1507] <- "Interrow"
+
 # drop row_id 249, 258, 288, 433, 646, 647, 635, 1068, 1069, 1055, 1270, 1341, 1352,
 # 1396, 1397, 1407, 1527, 1680, 1673, 2164
 # Drop date 2024-05-22, only two plots measured
 clean_flux <- combined_flux %>%
   filter(
-    !(
-      year_month_day == "2024-05-22" &
-        row_id %in% c(
-          249, 258, 288, 433, 646, 647, 635, 1068, 1069, 1055, 1270,
-          1341, 1352, 1396, 1397, 1407, 1527, 1680, 1673, 2164
-        )
-    )
+    year_month_day != "2024-05-22" &
+      !row_id %in% c(
+        249, 258, 288, 433, 646, 647, 635, 1068, 1069, 1055, 1270,
+        1341, 1352, 1396, 1397, 1407, 1527, 1680, 1673, 2164
+      )
   )
