@@ -160,4 +160,8 @@ unclassified_rows <- clean_flux %>%
 write_csv(unclassified_rows, "data/unclassified_rows.csv")
 print(paste("Saved", nrow(unclassified_rows), "unclassified rows to data/unclassified_rows.csv"))
 
+# Save clean_flux as CSV
+write_csv(clean_flux, "data/clean_flux.csv")
+print(paste("Saved", nrow(clean_flux), "rows to data/clean_flux.csv"))
+
 # Run the number of observations function again on the clean_flux
