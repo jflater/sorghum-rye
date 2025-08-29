@@ -150,3 +150,10 @@ clean_flux <- combined_flux %>%
         1341, 1352, 1396, 1397, 1407, 1527, 1680, 1673, 2164
       )
   )
+
+unique(clean_flux$RowvsInterrow)
+# What rows are unclassified?
+unclassified_rows <- clean_flux %>%
+  filter(RowvsInterrow == "Unclassified")
+
+# Run the number of observations function again on the clean_flux
