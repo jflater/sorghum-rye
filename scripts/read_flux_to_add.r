@@ -160,8 +160,14 @@ unclassified_rows <- clean_flux %>%
 write_csv(unclassified_rows, "data/unclassified_rows.csv")
 print(paste("Saved", nrow(unclassified_rows), "unclassified rows to data/unclassified_rows.csv"))
 
+# After checking the file the row is from, 20240710_smallplots.json
+# It appears that the row is unclassified due to re-read, it should be interrow
+clean_flux$RowvsInterrow[clean_flux$row_id == 2165] <- "Interrow"
+
 # Save clean_flux as CSV
 write_csv(clean_flux, "data/clean_flux.csv")
 print(paste("Saved", nrow(clean_flux), "rows to data/clean_flux.csv"))
+
+unique(clean_flux$RowvsInterrow)
 
 # Run the number of observations function again on the clean_flux
