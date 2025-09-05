@@ -38,11 +38,10 @@ p <- ggplot(combined_data, aes(x = day)) +
   # Flux data (left y-axis)
   geom_line(aes(y = mean_flux_gnha), color = "blue", size = 1) +
   geom_point(aes(y = mean_flux_gnha), color = "blue", size = 1.5) +
-  
   # Precipitation data (right y-axis, inverted)
-  geom_col(aes(y = precip_max - precipmm), 
-           alpha = 0.6, fill = "lightblue", width = 1) +
-  
+  geom_col(aes(y = precip_max - precipmm),
+    alpha = 0.6, fill = "lightblue", width = 1
+  ) +
   # Customize axes
   scale_y_continuous(
     name = "N2O Flux (g N ha⁻¹ day⁻¹)",
@@ -52,14 +51,12 @@ p <- ggplot(combined_data, aes(x = day)) +
       breaks = seq(0, precip_max, by = 10)
     )
   ) +
-  
   # Customize x-axis
   scale_x_date(
     name = "Date",
     date_breaks = "1 month",
     date_labels = "%b %Y"
   ) +
-  
   # Theme and formatting
   theme_bw() +
   theme(
@@ -70,7 +67,6 @@ p <- ggplot(combined_data, aes(x = day)) +
     axis.text.y.right = element_text(color = "darkblue"),
     panel.grid.minor = element_blank()
   ) +
-  
   labs(
     title = "N2O Flux and Precipitation Over Time",
     subtitle = "Blue line: N2O flux (left axis), Gray bars: Precipitation (right axis, inverted)"
@@ -80,10 +76,11 @@ p <- ggplot(combined_data, aes(x = day)) +
 print(p)
 
 # Save the plot
-ggsave("figures/flux_precip_dual_axis_plot.png", 
-       plot = p, 
-       width = 12, 
-       height = 8, 
-       dpi = 300)
+ggsave("figures/flux_precip_dual_axis_plot.png",
+  plot = p,
+  width = 12,
+  height = 8,
+  dpi = 300
+)
 
 print("Plot saved as figures/flux_precip_dual_axis_plot.png")
