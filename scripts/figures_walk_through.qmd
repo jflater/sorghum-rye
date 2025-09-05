@@ -1,0 +1,95 @@
+---
+title: "Sorghum and Rye Project Figures"
+format: html
+---
+
+# Interpolate Flux
+
+```{r}
+library(tidyverse)
+library(zoo)
+library(lubridate)
+library(janitor)
+```
+
+
+```{r}
+df <- read_csv("data/clean_flux.csv")  %>% 
+  clean_names() %>%
+  rename(date = year_month_day) 
+
+trt <- read_csv("data/metadata/plot_treatments.csv") %>% 
+  clean_names()  %>% 
+  # add leading zero to plot numbers
+  mutate(plot = str_pad(plot, width = 2, side = "left", pad = "0")) %>%
+  select(!growing_season)
+
+# compare columns
+compare_df_cols(df, trt)
+```
+
+# 2023 Plot Treatments'
+
+```{r}
+trt_2023 <- trt %>%
+  filter(date == "2023-07-01")
+
+trt_2024 <- trt %>%
+  filter(date == "2024-07-01")
+```
+
+A barplot of the flux data over time facted by plot and RowvsInterrow
+
+```{r}
+df <- df %>%
+  mutate(year = year(date)) %>%
+  left_join(
+    trt_2023 %>% mutate(year = 2023) %>% select(plot, year, treatment),
+    by = c("plot", "year")
+  ) %>%
+  left_join(
+    trt_2024 %>% mutate(year = 2024) %>% select(plot, year, treatment),
+    by = c("plot", "year"),
+    suffix = c("", "_2024")
+  ) %>%
+  mutate(
+    treatment = coalesce(treatment, treatment_2024)
+  ) %>%
+  select(-treatment_2024)
+```
+
+```{r}
+head(df)
+summary(df)
+table(df$treatment, useNA = "ifany")
+df %>% count(year, plot)
+df %>% filter(is.na(treatment))
+anti_join(df, trt_2023 %>% mutate(year = 2023) %>% select(plot, year), by = c("plot", "year"))
+anti_join(df, trt_2024 %>% mutate(year = 2024) %>% select(plot, year), by = c("plot", "year"))
+```
+```{r}
+# sanity checks
+table(df$treatment, useNA = "ifany")
+range(df$date, na.rm = TRUE)
+
+# prepare daily summary per treatment
+daily_summary <- df %>%
+  filter(!is.na(treatment)) %>%
+  group_by(plot, rowvs_interrow, treatment, date) %>%
+  summarise(
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    se_flux   = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(sum(!is.na(gnha_day_no_negative))),
+    .groups = "drop"
+  )
+
+# time-series with ribbon (one panel per plot, columns = row_vs_interrow)
+ggplot(daily_summary, aes(x = date, y = mean_flux, color = treatment, fill = treatment)) +
+  geom_ribbon(aes(ymin = mean_flux - se_flux, ymax = mean_flux + se_flux), alpha = 0.2, color = NA) +
+  geom_line(size = 0.9) +
+  geom_point(size = 1, alpha = 0.6) +
+  facet_grid(rows = vars(plot), cols = vars(rowvs_interrow)) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "Date", y = "GNHA Flux (g N/m²/day)", color = "Treatment", fill = "Treatment") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
