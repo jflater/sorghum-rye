@@ -8,6 +8,17 @@ library(emmeans)
 library(multcomp)
 library(gt)
 
+pkgs <- c(
+  "ggtext", "multcomp", "gt"
+)
+
+to_install <- setdiff(pkgs, rownames(installed.packages()))
+if (length(to_install)) {
+  install.packages(to_install, dependencies = TRUE, repos = "https://cloud.r-project.org")
+}
+
+invisible(lapply(pkgs, require, character.only = TRUE))
+
 # Create directories for output if they do not exist
 if (!dir.exists("figures")) dir.create("figures")
 if (!dir.exists("tables")) dir.create("tables")
@@ -16,9 +27,9 @@ if (!dir.exists("tables")) dir.create("tables")
 # Replace this block with code that imports your experimental data.
 set.seed(123)
 example_dates <- tibble(
-  year = rep(c(2023, 2024), each = 4),
-  date = as.Date(c("2023-05-04", "2023-07-06", "2024-05-10", "2024-07-06")),
-  treatment = rep(c("Sorghum", "Sorghum+CR"), times = 4)
+  year = rep(c(2023, 2024), each = 8),
+  date = rep(seq(as.Date("2023-05-01"), by = "month", length.out = 8), 2),
+  treatment = rep(c("Sorghum", "Sorghum+CR"), each = 4, times = 2)
 ) %>%
   group_by(year, date, treatment) %>%
   summarise(
@@ -46,21 +57,25 @@ soil_summary <- example_dates %>%
 
 # ANOVA for ammonium and nitrate
 aov_ammonium <- aov(ammonium ~ year * date * treatment, data = example_dates)
-aov_nitrate  <- aov(nitrate  ~ year * date * treatment, data = example_dates)
+aov_nitrate <- aov(nitrate ~ year * date * treatment, data = example_dates)
 
 pvals <- tibble(
-  source = c("Date", "Treatment", "Date:Treatment"),
-  ammonium_p = summary(aov_ammonium)[[1]]["Pr(>F)"][c(2,3,5)],
-  nitrate_p  = summary(aov_nitrate)[[1]]["Pr(>F)"][c(2,3,5)]
+  source = c("date", "treatment", "date:treatment"),
+  ammonium_p = summary(aov_ammonium)[[1]][c(2, 3, 6), "Pr(>F)"],
+  nitrate_p = summary(aov_nitrate)[[1]][c(2, 3, 6), "Pr(>F)"]
 )
 
 # Assemble table
 table2 <- soil_summary %>%
-  pivot_longer(cols = c(ammonium_mean, ammonium_se, nitrate_mean, nitrate_se),
-               names_to = c("variable", ".value"),
-               names_pattern = "(.*)_(mean|se)") %>%
-  mutate(result = sprintf("%.2f ± %.2f", mean, se)) %>%
-  select(year, date, treatment, variable, result) %>%
+  pivot_longer(
+    cols = c(ammonium_mean, ammonium_se, nitrate_mean, nitrate_se),
+    names_to = c("variable", ".value"),
+    names_pattern = "(.*)_(mean|se)"
+  ) %>%
+  mutate(result = sprintf("%.2f ± %.2f", mean, se))
+
+table2 <- table2 %>%
+  dplyr::select(year, date, treatment, variable, result) %>%
   pivot_wider(names_from = variable, values_from = result)
 
 table2_gt <- table2 %>%
@@ -97,7 +112,8 @@ fert_dates <- tibble(
 fig1 <- daily_flux %>%
   ggplot(aes(date, nitrate_flux, color = treatment)) +
   geom_ribbon(aes(ymin = nitrate_flux - se, ymax = nitrate_flux + se, fill = treatment),
-              alpha = 0.2, colour = NA) +
+    alpha = 0.2, colour = NA
+  ) +
   geom_line(size = 1) +
   geom_vline(data = fert_dates, aes(xintercept = date), linetype = "dashed") +
   facet_wrap(~year, ncol = 2) +
@@ -120,7 +136,8 @@ fig2_data <- daily_flux %>%
 fig2 <- fig2_data %>%
   ggplot(aes(date, ammonium_flux, color = treatment)) +
   geom_ribbon(aes(ymin = ammonium_flux - se, ymax = ammonium_flux + se, fill = treatment),
-              alpha = 0.2, colour = NA) +
+    alpha = 0.2, colour = NA
+  ) +
   geom_line(size = 1) +
   geom_vline(data = fert_dates, aes(xintercept = date), linetype = "dashed") +
   facet_wrap(~year, ncol = 2) +
@@ -154,7 +171,9 @@ fig3 <- cumulative_losses %>%
   geom_text(aes(label = .group), vjust = -0.5, color = "black") +
   facet_wrap(~year) +
   scale_fill_brewer(palette = "Paired") +
-  labs(y = expression(paste("Cumulative N"[2], "O-N (kg ha"^{-1}, ")")), x = "Cropping system") +
+  labs(y = expression(paste("Cumulative N"[2], "O-N (kg ha"^{
+    -1
+  }, ")")), x = "Cropping system") +
   theme_classic() +
   theme(legend.position = "none")
 
@@ -188,8 +207,10 @@ ggsave("figures/figure4_biomass.png", fig4, width = 6, height = 4, dpi = 300)
 # Table summarising N2O loss, N leaching and environmental cost
 
 n_loss <- cumulative_losses %>%
-  mutate(n_leaching = runif(n(), 2, 8),
-         env_cost = n2o * 1.5 + n_leaching * 0.8)
+  mutate(
+    n_leaching = runif(n(), 2, 8),
+    env_cost = n2o * 1.5 + n_leaching * 0.8
+  )
 
 # Source of variation p-values
 loss_aov <- lm(cbind(n2o, n_leaching, env_cost) ~ year * system, data = n_loss)
