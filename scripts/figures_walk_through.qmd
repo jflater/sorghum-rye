@@ -2,9 +2,6 @@
 title: "Sorghum and Rye Project Figures"
 format: html
 ---
-
-# Interpolate Flux
-
 ```{r}
 # Hokusai-inspired color palette
 hokusai_colors <- c(
@@ -86,13 +83,233 @@ scale_fill_hokusai_d <- function() {
 ```
 ```{r}
 library(tidyverse)
-library(zoo)
 library(lubridate)
+library(ggtext)
+library(ggpubr)
+library(emmeans)
+library(multcomp)
+library(gt)
+library(zoo)
 library(janitor)
 ```
 # Table 1
 # Table 2
 Start with reading in the date that was cleaned in the 'scripts/clean_soil.R'
+
+```{r}
+df <- read_csv("data/soils/cleaned_soil_data.csv")
+df <- df %>% 
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye"))
+  
+# ---- Table 2: Salt-extractable ammonium and nitrate -----------------------
+# Summary of salt-extractable ammonium and nitrate with ANOVA p-values
+colnames(df)
+soil_summary <- df %>%
+  group_by(year, date, treatment) %>%
+  summarise(
+    ammonium_mean = mean(ammonia_ppm, na.rm = TRUE),
+    ammonium_se = sd(ammonia_ppm, na.rm = TRUE) / sqrt(n()),
+    nitrate_mean = mean(nitrate_ppm, na.rm = TRUE),
+    nitrate_se = sd(nitrate_ppm, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# ANOVA for ammonium and nitrate
+aov_ammonium <- aov(ammonia_ppm ~ year * date * treatment, data = df)
+aov_nitrate <- aov(nitrate_ppm ~ year * date * treatment, data = df)
+
+# Calculate pairwise t-tests for each date/year combination
+library(broom)
+
+# Function to perform pairwise t-tests within each group
+get_pairwise_pvals <- function(data, variable) {
+  data %>%
+    group_by(year, date) %>%
+    group_modify(~{
+      if(length(unique(.x$treatment)) < 2) {
+        return(tibble(p_value = NA_real_))
+      }
+      # Perform pairwise t-test between treatments
+      trts <- unique(.x$treatment)
+      if(length(trts) == 2) {
+        t_result <- t.test(.x[[variable]][.x$treatment == trts[1]], 
+                          .x[[variable]][.x$treatment == trts[2]])
+        return(tibble(p_value = t_result$p.value))
+      } else {
+        # For more than 2 treatments, use pairwise t-tests
+        pairwise_result <- pairwise.t.test(.x[[variable]], .x$treatment, 
+                                          p.adjust.method = "none")
+        # Return the minimum p-value (most significant comparison)
+        return(tibble(p_value = min(pairwise_result$p.value, na.rm = TRUE)))
+      }
+    }) %>%
+    ungroup()
+}
+
+# Get p-values for each combination
+ammonium_pvals <- get_pairwise_pvals(df, "ammonia_ppm")
+nitrate_pvals <- get_pairwise_pvals(df, "nitrate_ppm")
+
+# Add total inorganic N to original data
+df <- df %>%
+  mutate(total_inorganic_n = ammonia_ppm + nitrate_ppm)
+
+# Recalculate soil_summary with total N
+soil_summary <- df %>%
+  group_by(year, date, treatment) %>%
+  summarise(
+    ammonium_mean = mean(ammonia_ppm, na.rm = TRUE),
+    ammonium_se = sd(ammonia_ppm, na.rm = TRUE) / sqrt(sum(!is.na(ammonia_ppm))),
+    nitrate_mean = mean(nitrate_ppm, na.rm = TRUE),
+    nitrate_se = sd(nitrate_ppm, na.rm = TRUE) / sqrt(sum(!is.na(nitrate_ppm))),
+    total_n_mean = mean(total_inorganic_n, na.rm = TRUE),
+    total_n_se = sd(total_inorganic_n, na.rm = TRUE) / sqrt(sum(!is.na(total_inorganic_n))),
+    .groups = "drop"
+  )
+
+# Get p-values for total N as well
+total_n_pvals <- get_pairwise_pvals(df, "total_inorganic_n")
+
+# Combine with soil_summary
+soil_summary_with_p <- soil_summary %>%
+  left_join(ammonium_pvals %>% rename(ammonium_p = p_value), 
+            by = c("year", "date")) %>%
+  left_join(nitrate_pvals %>% rename(nitrate_p = p_value), 
+            by = c("year", "date")) %>%
+  left_join(total_n_pvals %>% rename(total_n_p = p_value), 
+            by = c("year", "date"))
+
+# Assemble table with letter significance indicators
+table2 <- soil_summary_with_p %>%
+  pivot_longer(
+    cols = c(ammonium_mean, ammonium_se, nitrate_mean, nitrate_se, total_n_mean, total_n_se),
+    names_to = c("variable", ".value"),
+    names_pattern = "(.*)_(mean|se)"
+  ) %>%
+  mutate(
+    result = sprintf("%.2f ± %.2f", mean, se),
+    # Add letter significance indicators
+    p_val = case_when(
+      variable == "ammonium" ~ ammonium_p,
+      variable == "nitrate" ~ nitrate_p,
+      variable == "total_n" ~ total_n_p,
+      TRUE ~ NA_real_
+    ),
+    significance_letter = case_when(
+      is.na(p_val) ~ "",
+      p_val < 0.001 ~ "a",
+      p_val < 0.01 ~ "b", 
+      p_val < 0.05 ~ "c",
+      TRUE ~ ""
+    ),
+    result_with_sig = paste0(result, ifelse(significance_letter == "", "", paste0(" ", significance_letter)))
+  )
+
+table2 <- table2 %>%
+  dplyr::select(Year = year, Date = date, Treatment = treatment, variable, result_with_sig) %>%
+  pivot_wider(names_from = variable, values_from = result_with_sig)
+
+# Format table with proper date formatting and year grouping
+table2 <- table2 %>%
+  mutate(
+    Year = as.character(Year),
+    Date = format(as.Date(Date), "%B %d")  # Format as "July 17"
+  ) %>%
+  arrange(Year, as.Date(paste(Year, Date), format = "%Y %B %d"), Treatment) %>%
+  group_by(Year) %>%
+  mutate(
+    Year = ifelse(row_number() == 1, Year, ""),  # Show year only once per group
+    date_order = as.Date(paste(ifelse(Year == "", first(Year), Year), Date), format = "%Y %B %d")
+  ) %>%
+  ungroup() %>%
+  arrange(date_order, Treatment) %>%
+  dplyr::select(-date_order)
+
+# Calculate ANOVA for source of variation
+aov_ammonium <- aov(ammonia_ppm ~ year * date * treatment, data = df)
+aov_nitrate <- aov(nitrate_ppm ~ year * date * treatment, data = df)
+aov_total_n <- aov(total_inorganic_n ~ year * date * treatment, data = df)
+
+# Extract p-values for source of variation
+source_pvals <- tibble(
+  source = c("Date", "Treatment", "Date × Treatment"),
+  ammonium = summary(aov_ammonium)[[1]][c(2, 3, 6), "Pr(>F)"],
+  nitrate = summary(aov_nitrate)[[1]][c(2, 3, 6), "Pr(>F)"],
+  total_n = summary(aov_total_n)[[1]][c(2, 3, 6), "Pr(>F)"]
+) %>%
+  mutate(
+    across(c(ammonium, nitrate, total_n), ~ case_when(
+      .x < 0.001 ~ "< 0.001",
+      .x < 0.01 ~ sprintf("%.3f", .x),
+      TRUE ~ sprintf("%.2f", .x)
+    ))
+  )
+
+# Create source of variation rows
+source_rows <- source_pvals %>%
+  mutate(
+    Year = "",
+    Date = "",
+    Treatment = source,
+    .before = 1
+  ) %>%
+  dplyr::select(-source)
+
+# Add separator and source rows
+separator_row <- tibble(
+  Year = "Source of Variation",
+  Date = "",
+  Treatment = "",
+  ammonium = "",
+  nitrate = "",
+  total_n = ""
+)
+
+# Identify date breaks for horizontal lines
+table2_with_breaks <- table2 %>%
+  mutate(
+    date_group = ifelse(Year != "", Date, lag(Date, default = "")),
+    is_new_date = Date != lag(Date, default = "")
+  )
+
+table2_with_source <- bind_rows(table2_with_breaks, separator_row, source_rows)
+
+table2_gt <- table2_with_source %>%
+  gt() %>%
+  tab_header(title = md("**Table 2. Salt-extractable inorganic nitrogen**")) %>%
+  cols_label(
+    ammonium = md("Ammonium<br>(mg kg<sup>-1</sup>)"),
+    nitrate = md("Nitrate<br>(mg kg<sup>-1</sup>)"),
+    total_n = md("Total Inorganic N<br>(mg kg<sup>-1</sup>)")
+  ) %>%
+  # Add horizontal lines between different dates
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_date == TRUE & !is.na(is_new_date))
+  ) %>%
+  # Style the source of variation section
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) %>%
+  # Hide the helper columns
+  cols_hide(columns = c(date_group, is_new_date)) %>%
+  tab_footnote(
+    footnote = "Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
+    locations = cells_title(groups = "title")
+  )
+
+# Save in multiple formats for different uses
+gtsave(table2_gt, filename = "tables/table2_salt_extractable.html")  # For viewing/web
+gtsave(table2_gt, filename = "tables/table2_salt_extractable.rtf")   # For Word documents - BEST for Word!
+
+# Alternative: Save as PNG for inserting as image in Word
+gtsave(table2_gt, filename = "tables/table2_salt_extractable.png", expand = 10)
+```
 ```{r}
 df <- read_csv("data/clean_flux.csv")  %>% 
   clean_names() %>%

@@ -61,3 +61,31 @@ compare_df_cols(soil_2023, soil_2024)
 # Join the two data frames
 soil_combined <- bind_rows(soil_2023, soil_2024) %>%
   arrange(date, plot)
+
+# Add treatment information
+trt <- read_csv("data/metadata/plot_treatments.csv") %>%
+  clean_names() %>%
+  # add leading zero to plot numbers
+  mutate(plot = str_pad(plot, width = 2, side = "left", pad = "0")) %>%
+  select(!growing_season)
+
+trt_2023 <- trt %>%
+  filter(date == "2023-07-01")
+
+trt_2024 <- trt %>%
+  filter(date == "2024-07-01")
+
+trt_year <- bind_rows(
+  trt_2023 %>% mutate(year = 2023),
+  trt_2024 %>% mutate(year = 2024)
+) %>%
+  select(plot, year, treatment)
+
+df <- soil_combined %>%
+  mutate(
+    year = year(date)
+  ) %>%
+  left_join(trt_year, by = c("plot", "year"))
+
+# Write cleaned soil data to CSV
+write_csv(df, "data/soils/cleaned_soil_data.csv")
