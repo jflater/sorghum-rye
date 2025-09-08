@@ -90,7 +90,9 @@ library(zoo)
 library(lubridate)
 library(janitor)
 ```
-
+# Table 1
+# Table 2
+Start with reading in the date that was cleaned in the 'scripts/clean_soil.R'
 ```{r}
 df <- read_csv("data/clean_flux.csv")  %>% 
   clean_names() %>%
