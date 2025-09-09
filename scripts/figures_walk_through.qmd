@@ -14,6 +14,15 @@ library(multcomp)
 library(gt)
 library(zoo)
 library(janitor)
+
+# Re-establish dplyr preferences after loading all packages
+if (requireNamespace("conflicted", quietly = TRUE)) {
+  library(conflicted)
+  conflicts_prefer(dplyr::select)
+  conflicts_prefer(dplyr::filter)
+  conflicts_prefer(dplyr::summarise)
+  cat("✓ Conflicts resolved: dplyr functions preferred\n")
+}
 ```
 
 # Plot Theme
@@ -746,7 +755,34 @@ table3_gt
 # Nitrate loss data 
 ndf <- read_csv("data/2023_2024_SABR_tile_cumulative_n.csv") %>%
   mutate(date = as.Date(date),
-         year = lubridate::year(date))
+         year = lubridate::year(date),
+         plot = str_pad(plot, width = 2, side = "left", pad = "0")) %>% 
+  dplyr::select(-growing_season, -treatment) %>% 
+  filter(year %in% c(2023, 2024))
+
+trt <- read_csv("data/metadata/plot_treatments.csv") %>%
+  clean_names() %>%
+  # add leading zero to plot numbers
+  mutate(plot = str_pad(plot, width = 2, side = "left", pad = "0")) %>%
+  dplyr::select(-growing_season)
+
+# compare columns
+compare_df_cols(ndf, trt)
+
+trt_2023 <- trt %>%
+  filter(date == "2023-07-01")
+
+trt_2024 <- trt %>%
+  filter(date == "2024-07-01")
+
+trt_year <- bind_rows(
+  trt_2023 %>% mutate(year = 2023),
+  trt_2024 %>% mutate(year = 2024)
+) %>%
+  dplyr::select(plot, year, treatment)
+
+ndf <- ndf %>%
+  left_join(trt_year, by = c("plot", "year"))
 
 # Check the data structure
 cat("N leaching data summary:\n")

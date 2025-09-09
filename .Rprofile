@@ -14,6 +14,11 @@ if (requireNamespace("conflicted", quietly = TRUE)) {
   # Set other common preferences
   conflicts_prefer(lubridate::date, .quiet = TRUE)
 
+  # Handle multcomp conflicts (if package is available)
+  if (requireNamespace("multcomp", quietly = TRUE)) {
+    conflicts_prefer(dplyr::select, .quiet = TRUE) # Ensure dplyr::select wins over multcomp
+  }
+
   cat("✓ Function conflicts resolved with dplyr preferences\n")
 } else {
   cat("Note: Install 'conflicted' package for better function conflict management\n")
