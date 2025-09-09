@@ -2,6 +2,22 @@
 title: "Sorghum and Rye Project Figures"
 format: html
 ---
+
+# Load libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggtext)
+library(ggpubr)
+library(emmeans)
+library(multcomp)
+library(gt)
+library(zoo)
+library(janitor)
+```
+
+# Plot Theme
+
 ```{r}
 # Hokusai-inspired color palette
 hokusai_colors <- c(
@@ -81,18 +97,13 @@ scale_fill_hokusai_d <- function() {
 
 
 ```
-```{r}
-library(tidyverse)
-library(lubridate)
-library(ggtext)
-library(ggpubr)
-library(emmeans)
-library(multcomp)
-library(gt)
-library(zoo)
-library(janitor)
-```
+
 # Table 1
+
+```{r}
+
+```
+
 # Table 2
 Start with reading in the date that was cleaned in the 'scripts/clean_soil.R'
 
@@ -310,6 +321,8 @@ gtsave(table2_gt, filename = "tables/table2_salt_extractable.rtf")   # For Word 
 # Alternative: Save as PNG for inserting as image in Word
 gtsave(table2_gt, filename = "tables/table2_salt_extractable.png", expand = 10)
 ```
+
+# Table 3
 ```{r}
 df <- read_csv("data/clean_flux.csv")  %>% 
   clean_names() %>%
@@ -325,7 +338,6 @@ trt <- read_csv("data/metadata/plot_treatments.csv") %>%
 compare_df_cols(df, trt)
 ```
 
-# Plot Treatments
 
 ```{r}
 trt_2023 <- trt %>%
