@@ -324,120 +324,63 @@ gtsave(table2_gt, filename = "tables/table2_salt_extractable.png", expand = 10)
 
 # Table 3
 ```{r}
-df <- read_csv("data/clean_flux.csv")  %>% 
-  clean_names() %>%
-  rename(date = year_month_day) 
+df <- read_csv("data/cleaned_flux_data.csv") %>%
+  mutate(date = as.Date(date))  # Ensure date is proper Date class
 
-trt <- read_csv("data/metadata/plot_treatments.csv") %>% 
-  clean_names()  %>% 
-  # add leading zero to plot numbers
-  mutate(plot = str_pad(plot, width = 2, side = "left", pad = "0")) %>%
-  select(!growing_season)
+str(df)
 
-# compare columns
-compare_df_cols(df, trt)
-```
+# Check data structure before interpolation
+cat("Date range:", range(df$date, na.rm = TRUE), "\n")
+cat("Unique treatments:", unique(df$treatment), "\n")
+cat("Sample dates per plot:\n")
+df %>% count(plot, treatment, year) %>% head()
 
-
-```{r}
-trt_2023 <- trt %>%
-  filter(date == "2023-07-01")
-
-trt_2024 <- trt %>%
-  filter(date == "2024-07-01")
-```
-
-A barplot of the flux data over time facted by plot and RowvsInterrow
-
-```{r}
-trt_year <- bind_rows(
-  trt_2023 %>% mutate(year = 2023),
-  trt_2024 %>% mutate(year = 2024)
-) %>% select(plot, year, treatment)
-
-df <- df %>%
-  mutate(plot = str_pad(plot, width = 2, pad = "0"),
-         year = year(date)) %>%
-  left_join(trt_year, by = c("plot", "year"))
-```
-
-```{r}
-head(df)
-summary(df)
-table(df$treatment, useNA = "ifany")
-df %>% count(year, plot)
-df %>% filter(is.na(treatment))
-anti_join(df, trt_2023 %>% mutate(year = 2023) %>% select(plot, year), by = c("plot", "year"))
-anti_join(df, trt_2024 %>% mutate(year = 2024) %>% select(plot, year), by = c("plot", "year"))
-```
-
-```{r}
-# sanity checks
-table(df$treatment, useNA = "ifany")
-range(df$date, na.rm = TRUE)
-
-df %>%
-  filter(!is.na(treatment)) %>%
-  group_by(plot, rowvs_interrow, treatment, date) %>%
-  summarise(n = sum(!is.na(gnha_day_no_negative)), .groups = "drop") %>%
-  count(n) %>% arrange(n)
-```
-
-```{r}
-# prepare daily summary per treatment
+# 1) Daily means per plot/row/treatment combination
 daily_summary <- df %>%
-  filter(!is.na(treatment)) %>%
-  group_by(treatment, date) %>%
-  summarise(
-    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
-    se_flux   = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(sum(!is.na(gnha_day_no_negative))),
-    .groups = "drop"
-  )
-
-# time-series with ribbon (one panel per plot, columns = row_vs_interrow)
-ggplot(daily_summary, aes(x = date, y = mean_flux, fill = treatment)) +
-  geom_bar(stat = "identity", position = "dodge") +
-  facet_wrap(~ treatment) +
-  scale_x_date(date_breaks = "1 day", date_labels = "%b %d") +
-  labs(x = "Date", y = "GNHA Flux (g N/m²/day)", fill = "Treatment") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7))
-```
-```{r}
-# 1) daily means (no SE yet)
-daily_summary <- df %>%
-  filter(!is.na(treatment)) %>%
-  mutate(date = as.Date(date), year = lubridate::year(date)) %>%
   group_by(plot, rowvs_interrow, treatment, year, date) %>%
-  summarise(mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), .groups = "drop")
+  summarise(mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), .groups = "drop") %>%
+  arrange(plot, rowvs_interrow, treatment, year, date)
 
-# 2) distinct groups to iterate
+# 2) Distinct groups to iterate
 groups <- daily_summary %>%
   distinct(plot, rowvs_interrow, treatment, year) %>%
   arrange(plot, rowvs_interrow, treatment, year)
 
-# 3) iterate per group (explicit, easy to debug)
+cat("Interpolating for", nrow(groups), "unique plot/row/treatment/year combinations\n")
+
+# 3) Interpolate per group with better error handling
 library(purrr)
 interp <- pmap_dfr(
   groups,
   function(plot, rowvs_interrow, treatment, year) {
     sub <- daily_summary %>%
-      filter(plot == !!plot, rowvs_interrow == !!rowvs_interrow, treatment == !!treatment, year == !!year) %>%
+      filter(plot == !!plot, rowvs_interrow == !!rowvs_interrow, 
+             treatment == !!treatment, year == !!year) %>%
       arrange(date)
 
+    # Define interpolation range (only for actual growing season)
     start <- as.Date(paste0(year, "-01-01"))
     end   <- as.Date(paste0(year, "-12-31"))
     days  <- seq(start, end, by = "day")
 
-    if (nrow(sub) == 0 || all(is.na(sub$mean_flux))) {
+    if (nrow(sub) == 0 || all(is.na(sub$mean_flux)) || nrow(sub) < 2) {
+      # Need at least 2 points to interpolate
       mean_lin <- rep(NA_real_, length(days))
     } else {
-      mean_lin <- approx(
-        x = as.numeric(sub$date[!is.na(sub$mean_flux)]),
-        y = sub$mean_flux[!is.na(sub$mean_flux)],
-        xout = as.numeric(days),
-        rule = 2, ties = "ordered"
-      )$y
+      # Remove NA values for interpolation
+      valid_data <- sub[!is.na(sub$mean_flux), ]
+      
+      if (nrow(valid_data) < 2) {
+        mean_lin <- rep(NA_real_, length(days))
+      } else {
+        mean_lin <- approx(
+          x = as.numeric(valid_data$date),
+          y = valid_data$mean_flux,
+          xout = as.numeric(days),
+          rule = 1,  # No extrapolation beyond data range
+          ties = "ordered"
+        )$y
+      }
     }
 
     tibble(
@@ -450,8 +393,124 @@ interp <- pmap_dfr(
     )
   }
 )
+# Calculate cumulative N2O loss per treatment per year
+cumulative_n2o <- interp %>%
+  # First, get daily mean per treatment/year (across all plots)
+  group_by(treatment, year, date) %>%
+  summarise(
+    daily_mean_flux = mean(mean_flux_lin, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Remove NA values and calculate cumulative sum
+  filter(!is.na(daily_mean_flux)) %>%
+  arrange(treatment, year, date) %>%
+  group_by(treatment, year) %>%
+  mutate(
+    cumulative_flux = cumsum(daily_mean_flux)
+  ) %>%
+  ungroup()
 
-# 4) aggregate by treatment+year and compute SE now (on interpolated daily values)
+# Get final cumulative values per treatment per year
+annual_cumulative_n2o <- cumulative_n2o %>%
+  group_by(treatment, year) %>%
+  summarise(
+    total_days = n(),
+    final_cumulative_n2o = max(cumulative_flux, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Display results
+cat("Annual cumulative N2O loss by treatment:\n")
+print(annual_cumulative_n2o)
+
+# Statistical analysis of cumulative N2O loss differences by treatment and year
+# Need plot-level cumulative values for proper statistical testing
+plot_cumulative_n2o <- interp %>%
+  # Calculate cumulative flux for each plot/treatment/year combination
+  arrange(plot, rowvs_interrow, treatment, year, date) %>%
+  group_by(plot, rowvs_interrow, treatment, year) %>%
+  mutate(
+    cumulative_flux_plot = cumsum(ifelse(is.na(mean_flux_lin), 0, mean_flux_lin))
+  ) %>%
+  # Get final cumulative value per plot
+  summarise(
+    final_cumulative_plot = max(cumulative_flux_plot, na.rm = TRUE),
+    n_days = n(),
+    .groups = "drop"
+  ) %>%
+  # Remove infinite values (from plots with no data)
+  filter(is.finite(final_cumulative_plot))
+
+# Check sample sizes
+cat("Sample sizes by treatment and year:\n")
+plot_cumulative_n2o %>% 
+  count(treatment, year) %>% 
+  print()
+
+# ANOVA for each year separately
+n2o_stats_by_year <- plot_cumulative_n2o %>%
+  group_by(year) %>%
+  group_modify(~{
+    if(length(unique(.x$treatment)) < 2) {
+      return(tibble(
+        anova_p = NA_real_,
+        treatments = paste(unique(.x$treatment), collapse = ", "),
+        note = "Less than 2 treatments"
+      ))
+    }
+    
+    # ANOVA
+    aov_result <- aov(final_cumulative_plot ~ treatment, data = .x)
+    anova_p <- summary(aov_result)[[1]][1, "Pr(>F)"]
+    
+    # Pairwise comparisons if ANOVA is significant
+    if(anova_p < 0.05) {
+      pairwise_result <- pairwise.t.test(.x$final_cumulative_plot, .x$treatment, 
+                                        p.adjust.method = "bonferroni")
+      pairwise_p <- pairwise_result$p.value
+      
+      # Extract pairwise comparisons
+      pairwise_summary <- capture.output(print(pairwise_result))
+      
+      return(tibble(
+        anova_p = anova_p,
+        treatments = paste(unique(.x$treatment), collapse = ", "),
+        note = ifelse(anova_p < 0.001, "ANOVA: p < 0.001", 
+                     paste("ANOVA: p =", round(anova_p, 3))),
+        pairwise_comparisons = paste(pairwise_summary, collapse = "; ")
+      ))
+    } else {
+      return(tibble(
+        anova_p = anova_p,
+        treatments = paste(unique(.x$treatment), collapse = ", "),
+        note = paste("ANOVA: p =", round(anova_p, 3), "(not significant)"),
+        pairwise_comparisons = "No significant differences"
+      ))
+    }
+  }) %>%
+  ungroup()
+
+# Display results
+cat("\n=== STATISTICAL ANALYSIS: N2O Loss by Treatment ===\n")
+print(n2o_stats_by_year)
+
+# Summary statistics by treatment and year
+n2o_summary_stats <- plot_cumulative_n2o %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_cumulative = mean(final_cumulative_plot, na.rm = TRUE),
+    se_cumulative = sd(final_cumulative_plot, na.rm = TRUE) / sqrt(n()),
+    sd_cumulative = sd(final_cumulative_plot, na.rm = TRUE),
+    min_cumulative = min(final_cumulative_plot, na.rm = TRUE),
+    max_cumulative = max(final_cumulative_plot, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("\n=== SUMMARY STATISTICS: Cumulative N2O Loss ===\n")
+print(n2o_summary_stats)
+
+# create aggregated data for plotting 
 agg_by_trt_year <- interp %>%
   group_by(treatment, year, date) %>%
   summarise(
@@ -460,6 +519,474 @@ agg_by_trt_year <- interp %>%
     se_flux = ifelse(n_plots > 1, sd(mean_flux_lin, na.rm = TRUE) / sqrt(n_plots), NA_real_),
     .groups = "drop"
   )
+
+```
+
+## Table 3: Annual N2O Loss by Treatment
+```{r}
+# ---- Table 3: Annual N2O Loss with Statistical Significance ---------------
+
+# Function to get significance letters for each year
+get_n2o_significance <- function(data, year_val) {
+  year_data <- data %>% filter(year == year_val)
+  
+  if(nrow(year_data) == 0 || length(unique(year_data$treatment)) < 2) {
+    return(tibble(year = year_val, p_value = NA_real_))
+  }
+  
+  # ANOVA for this year
+  aov_result <- aov(final_cumulative_plot ~ treatment, data = year_data)
+  anova_p <- summary(aov_result)[[1]][1, "Pr(>F)"]
+  
+  # Debug output
+  cat("Year", year_val, "ANOVA p-value:", round(anova_p, 4), "\n")
+  
+  # Show treatment means for context
+  treatment_means <- year_data %>%
+    group_by(treatment) %>%
+    summarise(
+      n = n(),
+      mean_n2o = mean(final_cumulative_plot, na.rm = TRUE),
+      sd_n2o = sd(final_cumulative_plot, na.rm = TRUE),
+      .groups = "drop"
+    )
+  cat("Treatment means for", year_val, ":\n")
+  print(treatment_means)
+  
+  return(tibble(
+    year = year_val,
+    p_value = anova_p
+  ))
+}
+
+# Check what data we have before significance testing
+cat("\n=== N2O DATA SUMMARY FOR SIGNIFICANCE TESTING ===\n")
+plot_cumulative_n2o %>%
+  group_by(year, treatment) %>%
+  summarise(
+    n_plots = n(),
+    mean_n2o = round(mean(final_cumulative_plot, na.rm = TRUE), 2),
+    sd_n2o = round(sd(final_cumulative_plot, na.rm = TRUE), 2),
+    .groups = "drop"
+  ) %>%
+  print()
+
+# Get significance for each year
+cat("\n=== SIGNIFICANCE TESTING ===\n")
+n2o_pvals_2023 <- get_n2o_significance(plot_cumulative_n2o, 2023)
+n2o_pvals_2024 <- get_n2o_significance(plot_cumulative_n2o, 2024)
+
+cat("\nP-values:\n")
+print(bind_rows(n2o_pvals_2023, n2o_pvals_2024))
+
+# Prepare summary data with mean ± SD (not SE for this table)
+n2o_table_data <- plot_cumulative_n2o %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_n2o = mean(final_cumulative_plot, na.rm = TRUE),
+    sd_n2o = sd(final_cumulative_plot, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    result = sprintf("%.2f ± %.2f", mean_n2o, sd_n2o)
+  )
+
+# Add significance letters
+n2o_table_with_sig <- n2o_table_data %>%
+  left_join(
+    bind_rows(n2o_pvals_2023, n2o_pvals_2024) %>%
+      mutate(
+        significance_letter = case_when(
+          is.na(p_value) ~ "",
+          p_value < 0.001 ~ "a",
+          p_value < 0.01 ~ "b",
+          p_value < 0.05 ~ "c", 
+          TRUE ~ ""
+        )
+      ) %>%
+      dplyr::select(year, significance_letter),
+    by = "year"
+  ) %>%
+  mutate(
+    significance_letter = replace_na(significance_letter, ""),
+    result_with_sig = paste0(result, ifelse(significance_letter == "", "", paste0(" ", significance_letter)))
+  )
+
+# Calculate 2-year totals
+two_year_totals <- plot_cumulative_n2o %>%
+  group_by(treatment, plot, rowvs_interrow) %>%
+  summarise(
+    total_2yr_n2o = sum(final_cumulative_plot, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(treatment) %>%
+  summarise(
+    n_plots = n(),
+    mean_n2o = mean(total_2yr_n2o, na.rm = TRUE),
+    sd_n2o = sd(total_2yr_n2o, na.rm = TRUE),
+    result = sprintf("%.2f ± %.2f", mean_n2o, sd_n2o),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    year = "2023-2024",
+    significance_letter = "",  # Will add 2-year comparison if needed
+    result_with_sig = result
+  )
+
+# Combine annual and 2-year data
+table3_data <- bind_rows(
+  n2o_table_with_sig %>% 
+    mutate(year = as.character(year)) %>%
+    dplyr::select(year, treatment, result_with_sig),
+  two_year_totals %>%
+    dplyr::select(year, treatment, result_with_sig)
+) %>%
+  mutate(
+    year_order = case_when(
+      year == "2023" ~ 1,
+      year == "2024" ~ 2, 
+      year == "2023-2024" ~ 3,
+      TRUE ~ 4
+    )
+  ) %>%
+  arrange(year_order, treatment)
+
+# Calculate ANOVA for source of variation (using individual year data)
+combined_data <- plot_cumulative_n2o %>%
+  mutate(year_factor = as.factor(year))
+
+aov_combined <- aov(final_cumulative_plot ~ year_factor * treatment, data = combined_data)
+
+# Extract source of variation p-values
+source_pvals_n2o <- tibble(
+  source = c("Year", "Treatment", "Year × Treatment"),
+  p_value = summary(aov_combined)[[1]][1:3, "Pr(>F)"]
+) %>%
+  mutate(
+    n2o = case_when(
+      p_value < 0.001 ~ "< 0.001",
+      p_value < 0.01 ~ sprintf("%.3f", p_value),
+      TRUE ~ sprintf("%.2f", p_value)
+    )
+  )
+
+# Create source of variation rows
+source_rows_n2o <- source_pvals_n2o %>%
+  mutate(
+    year = "",
+    treatment = source,
+    result_with_sig = n2o
+  ) %>%
+  dplyr::select(year, treatment, result_with_sig)
+
+# Add separator row
+separator_row_n2o <- tibble(
+  year = "Source of Variation",
+  treatment = "",
+  result_with_sig = ""
+)
+
+# Combine all sections
+table3_complete <- bind_rows(
+  table3_data %>% dplyr::select(year, treatment, result_with_sig),
+  separator_row_n2o,
+  source_rows_n2o
+) %>%
+  mutate(
+    # Show year only once per section
+    year_display = case_when(
+      year == "Source of Variation" ~ year,
+      year != lag(year, default = "") ~ year,
+      TRUE ~ ""
+    ),
+    # Mark section breaks
+    is_new_section = year != lag(year, default = "") & year != "Source of Variation"
+  )
+
+# Create gt table
+table3_gt <- table3_complete %>%
+  dplyr::select(Year = year_display, Treatment = treatment, `N2O Loss` = result_with_sig, is_new_section) %>%
+  gt() %>%
+  tab_header(title = md("**Table 3. Annual nitrous oxide loss**")) %>%
+  cols_label(
+    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(g N ha<sup>-1</sup>)")
+  ) %>%
+  # Add horizontal lines between sections
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_section == TRUE & !is.na(is_new_section))
+  ) %>%
+  # Style the source of variation section
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) %>%
+  # Hide helper column
+  cols_hide(columns = is_new_section) %>%
+  tab_footnote(
+    footnote = "Values are mean ± standard deviation. Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
+    locations = cells_title(groups = "title")
+  )
+
+# Save table
+gtsave(table3_gt, filename = "tables/table3_n2o_loss.html")
+gtsave(table3_gt, filename = "tables/table3_n2o_loss.rtf")
+gtsave(table3_gt, filename = "tables/table3_n2o_loss.png", expand = 10)
+
+# Display the table
+table3_gt
+```
+
+```{r}
+# Nitrate loss data 
+ndf <- read_csv("data/2023_2024_SABR_tile_cumulative_n.csv") %>%
+  mutate(date = as.Date(date),
+         year = lubridate::year(date))
+
+# Check the data structure
+cat("N leaching data summary:\n")
+str(ndf)
+cat("Date range:", range(ndf$date, na.rm = TRUE), "\n")
+cat("Treatments:", unique(ndf$treatment), "\n")
+
+# Get annual cumulative N leaching per plot
+annual_n_leaching <- ndf %>%
+  group_by(plot, treatment, year) %>%
+  summarise(
+    max_cumulative_n = max(cumulative_n_loss_mg, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Remove infinite values (plots with no data)
+  filter(is.finite(max_cumulative_n))
+
+# Check sample sizes
+cat("N leaching sample sizes by treatment and year:\n")
+annual_n_leaching %>% 
+  count(treatment, year) %>% 
+  print()
+
+# Statistical analysis for N leaching by year
+leaching_stats_by_year <- annual_n_leaching %>%
+  group_by(year) %>%
+  group_modify(~{
+    if(length(unique(.x$treatment)) < 2) {
+      return(tibble(
+        anova_p = NA_real_,
+        treatments = paste(unique(.x$treatment), collapse = ", "),
+        note = "Less than 2 treatments"
+      ))
+    }
+    
+    # ANOVA
+    aov_result <- aov(max_cumulative_n ~ treatment, data = .x)
+    anova_p <- summary(aov_result)[[1]][1, "Pr(>F)"]
+    
+    cat("Year", unique(.x$year), "N leaching ANOVA p-value:", round(anova_p, 4), "\n")
+    
+    return(tibble(
+      anova_p = anova_p,
+      treatments = paste(unique(.x$treatment), collapse = ", "),
+      note = ifelse(anova_p < 0.05, 
+                   paste("ANOVA: p =", round(anova_p, 3)),
+                   paste("ANOVA: p =", round(anova_p, 3), "(not significant)"))
+    ))
+  }) %>%
+  ungroup()
+
+# Summary statistics for N leaching
+n_leaching_summary <- annual_n_leaching %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_leaching = mean(max_cumulative_n, na.rm = TRUE),
+    sd_leaching = sd(max_cumulative_n, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("\n=== N LEACHING SUMMARY ===\n")
+print(n_leaching_summary)
+
+# Prepare N leaching data for Table 3 integration
+n_leaching_table_data <- n_leaching_summary %>%
+  mutate(
+    result = sprintf("%.0f ± %.0f", mean_leaching, sd_leaching)  # No decimals for mg values
+  ) %>%
+  dplyr::select(year, treatment, result)
+
+# Calculate 2-year totals for N leaching
+two_year_leaching <- annual_n_leaching %>%
+  group_by(treatment, plot) %>%
+  summarise(
+    total_2yr_leaching = sum(max_cumulative_n, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(treatment) %>%
+  summarise(
+    mean_leaching = mean(total_2yr_leaching, na.rm = TRUE),
+    sd_leaching = sd(total_2yr_leaching, na.rm = TRUE),
+    result = sprintf("%.0f ± %.0f", mean_leaching, sd_leaching),
+    .groups = "drop"
+  ) %>%
+  mutate(year = "2023-2024") %>%
+  dplyr::select(year, treatment, result)
+
+# Combine annual and 2-year N leaching data
+all_n_leaching_data <- bind_rows(
+  n_leaching_table_data %>% mutate(year = as.character(year)),
+  two_year_leaching
+)
+
+# Source of variation for N leaching
+combined_leaching_data <- annual_n_leaching %>%
+  mutate(year_factor = as.factor(year))
+
+aov_leaching <- aov(max_cumulative_n ~ year_factor * treatment, data = combined_leaching_data)
+
+source_pvals_leaching <- tibble(
+  source = c("Year", "Treatment", "Year × Treatment"),
+  p_value = summary(aov_leaching)[[1]][1:3, "Pr(>F)"]
+) %>%
+  mutate(
+    n_leaching = case_when(
+      p_value < 0.001 ~ "< 0.001",
+      p_value < 0.01 ~ sprintf("%.3f", p_value),
+      TRUE ~ sprintf("%.2f", p_value)
+    )
+  )
+
+cat("\n=== N LEACHING SOURCE OF VARIATION ===\n")
+print(source_pvals_leaching)
+```
+
+# Updated Table 3 with N Leaching Column
+```{r}
+# ---- Updated Table 3: N2O Loss + N Leaching ---------------
+
+# Combine N2O data with N leaching data
+# First, get the N2O data in the right format
+n2o_formatted <- bind_rows(
+  n2o_table_with_sig %>% 
+    mutate(year = as.character(year)) %>%
+    dplyr::select(year, treatment, n2o_result = result_with_sig),
+  two_year_totals %>%
+    dplyr::select(year, treatment, n2o_result = result_with_sig)
+) %>%
+  mutate(
+    year_order = case_when(
+      year == "2023" ~ 1,
+      year == "2024" ~ 2, 
+      year == "2023-2024" ~ 3,
+      TRUE ~ 4
+    )
+  ) %>%
+  arrange(year_order, treatment)
+
+# Join N2O with N leaching data
+combined_table_data <- n2o_formatted %>%
+  left_join(all_n_leaching_data, by = c("year", "treatment"), suffix = c("", "_leaching")) %>%
+  mutate(
+    n_leaching_result = result,
+    # Calculate total environmental N cost (placeholder - you can modify this calculation)
+    # For now, just combining the numeric values conceptually
+    total_env_cost = "TBD"  # Will be calculated later
+  ) %>%
+  dplyr::select(year, year_order, treatment, n2o_result, n_leaching_result, total_env_cost)
+
+# Prepare source of variation rows with all columns
+source_combined <- tibble(
+  source = c("Year", "Treatment", "Year × Treatment"),
+  n2o = source_pvals_n2o$n2o,
+  n_leaching = source_pvals_leaching$n_leaching,
+  total_env_cost = c("TBD", "TBD", "TBD")  # Will be calculated when we define total cost
+) %>%
+  mutate(
+    year = "",
+    year_order = 5,
+    treatment = source,
+    n2o_result = n2o,
+    n_leaching_result = n_leaching,
+    total_env_cost = total_env_cost
+  ) %>%
+  dplyr::select(year, year_order, treatment, n2o_result, n_leaching_result, total_env_cost)
+
+# Add separator row
+separator_combined <- tibble(
+  year = "Source of Variation",
+  year_order = 4,
+  treatment = "",
+  n2o_result = "",
+  n_leaching_result = "",
+  total_env_cost = ""
+)
+
+# Combine all sections
+table3_updated <- bind_rows(
+  combined_table_data,
+  separator_combined,
+  source_combined
+) %>%
+  arrange(year_order, treatment) %>%
+  mutate(
+    # Show year only once per section
+    year_display = case_when(
+      year == "Source of Variation" ~ year,
+      year != lag(year, default = "") ~ year,
+      TRUE ~ ""
+    ),
+    # Mark section breaks
+    is_new_section = year != lag(year, default = "") & year != "Source of Variation"
+  )
+
+# Create updated gt table with N leaching column
+table3_updated_gt <- table3_updated %>%
+  dplyr::select(
+    Year = year_display, 
+    Treatment = treatment, 
+    `N2O Loss` = n2o_result,
+    `N Leaching` = n_leaching_result,
+    `Total Environmental Cost` = total_env_cost,
+    is_new_section
+  ) %>%
+  gt() %>%
+  tab_header(title = md("**Table 3. Annual nitrogen losses**")) %>%
+  cols_label(
+    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(g N ha<sup>-1</sup>)"),
+    `N Leaching` = md("N Leaching<br>(mg N)"),
+    `Total Environmental Cost` = md("Total Environmental Cost<br>(units TBD)")
+  ) %>%
+  # Add horizontal lines between sections
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_section == TRUE & !is.na(is_new_section))
+  ) %>%
+  # Style the source of variation section
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) %>%
+  # Hide helper column
+  cols_hide(columns = is_new_section) %>%
+  tab_footnote(
+    footnote = "Values are mean ± standard deviation. Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
+    locations = cells_title(groups = "title")
+  )
+
+# Save updated table
+gtsave(table3_updated_gt, filename = "tables/table3_nitrogen_losses.html")
+gtsave(table3_updated_gt, filename = "tables/table3_nitrogen_losses.rtf")
+gtsave(table3_updated_gt, filename = "tables/table3_nitrogen_losses.png", expand = 10)
+
+# Display the updated table
+table3_updated_gt
 ```
 
 ```{r}
@@ -526,7 +1053,7 @@ ggplot(agg_by_trt_year,
 ```{r}
 # First, mark which days had actual measurements
 actual_days <- daily_summary %>%
-  select(treatment, date) %>%
+  dplyr::select(treatment, date) %>%
   distinct() %>%
   mutate(measured = TRUE)
 

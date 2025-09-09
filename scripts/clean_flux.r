@@ -1,4 +1,6 @@
 library(tidyverse)
+library(janitor)
+library(lubridate)
 
 df <- read_csv("data/clean_flux.csv") %>%
   clean_names() %>%
@@ -56,3 +58,6 @@ df %>%
   summarise(n = sum(!is.na(gnha_day_no_negative)), .groups = "drop") %>%
   count(n) %>%
   arrange(n)
+
+# write cleaned data
+write_csv(df, "data/cleaned_flux_data.csv")
