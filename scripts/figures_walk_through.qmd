@@ -593,12 +593,12 @@ n2o_table_data <- plot_cumulative_n2o %>%
   group_by(treatment, year) %>%
   summarise(
     n_plots = n(),
-    mean_n2o = mean(final_cumulative_plot, na.rm = TRUE),
-    sd_n2o = sd(final_cumulative_plot, na.rm = TRUE),
+    mean_n2o = mean(final_cumulative_plot, na.rm = TRUE) / 1000,  # Convert g to kg
+    sd_n2o = sd(final_cumulative_plot, na.rm = TRUE) / 1000,      # Convert g to kg
     .groups = "drop"
   ) %>%
   mutate(
-    result = sprintf("%.2f ± %.2f", mean_n2o, sd_n2o)
+    result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o)  # More decimals needed for kg values
   )
 
 # Add significance letters
@@ -632,9 +632,9 @@ two_year_totals <- plot_cumulative_n2o %>%
   group_by(treatment) %>%
   summarise(
     n_plots = n(),
-    mean_n2o = mean(total_2yr_n2o, na.rm = TRUE),
-    sd_n2o = sd(total_2yr_n2o, na.rm = TRUE),
-    result = sprintf("%.2f ± %.2f", mean_n2o, sd_n2o),
+    mean_n2o = mean(total_2yr_n2o, na.rm = TRUE) / 1000,  # Convert g to kg
+    sd_n2o = sd(total_2yr_n2o, na.rm = TRUE) / 1000,      # Convert g to kg
+    result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o),    # More decimals for kg
     .groups = "drop"
   ) %>%
   mutate(
@@ -839,8 +839,8 @@ n_leaching_summary <- annual_n_leaching %>%
   group_by(treatment, year) %>%
   summarise(
     n_plots = n(),
-    mean_leaching = mean(max_cumulative_n, na.rm = TRUE),
-    sd_leaching = sd(max_cumulative_n, na.rm = TRUE),
+    mean_leaching = mean(max_cumulative_n, na.rm = TRUE) / 1000000,  # Convert mg to kg
+    sd_leaching = sd(max_cumulative_n, na.rm = TRUE) / 1000000,      # Convert mg to kg
     .groups = "drop"
   )
 
@@ -850,7 +850,7 @@ print(n_leaching_summary)
 # Prepare N leaching data for Table 3 integration
 n_leaching_table_data <- n_leaching_summary %>%
   mutate(
-    result = sprintf("%.0f ± %.0f", mean_leaching, sd_leaching)  # No decimals for mg values
+    result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching)  # 3 decimals for kg values
   ) %>%
   dplyr::select(year, treatment, result)
 
@@ -863,9 +863,9 @@ two_year_leaching <- annual_n_leaching %>%
   ) %>%
   group_by(treatment) %>%
   summarise(
-    mean_leaching = mean(total_2yr_leaching, na.rm = TRUE),
-    sd_leaching = sd(total_2yr_leaching, na.rm = TRUE),
-    result = sprintf("%.0f ± %.0f", mean_leaching, sd_leaching),
+    mean_leaching = mean(total_2yr_leaching, na.rm = TRUE) / 1000000,  # Convert mg to kg
+    sd_leaching = sd(total_2yr_leaching, na.rm = TRUE) / 1000000,      # Convert mg to kg
+    result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching),       # 3 decimals for kg
     .groups = "drop"
   ) %>%
   mutate(year = "2023-2024") %>%
@@ -991,9 +991,9 @@ table3_updated_gt <- table3_updated %>%
   gt() %>%
   tab_header(title = md("**Table 3. Annual nitrogen losses**")) %>%
   cols_label(
-    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(g N ha<sup>-1</sup>)"),
-    `N Leaching` = md("N Leaching<br>(mg N)"),
-    `Total Environmental Cost` = md("Total Environmental Cost<br>(units TBD)")
+    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
+    `N Leaching` = md("N Leaching<br>(kg N)"),
+    `Total Environmental Cost` = md("Total Environmental Cost<br>(kg N equivalent)")
   ) %>%
   # Add horizontal lines between sections
   tab_style(

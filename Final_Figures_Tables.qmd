@@ -1,0 +1,642 @@
+---
+title: "Sorghum and Rye Project: Final Figures and Tables"
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-overflow: wrap
+    fig-width: 10
+    fig-height: 6
+    embed-resources: true
+    theme: default
+execute:
+  echo: true
+  warning: false
+  message: false
+  error: false
+  cache: false
+---
+
+# Setup and Data Loading
+
+```{r setup}
+#| message: false
+#| warning: false
+
+# Load required packages
+library(tidyverse)
+library(lubridate)
+library(gt)
+library(janitor)
+library(broom)
+
+# Re-establish dplyr preferences after loading packages
+if (requireNamespace("conflicted", quietly = TRUE)) {
+  library(conflicted)
+  conflicts_prefer(dplyr::select)
+  conflicts_prefer(dplyr::filter)
+  conflicts_prefer(dplyr::summarise)
+}
+
+# Custom theme for consistency
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      panel.background = element_rect(fill = "#F9F6ED", color = NA),
+      plot.background = element_rect(fill = "#F9F6ED", color = NA),
+      panel.grid.major = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor = element_blank(),
+      text = element_text(color = "#464A4F"),
+      axis.text = element_text(color = "#464A4F"),
+      axis.title = element_text(face = "bold"),
+      plot.title = element_text(face = "bold", size = base_size * 1.2),
+      strip.text = element_text(face = "bold"),
+      strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      legend.background = element_rect(fill = "#F9F6ED"),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.spacing = unit(2, "lines")
+    )
+}
+
+# Treatment colors
+treatment_colors <- c(
+  "Sorghum" = "#714C36",
+  "Sorghum + Rye" = "#2B4B72", 
+  "Corn" = "#1A3B57",
+  "Soy" = "#B7B5B3"
+)
+
+scale_color_treatments <- function() scale_color_manual(values = treatment_colors)
+scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
+```
+
+# Data Import and Processing
+
+```{r data-import}
+#| message: false
+
+# Import soil nitrogen data
+# Nitrate and ammonia in ppm, not sure if moisture corrected
+soil_data <- read_csv("data/soils/cleaned_soil_data.csv") %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(
+    date = as.Date(date),
+    total_inorganic_n = ammonia_ppm + nitrate_ppm
+  ) 
+
+# Import flux data 
+# N2O flux in g N ha-1 day-1 
+flux_data <- read_csv("data/cleaned_flux_data.csv") %>%
+  mutate(date = as.Date(date)) 
+
+# Import nitrogen leaching data
+# Cumulative N loss in mg per day, same for nitrate and ammonium
+leaching_data <- read_csv("data/2023_2024_SABR_tile_cumulative_n.csv") %>%
+  clean_names() %>%
+  mutate(
+    date = as.Date(date),
+    year = year(date)
+  ) %>%
+  filter(year %in% c(2023, 2024)) %>%  # Filter out bad years
+  filter(!is.na(year))
+
+cat("✓ Data imported successfully\n")
+cat("Soil data:", nrow(soil_data), "observations\n")
+cat("Flux data:", nrow(flux_data), "observations\n") 
+cat("Leaching data:", nrow(leaching_data), "observations\n")
+# Print the class of year columns in each data frame
+cat("Soil data year column class:", class(soil_data$year), "\n")
+cat("Flux data year column class:", class(flux_data$year), "\n")
+cat("Leaching data year column class:", class(leaching_data$year), "\n")
+```
+
+# Helper Functions
+
+```{r helper-functions}
+# Function for pairwise t-tests within groups
+get_pairwise_pvals <- function(data, variable, group_vars) {
+  data %>%
+    group_by(across(all_of(group_vars))) %>%
+    group_modify(~ {
+      treatments <- unique(.x$treatment)
+      if (length(treatments) < 2) {
+        return(tibble(p_value = NA_real_))
+      }
+      
+      if (length(treatments) == 2) {
+        t_result <- t.test(.x[[variable]][.x$treatment == treatments[1]], 
+                          .x[[variable]][.x$treatment == treatments[2]])
+        return(tibble(p_value = t_result$p.value))
+      } else {
+        pairwise_result <- pairwise.t.test(.x[[variable]], .x$treatment, 
+                                          p.adjust.method = "none")
+        return(tibble(p_value = min(pairwise_result$p.value, na.rm = TRUE)))
+      }
+    }) %>%
+    ungroup()
+}
+
+# Function to add significance letters
+add_significance_letters <- function(data, p_col) {
+  data %>%
+    mutate(
+      significance_letter = case_when(
+        is.na({{ p_col }}) ~ "",
+        {{ p_col }} < 0.001 ~ "a",
+        {{ p_col }} < 0.01 ~ "b", 
+        {{ p_col }} < 0.05 ~ "c",
+        TRUE ~ ""
+      ),
+      result_with_sig = if_else(
+        significance_letter == "", 
+        result,
+        paste0(result, " ", significance_letter)
+      )
+    )
+}
+
+# Function to create ANOVA source tables
+create_source_table <- function(model_results) {
+  tibble(
+    source = c("Date", "Treatment", "Date × Treatment"),
+    p_value = summary(model_results)[[1]][c(2, 3, 6), "Pr(>F)"]
+  ) %>%
+    mutate(
+      formatted_p = case_when(
+        p_value < 0.001 ~ "< 0.001",
+        p_value < 0.01 ~ sprintf("%.3f", p_value),
+        TRUE ~ sprintf("%.2f", p_value)
+      )
+    )
+}
+```
+
+# Table 2: Salt-extractable Inorganic Nitrogen
+
+```{r table-2}
+#| label: tbl-soil-nitrogen
+#| tbl-cap: "Salt-extractable inorganic nitrogen"
+
+# Calculate summary statistics
+soil_summary <- soil_data %>%
+  group_by(year, date, treatment) %>%
+  summarise(
+    across(c(ammonia_ppm, nitrate_ppm, total_inorganic_n), 
+           list(mean = ~ mean(.x, na.rm = TRUE),
+                se = ~ sd(.x, na.rm = TRUE) / sqrt(sum(!is.na(.x))))),
+    .groups = "drop"
+  ) 
+
+# Get p-values for pairwise comparisons
+pvals_ammonium <- get_pairwise_pvals(soil_data, "ammonia_ppm", c("year", "date"))
+pvals_nitrate <- get_pairwise_pvals(soil_data, "nitrate_ppm", c("year", "date"))  
+pvals_total_n <- get_pairwise_pvals(soil_data, "total_inorganic_n", c("year", "date"))
+
+# Combine with p-values and format
+soil_table_data <- soil_summary %>%
+  left_join(pvals_ammonium %>% rename(ammonia_p = p_value), by = c("year", "date")) %>%
+  left_join(pvals_nitrate %>% rename(nitrate_p = p_value), by = c("year", "date")) %>%
+  left_join(pvals_total_n %>% rename(total_n_p = p_value), by = c("year", "date")) %>%
+  pivot_longer(
+    cols = c(ammonia_ppm_mean, ammonia_ppm_se, nitrate_ppm_mean, nitrate_ppm_se, 
+             total_inorganic_n_mean, total_inorganic_n_se),
+    names_to = c("variable", "stat"),
+    names_pattern = "(.*)_(mean|se)",
+    values_to = "value"
+  ) %>%
+  pivot_wider(names_from = stat, values_from = value) %>%
+  mutate(
+    result = sprintf("%.2f ± %.2f", mean, se),
+    p_val = case_when(
+      variable == "ammonia_ppm" ~ ammonia_p,
+      variable == "nitrate_ppm" ~ nitrate_p,
+      variable == "total_inorganic_n" ~ total_n_p
+    ),
+    variable = case_when(
+      variable == "ammonia_ppm" ~ "ammonium",
+      variable == "nitrate_ppm" ~ "nitrate", 
+      variable == "total_inorganic_n" ~ "total_n"
+    )
+  ) %>%
+  add_significance_letters(p_val) %>%
+  select(year, date, treatment, variable, result_with_sig) %>%
+  pivot_wider(names_from = variable, values_from = result_with_sig)
+
+# Format dates and years for display
+soil_table_formatted <- soil_table_data %>%
+  mutate(
+    year = as.character(year),
+    date = format(as.Date(date), "%B %d")
+  ) %>%
+  arrange(year, as.Date(paste(year, date), format = "%Y %B %d"), treatment) %>%
+  group_by(year) %>%
+  mutate(
+    year_display = if_else(row_number() == 1, year, ""),
+    is_new_date = date != lag(date, default = "")
+  ) %>%
+  ungroup()
+
+# Create ANOVA source of variation
+aov_ammonium <- aov(ammonia_ppm ~ year * date * treatment, data = soil_data)
+aov_nitrate <- aov(nitrate_ppm ~ year * date * treatment, data = soil_data)
+aov_total_n <- aov(total_inorganic_n ~ year * date * treatment, data = soil_data)
+
+source_variation <- tibble(
+  source = c("Date", "Treatment", "Date × Treatment"),
+  ammonium = summary(aov_ammonium)[[1]][c(2, 3, 6), "Pr(>F)"],
+  nitrate = summary(aov_nitrate)[[1]][c(2, 3, 6), "Pr(>F)"],
+  total_n = summary(aov_total_n)[[1]][c(2, 3, 6), "Pr(>F)"]
+) %>%
+  mutate(across(c(ammonium, nitrate, total_n), ~ case_when(
+    .x < 0.001 ~ "< 0.001",
+    .x < 0.01 ~ sprintf("%.3f", .x),
+    TRUE ~ sprintf("%.2f", .x)
+  ))) %>%
+  mutate(
+    year_display = "",
+    date = "",
+    treatment = source,
+    .before = 1
+  ) %>%
+  select(-source)
+
+# Combine data with source of variation
+separator_row <- tibble(
+  year_display = "Source of Variation", date = "", treatment = "",
+  ammonium = "", nitrate = "", total_n = "", is_new_date = FALSE
+)
+
+table2_complete <- bind_rows(
+  soil_table_formatted,
+  separator_row,
+  source_variation %>% mutate(is_new_date = FALSE)
+)
+
+# Create gt table
+table2_gt <- table2_complete %>%
+  select(-year) %>%
+  select(year_display, date, treatment, ammonium, nitrate, total_n, is_new_date) %>%
+  gt() %>%
+  tab_header(title = md("**Table 2. Salt-extractable inorganic nitrogen**")) %>%
+  cols_label(
+    year_display = "Year",
+    date = "Date", 
+    treatment = "Treatment",
+    ammonium = md("Ammonium<br>(mg kg<sup>-1</sup>)"),
+    nitrate = md("Nitrate<br>(mg kg<sup>-1</sup>)"),
+    total_n = md("Total Inorganic N<br>(mg kg<sup>-1</sup>)")
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_date == TRUE)
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = year_display == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = year_display == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(align = "center", weight = "bold"),
+    locations = cells_body(columns = year_display, rows = year_display == "Source of Variation")
+  ) %>%
+  cols_hide(columns = is_new_date) %>%
+  tab_footnote(
+    footnote = "Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
+    locations = cells_title()
+  )
+
+# Save table
+gtsave(table2_gt, "tables/table2_soil_nitrogen.rtf")
+
+table2_gt
+```
+
+# N2O Data Processing and Analysis
+
+```{r n2o-processing}
+# Process daily flux data with interpolation
+daily_flux_summary <- flux_data %>%
+  group_by(plot, rowvs_interrow, treatment, year, date) %>%
+  summarise(mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), .groups = "drop") %>%
+  arrange(plot, rowvs_interrow, treatment, year, date)
+
+# Interpolation function
+interpolate_daily_flux <- function(data) {
+  # Get unique plot combinations
+  plot_combinations <- data %>%
+    distinct(plot, rowvs_interrow, treatment, year)
+  
+  # Interpolate for each combination
+  map_dfr(seq_len(nrow(plot_combinations)), function(i) {
+    combo <- plot_combinations[i, ]
+    
+    subset_data <- data %>%
+      filter(
+        plot == combo$plot,
+        rowvs_interrow == combo$rowvs_interrow,
+        treatment == combo$treatment,
+        year == combo$year
+      ) %>%
+      arrange(date)
+    
+    # Create full year sequence
+    start_date <- as.Date(paste0(combo$year, "-01-01"))
+    end_date <- as.Date(paste0(combo$year, "-12-31"))
+    all_days <- seq(start_date, end_date, by = "day")
+    
+    # Interpolate if we have sufficient data
+    if (nrow(subset_data) >= 2 && !all(is.na(subset_data$mean_flux))) {
+      valid_data <- subset_data[!is.na(subset_data$mean_flux), ]
+      
+      if (nrow(valid_data) >= 2) {
+        interpolated_flux <- approx(
+          x = as.numeric(valid_data$date),
+          y = valid_data$mean_flux,
+          xout = as.numeric(all_days),
+          rule = 1
+        )$y
+      } else {
+        interpolated_flux <- rep(NA_real_, length(all_days))
+      }
+    } else {
+      interpolated_flux <- rep(NA_real_, length(all_days))
+    }
+    
+    tibble(
+      plot = combo$plot,
+      rowvs_interrow = combo$rowvs_interrow,
+      treatment = combo$treatment,
+      year = combo$year,
+      date = all_days,
+      interpolated_flux = interpolated_flux
+    )
+  })
+}
+
+# Apply interpolation
+interpolated_flux_data <- interpolate_daily_flux(daily_flux_summary)
+
+# Calculate cumulative N2O per plot
+plot_cumulative_n2o <- interpolated_flux_data %>%
+  group_by(plot, rowvs_interrow, treatment, year) %>%
+  summarise(
+    annual_cumulative_n2o = sum(interpolated_flux, na.rm = TRUE) / 1000, # Convert g to kg
+    .groups = "drop"
+  ) %>%
+  filter(is.finite(annual_cumulative_n2o))
+
+cat("✓ N2O interpolation and cumulative calculations complete\n")
+cat("Plot-level cumulative N2O data:", nrow(plot_cumulative_n2o), "observations\n")
+```
+
+# Nitrogen Leaching Data Processing
+
+```{r leaching-processing}
+# Calculate annual cumulative nitrogen leaching per plot
+# Convert mg per plot to kg N ha-1
+plot_area_ha <- 0.1  # PLACEHOLDER: Assuming 0.1 hectare plots - VERIFY AND UPDATE!
+annual_leaching <- leaching_data %>%
+  group_by(plot, treatment, year) %>%
+  summarise(
+    annual_cumulative_leaching = max(cumulative_n_loss_mg, na.rm = TRUE) / 1000 / plot_area_ha, # mg to kg to kg/ha
+    .groups = "drop"
+  ) %>%
+  filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
+
+cat("✓ Nitrogen leaching calculations complete\n")
+cat("Plot-level leaching data:", nrow(annual_leaching), "observations\n")
+```
+
+# Table 3: Annual Nitrogen Losses
+
+```{r table-3}
+#| label: tbl-nitrogen-losses
+#| tbl-cap: "Annual nitrogen losses by treatment"
+
+# Summarize N2O data by treatment and year
+n2o_summary <- plot_cumulative_n2o %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_n2o = mean(annual_cumulative_n2o, na.rm = TRUE),
+    sd_n2o = sd(annual_cumulative_n2o, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))
+
+# Summarize leaching data by treatment and year
+leaching_summary <- annual_leaching %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_leaching = mean(annual_cumulative_leaching, na.rm = TRUE),
+    sd_leaching = sd(annual_cumulative_leaching, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))
+
+# Calculate 2-year totals
+n2o_two_year <- plot_cumulative_n2o %>%
+  group_by(plot, rowvs_interrow, treatment) %>%
+  summarise(total_n2o = sum(annual_cumulative_n2o, na.rm = TRUE), .groups = "drop") %>%
+  group_by(treatment) %>%
+  summarise(
+    mean_n2o = mean(total_n2o, na.rm = TRUE),
+    sd_n2o = sd(total_n2o, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    year = "2023-2024",
+    n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o)
+  )
+
+leaching_two_year <- annual_leaching %>%
+  group_by(plot, treatment) %>%
+  summarise(total_leaching = sum(annual_cumulative_leaching, na.rm = TRUE), .groups = "drop") %>%
+  group_by(treatment) %>%
+  summarise(
+    mean_leaching = mean(total_leaching, na.rm = TRUE),
+    sd_leaching = sd(total_leaching, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    year = "2023-2024", 
+    leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching)
+  )
+compare_df_cols(n2o_two_year, leaching_two_year, n2o_summary, leaching_summary)
+# Combine annual and 2-year data
+combined_nitrogen_data <- bind_rows(
+  n2o_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, n2o_result),
+  n2o_two_year %>% select(year, treatment, n2o_result)
+) %>%
+  full_join(
+    bind_rows(
+      leaching_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, leaching_result),
+      leaching_two_year %>% select(year, treatment, leaching_result)
+    ),
+    by = c("year", "treatment")
+  ) %>%
+  mutate(
+    year_order = case_when(
+      year == "2023" ~ 1,
+      year == "2024" ~ 2,
+      year == "2023-2024" ~ 3
+    ),
+    total_environmental_cost = "TBD" # Placeholder for future calculation
+  ) %>%
+  arrange(year_order, treatment)
+
+# Source of variation analysis
+# N2O ANOVA
+combined_n2o_data <- plot_cumulative_n2o %>% mutate(year_factor = as.factor(year))
+aov_n2o <- aov(annual_cumulative_n2o ~ year_factor * treatment, data = combined_n2o_data)
+
+# Leaching ANOVA  
+combined_leaching_data <- annual_leaching %>% mutate(year_factor = as.factor(year))
+aov_leaching <- aov(annual_cumulative_leaching ~ year_factor * treatment, data = combined_leaching_data)
+
+# Source of variation table
+source_variation_n <- tibble(
+  source = c("Year", "Treatment", "Year × Treatment"),
+  n2o_p = summary(aov_n2o)[[1]][1:3, "Pr(>F)"],
+  leaching_p = summary(aov_leaching)[[1]][1:3, "Pr(>F)"]
+) %>%
+  mutate(
+    across(c(n2o_p, leaching_p), ~ case_when(
+      .x < 0.001 ~ "< 0.001",
+      .x < 0.01 ~ sprintf("%.3f", .x),
+      TRUE ~ sprintf("%.2f", .x)
+    )),
+    year = "",
+    year_order = 4,
+    treatment = source,
+    n2o_result = n2o_p,
+    leaching_result = leaching_p,
+    total_environmental_cost = "TBD"
+  ) %>%
+  select(-source, -n2o_p, -leaching_p)
+
+# Create complete table
+separator_n <- tibble(
+  year = "Source of Variation", year_order = 3.5, treatment = "",
+  n2o_result = "", leaching_result = "", total_environmental_cost = ""
+)
+
+table3_complete <- bind_rows(
+  combined_nitrogen_data,
+  separator_n,
+  source_variation_n
+) %>%
+  arrange(year_order, treatment) %>%
+  mutate(
+    year_display = case_when(
+      year == "Source of Variation" ~ year,
+      year != lag(year, default = "") ~ as.character(year),
+      TRUE ~ ""
+    ),
+    is_new_section = year != lag(year, default = "") & year != "Source of Variation"
+  )
+
+# Create gt table
+table3_gt <- table3_complete %>%
+  select(
+    Year = year_display,
+    Treatment = treatment,
+    `N2O Loss` = n2o_result,
+    `N Leaching` = leaching_result, 
+    `Total Environmental Cost` = total_environmental_cost,
+    is_new_section
+  ) %>%
+  gt() %>%
+  tab_header(title = md("**Table 3. Annual nitrogen losses**")) %>%
+  cols_label(
+    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
+    `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
+    `Total Environmental Cost` = md("Total Environmental Cost<br>(kg N equivalent)")
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_section == TRUE)
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Year == "Source of Variation")  
+  ) %>%
+  cols_hide(columns = is_new_section) %>%
+  tab_footnote(
+    footnote = "Values are mean ± standard deviation. Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
+    locations = cells_title()
+  )
+
+# Save table
+gtsave(table3_gt, "tables/table3_nitrogen_losses.rtf")
+
+table3_gt
+```
+
+# Figure 1: Daily N2O Flux Time Series
+
+```{r figure-1}
+#| label: fig-flux-timeseries
+#| fig-cap: "Daily N2O flux by treatment over time"
+#| fig-width: 12
+#| fig-height: 8
+
+# Aggregate interpolated data for plotting
+daily_flux_aggregated <- interpolated_flux_data %>%
+  group_by(treatment, year, date) %>%
+  summarise(
+    n_plots = sum(!is.na(interpolated_flux)),
+    mean_flux = mean(interpolated_flux, na.rm = TRUE),
+    se_flux = if_else(
+      n_plots > 1, 
+      sd(interpolated_flux, na.rm = TRUE) / sqrt(n_plots), 
+      NA_real_
+    ),
+    .groups = "drop"
+  )
+
+# Create time series plot
+ggplot(daily_flux_aggregated, aes(x = date, y = mean_flux, color = treatment)) +
+  geom_ribbon(
+    aes(ymin = mean_flux - se_flux, ymax = mean_flux + se_flux, fill = treatment),
+    alpha = 0.2, color = NA
+  ) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1, alpha = 0.7) +
+  facet_grid(. ~ year, scales = "free_x", space = "free_x") +
+  scale_color_treatments() +
+  scale_fill_treatments() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(
+    x = "Month",
+    y = expression("Daily N"[2]*"O Flux (g N ha"^"-1"*")"),
+    color = "Treatment",
+    fill = "Treatment"
+  ) +
+  theme_publication() +
+  theme(legend.position = "bottom")
+
+ggsave("figures/figure1_flux_timeseries.png", width = 12, height = 8, dpi = 300)
+```
+
+# Summary
+
+This document provides clean, efficient analysis following tidyverse principles:
+
+-   **Consistent data processing** using `group_by()` and `summarise()`
+-   **Functional programming** with custom helper functions
+-   **Clear separation** between data processing and visualization
+-   **Reproducible workflow** with proper chunk organization
+-   **Professional styling** consistent across all outputs
+
+Each table and figure is generated in its own chunk for modularity and clarity.
