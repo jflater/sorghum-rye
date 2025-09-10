@@ -399,11 +399,12 @@ cat("Plot-level cumulative N2O data:", nrow(plot_cumulative_n2o), "observations\
 ```{r leaching-processing}
 # Calculate annual cumulative nitrogen leaching per plot
 # Convert mg per plot to kg N ha-1
-plot_area_ha <- 0.1  # PLACEHOLDER: Assuming 0.1 hectare plots - VERIFY AND UPDATE!
+plot_area_ft2 <- 120*160  # in ft^2
+plot_area_ha <- plot_area_ft2 / 107639.1041671  # Convert ft^2 to ha
 annual_leaching <- leaching_data %>%
   group_by(plot, treatment, year) %>%
   summarise(
-    annual_cumulative_leaching = max(cumulative_n_loss_mg, na.rm = TRUE) / 1000 / plot_area_ha, # mg to kg to kg/ha
+    annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1000000) / plot_area_ha, # mg to kg to kg/ha
     .groups = "drop"
   ) %>%
   filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
@@ -627,6 +628,142 @@ ggplot(daily_flux_aggregated, aes(x = date, y = mean_flux, color = treatment)) +
   theme(legend.position = "bottom")
 
 ggsave("figures/figure1_flux_timeseries.png", width = 12, height = 8, dpi = 300)
+```
+
+# Figure 2: Flow and Nitrogen Leaching Relationship
+
+```{r debug-leaching-data}
+#| label: debug-leaching
+#| echo: true
+
+# Let's examine the leaching data structure to understand the issue
+cat("=== LEACHING DATA STRUCTURE ===\n")
+cat("Total rows in leaching_data:", nrow(leaching_data), "\n")
+cat("Years present:", paste(sort(unique(leaching_data$year)), collapse = ", "), "\n")
+cat("Treatments present:", paste(sort(unique(leaching_data$treatment)), collapse = ", "), "\n")
+cat("Plots present:", paste(sort(unique(leaching_data$plot)), collapse = ", "), "\n\n")
+
+# Check treatment-year combinations
+cat("=== TREATMENT-YEAR COMBINATIONS ===\n")
+treatment_year_summary <- leaching_data %>%
+  group_by(year, treatment) %>%
+  summarise(
+    n_observations = n(),
+    unique_plots = length(unique(plot)),
+    plots = paste(sort(unique(plot)), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  arrange(year, treatment)
+
+print(treatment_year_summary)
+
+# Check for potential data issues
+cat("\n=== POTENTIAL ISSUES ===\n")
+duplicate_check <- leaching_data %>%
+  group_by(plot, treatment, year, date) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  filter(n > 1)
+
+if(nrow(duplicate_check) > 0) {
+  cat("WARNING: Duplicate plot-treatment-year-date combinations found!\n")
+  print(head(duplicate_check))
+} else {
+  cat("No duplicate plot-treatment-year-date combinations found.\n")
+}
+
+# Check if same plot appears in multiple treatments within same year
+plot_treatment_check <- leaching_data %>%
+  distinct(plot, treatment, year) %>%
+  group_by(plot, year) %>%
+  summarise(treatments = paste(sort(treatment), collapse = ", "), n_treatments = n(), .groups = "drop") %>%
+  filter(n_treatments > 1)
+
+if(nrow(plot_treatment_check) > 0) {
+  cat("\nWARNING: Plots appear in multiple treatments within same year:\n")
+  print(plot_treatment_check)
+} else {
+  cat("\nGood: Each plot has only one treatment per year.\n")
+}
+```
+
+```{r figure-2}
+#| label: fig-flow-leaching
+#| fig-cap: "Annual tile drain flow and cumulative nitrogen losses by treatment"
+#| fig-width: 10
+#| fig-height: 6
+
+# Calculate annual totals from leaching data - INDIVIDUAL PLOTS
+plot_flow_n_data <- leaching_data %>%
+  group_by(plot, treatment, year) %>%
+  summarise(
+    total_flow_L = sum(flow_l, na.rm = TRUE),  # Sum daily flow to get annual total
+    total_n_loss_mg = max(cumulative_n_loss_mg, na.rm = TRUE),  # Use existing cumulative N
+    .groups = "drop"
+  ) %>%
+  # Remove any infinite or negative values
+  filter(is.finite(total_flow_L), is.finite(total_n_loss_mg), 
+         total_flow_L >= 0, total_n_loss_mg >= 0) %>%
+  # Create plot labels and grouping variables  
+  mutate(
+    plot_label = paste("Plot", plot),
+    year_treatment = paste(year, treatment, sep = " "),
+    treatment_year = paste(treatment, year, sep = "_"),
+    # Create unique plot identifier within treatment-year
+    plot_id = paste(plot, treatment, year, sep = "_")
+  ) %>%
+  # Arrange by treatment and year for better visual grouping
+  arrange(year, treatment, plot)
+
+# Check the data structure - should match expected sample sizes
+cat("Plots per treatment-year combination:\n")
+print(plot_flow_n_data %>% 
+  group_by(year, treatment) %>% 
+  summarise(n_plots = n(), plots = paste(sort(unique(plot)), collapse = ", "), .groups = "drop"))
+
+# Create individual plot bars showing variation within treatments
+flow_n_plot <- ggplot(plot_flow_n_data, aes(x = year_treatment, group = plot)) +
+  # Flow bars for individual plots - side by side
+  geom_col(aes(y = total_flow_L, fill = treatment), 
+           position = position_dodge(width = 0.8), alpha = 0.8, width = 0.15) +
+  # Nitrogen points (scaled to flow axis) for individual plots
+  geom_point(aes(y = total_n_loss_mg * max(total_flow_L, na.rm = TRUE) / max(total_n_loss_mg, na.rm = TRUE), 
+                 color = treatment), 
+             position = position_dodge(width = 0.8), size = 3, shape = 18) +
+  # Scales and formatting
+  scale_fill_treatments() +
+  scale_color_treatments() +
+  scale_y_continuous(
+    name = "Annual Tile Drain Flow (L)",
+    labels = scales::comma,
+    sec.axis = sec_axis(
+      trans = ~ . * max(plot_flow_n_data$total_n_loss_mg, na.rm = TRUE) / max(plot_flow_n_data$total_flow_L, na.rm = TRUE),
+      name = "Cumulative N Loss (mg)",
+      labels = scales::comma
+    )
+  ) +
+  labs(
+    x = "Year and Treatment",
+    title = "Individual Plot Flow and Nitrogen Losses by Treatment",
+    subtitle = "Each bar = individual plot. Bars = Flow (L), Diamonds = N Loss (mg). Shows plot-to-plot variation.",
+    fill = "Treatment",
+    color = "Treatment"
+  ) +
+  theme_publication() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+    legend.position = "bottom",
+    plot.title = element_text(size = 14),
+    plot.subtitle = element_text(size = 11, color = "gray40"),
+    axis.title.y.right = element_text(angle = 90, vjust = 0.5),
+    panel.grid.major.x = element_blank()
+  ) +
+  # Add subtle separators between treatment groups
+  facet_grid(. ~ year, scales = "free_x", space = "free_x", 
+             labeller = labeller(year = function(x) paste("Year", x)))
+
+flow_n_plot
+
+ggsave("figures/figure2_flow_nitrogen_relationship.png", width = 10, height = 6, dpi = 300)
 ```
 
 # Summary
