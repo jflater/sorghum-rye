@@ -52,9 +52,6 @@ theme_publication <- function(base_size = 12) {
       panel.grid.minor = element_blank(),
       text = element_text(color = "#000000ff"),
       axis.text = element_text(color = "#000000ff"),
-      axis.title = element_text(face = "bold"),
-      plot.title = element_text(face = "bold", size = base_size * 1.2),
-      strip.text = element_text(face = "bold"),
       strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
       axis.text.x = element_text(angle = 45, hjust = 1),
       panel.spacing = unit(2, "lines")
@@ -1242,6 +1239,158 @@ ggsave("figures/six_panel_weather_soil.png", six_panel_plot, width = 10, height 
 six_panel_plot
 ```
 
+# Figure 2
+
+```{r figure-n2o-flux}
+#| label: fig-n2o-flux
+#| fig-cap: "Daily N2O fluxes over the study period"
+#| fig-width: 10
+#| fig-height: 9
+
+# Build daily treatment means and SE for N2O flux using existing flux_data
+daily_flux <- flux_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(Treatment = treatment, year = lubridate::year(date)) %>%
+  filter(year %in% c(2023, 2024)) %>%
+  group_by(Treatment, year, date) %>%
+  summarise(
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    se_flux   = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(sum(!is.na(gnha_day_no_negative))),
+    .groups = "drop"
+  )
+
+# Get flux measurement date ranges for each year
+flux_date_ranges <- daily_flux %>%
+  group_by(year) %>%
+  summarise(
+    min_date = min(date, na.rm = TRUE),
+    max_date = max(date, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Filter precipitation to match flux measurement periods only
+daily_precip_trimmed <- rain %>%
+  transmute(date, year, precipmm) %>%
+  filter(year %in% c(2023, 2024)) %>%
+  left_join(flux_date_ranges, by = "year") %>%
+  filter(date >= min_date, date <= max_date) %>%
+  select(date, year, precipmm)
+
+# Print the date ranges for verification
+cat("Flux measurement ranges:\n")
+print(flux_date_ranges)
+cat("\nPrecipitation trimmed to match flux periods\n")
+
+# Fertilizer event dates
+fert_events <- tibble(
+  year = c(2023, 2024),
+  fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
+)
+
+# 1) Precipitation plot (faceted, top row) - trimmed to flux dates
+precip_plot <- ggplot(daily_precip_trimmed, aes(x = date, y = precipmm)) +
+  geom_col(fill = "#000000ff", color = "black", width = 1) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  scale_y_reverse(name = "Daily Precipitation (mm)") +
+  facet_wrap(~year, nrow = 1, scales = "free_x") +
+  base_theme +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+
+# 2) Daily flux plot (faceted, middle row)
+daily_flux_plot <- ggplot(daily_flux, aes(x = date, y = mean_flux, color = Treatment)) +
+  geom_line(linewidth = 1.1, alpha = 0.85) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_flux - se_flux, ymax = mean_flux + se_flux), 
+                width = 0.2, alpha = 0.5) +
+  geom_vline(data = fert_events, 
+             aes(xintercept = as.numeric(fertilizer_date)), 
+             linetype = "dashed", color = "red", alpha = 0.7, inherit.aes = FALSE) +
+  scale_color_treatments() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(y = expression("Daily N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"), 
+       color = "Treatment") +
+  facet_wrap(~year, nrow = 1, scales = "free_x") +
+  base_theme +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.text = element_blank()  # Hide strip text for middle row
+  )
+
+# 3) Build cumulative flux data (both years combined for faceting)
+cum_flux_combined <- daily_flux %>%
+  arrange(Treatment, year, date) %>%
+  group_by(Treatment, year) %>%
+  # Use actual measurement date ranges instead of full calendar year
+  left_join(flux_date_ranges, by = "year") %>%
+  summarise(
+    start_date = first(min_date),
+    end_date = first(max_date),
+    .groups = "drop"
+  ) %>%
+  rowwise() %>%
+  mutate(all_dates = list(seq.Date(start_date, end_date, by = "day"))) %>%
+  unnest(all_dates) %>%
+  rename(date = all_dates) %>%
+  select(-start_date, -end_date) %>%
+  # Join with observed data
+  left_join(daily_flux, by = c("Treatment", "year", "date")) %>%
+  group_by(Treatment, year) %>%
+  # Interpolate within observed ranges only (rule = 1)
+  mutate(
+    mean_flux_interp = approx(
+      x = date[!is.na(mean_flux)],
+      y = mean_flux[!is.na(mean_flux)],
+      xout = date, rule = 1, ties = "ordered"
+    )$y,
+    se_flux_interp = approx(
+      x = date[!is.na(se_flux)],
+      y = se_flux[!is.na(se_flux)],
+      xout = date, rule = 1, ties = "ordered"
+    )$y
+  ) %>%
+  # Filter to only include dates within measurement range
+  filter(!is.na(mean_flux_interp)) %>%
+  # Calculate cumulative
+  mutate(
+    cum_flux = cumsum(mean_flux_interp),
+    cum_se = sqrt(cumsum(se_flux_interp^2))
+  ) %>%
+  ungroup()
+
+# 4) Cumulative flux plot (faceted, bottom row with x-axis labels)
+cumulative_flux_plot <- ggplot(cum_flux_combined, aes(x = date, y = cum_flux, color = Treatment, fill = Treatment)) +
+  geom_ribbon(aes(ymin = pmax(cum_flux - cum_se, 0), ymax = cum_flux + cum_se),
+              alpha = 0.2, linewidth = 0) +
+  geom_line(linewidth = 1.1) +
+  scale_color_treatments() +
+  scale_fill_treatments() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "Month", 
+       y = expression("Cumulative N"[2]*"O Flux (g N ha"^-1*")"),
+       color = "Treatment", fill = "Treatment") +
+  facet_wrap(~year, nrow = 1, scales = "free_x") +
+  theme_publication() +
+  theme(
+    strip.text = element_blank(),  # Hide strip text for bottom row
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+    panel.spacing = unit(2, "lines")
+  )
+
+# Assemble final figure: 3 faceted rows
+figure2 <- (precip_plot / daily_flux_plot / cumulative_flux_plot) +
+  patchwork::plot_layout(heights = c(0.8, 1, 1.2))
+
+figure2
+
+ggsave("figures/figure2_daily_flux_precip_cumulative_2023_2024.png",
+       figure2, width = 10, height = 9, dpi = 300, bg = "white")
+```
 # Summary
 
 This document provides clean, efficient analysis following tidyverse principles:
