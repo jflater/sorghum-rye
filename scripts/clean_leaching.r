@@ -1,3 +1,7 @@
+library(tidyverse)
+library(janitor)
+
+
 leaching_data <- read_csv("data/2023_2024_SABR_tile_cumulative_n.csv") %>%
   clean_names() %>%
   mutate(

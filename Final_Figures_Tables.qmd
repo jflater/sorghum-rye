@@ -31,6 +31,8 @@ library(lubridate)
 library(gt)
 library(janitor)
 library(broom)
+library(readxl)
+library(patchwork)
 
 # Re-establish dplyr preferences after loading packages
 if (requireNamespace("conflicted", quietly = TRUE)) {
@@ -54,7 +56,6 @@ theme_publication <- function(base_size = 12) {
       plot.title = element_text(face = "bold", size = base_size * 1.2),
       strip.text = element_text(face = "bold"),
       strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
-      legend.background = element_rect(fill = "#F9F6ED"),
       axis.text.x = element_text(angle = 45, hjust = 1),
       panel.spacing = unit(2, "lines")
     )
@@ -62,10 +63,10 @@ theme_publication <- function(base_size = 12) {
 
 # Treatment colors
 treatment_colors <- c(
-  "Sorghum" = "#714C36",
-  "Sorghum + Rye" = "#2B4B72", 
-  "Corn" = "#1A3B57",
-  "Soy" = "#B7B5B3"
+  "Sorghum" = "#D8D97AFF",
+  "Sorghum + Rye" = "#95C36EFF", 
+  "Corn" = "#74C8C3FF",
+  "Soy" = "#0A2E57FF"
 )
 
 scale_color_treatments <- function() scale_color_manual(values = treatment_colors)
@@ -102,20 +103,43 @@ leaching_data <- read_csv("data/2023_2024_SABR_tile_cumulative_n.csv") %>%
   filter(year %in% c(2023, 2024)) %>%  # Filter out bad years
   filter(!is.na(year))
 
-cat("✓ Data imported successfully\n")
-cat("Soil data:", nrow(soil_data), "observations\n")
-cat("Flux data:", nrow(flux_data), "observations\n") 
-cat("Leaching data:", nrow(leaching_data), "observations\n")
-# Print the class of year columns in each data frame
-cat("Soil data year column class:", class(soil_data$year), "\n")
-cat("Flux data year column class:", class(flux_data$year), "\n")
-cat("Leaching data year column class:", class(leaching_data$year), "\n")
+# Import historical rain and gdd data
+gdd <- read_xlsx("data/rain/historical_rain.xlsx")
+
+gdd <- gdd %>%
+  select(day, doy, gdd_50_86) %>%
+  mutate(
+    date = as.Date(day),
+    year = year(date),
+  ) %>%
+  group_by(year) %>%
+  arrange(date) %>%
+  mutate(cumulative_gdd = cumsum(gdd_50_86))
+
+gdd <- gdd %>%
+  mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
+
+rain <- read_xlsx("data/rain/historical_rain.xlsx")
+
+rain <- rain %>%
+  select(day, doy, precipmm) %>%
+  mutate(
+    date = as.Date(day),
+    year = year(date),
+  ) %>%
+  group_by(year) %>%
+  arrange(date) %>%
+  mutate(cumulative_precip = cumsum(precipmm))
+
+rain <- rain %>%
+  mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
 ```
 
 # Helper Functions
 
 ```{r helper-functions}
 # Function for pairwise t-tests within groups
+#| label: get-pvals
 get_pairwise_pvals <- function(data, variable, group_vars) {
   data %>%
     group_by(across(all_of(group_vars))) %>%
@@ -584,53 +608,9 @@ gtsave(table3_gt, "tables/table3_nitrogen_losses.rtf")
 table3_gt
 ```
 
-# Figure 1: Daily N2O Flux Time Series
+# Figure: test: Flow and Nitrogen Leaching Relationship
 
-```{r figure-1}
-#| label: fig-flux-timeseries
-#| fig-cap: "Daily N2O flux by treatment over time"
-#| fig-width: 12
-#| fig-height: 8
-
-# Aggregate interpolated data for plotting
-daily_flux_aggregated <- interpolated_flux_data %>%
-  group_by(treatment, year, date) %>%
-  summarise(
-    n_plots = sum(!is.na(interpolated_flux)),
-    mean_flux = mean(interpolated_flux, na.rm = TRUE),
-    se_flux = if_else(
-      n_plots > 1, 
-      sd(interpolated_flux, na.rm = TRUE) / sqrt(n_plots), 
-      NA_real_
-    ),
-    .groups = "drop"
-  )
-
-# Create time series plot
-ggplot(daily_flux_aggregated, aes(x = date, y = mean_flux, color = treatment)) +
-  geom_ribbon(
-    aes(ymin = mean_flux - se_flux, ymax = mean_flux + se_flux, fill = treatment),
-    alpha = 0.2, color = NA
-  ) +
-  geom_line(linewidth = 1) +
-  geom_point(size = 1, alpha = 0.7) +
-  facet_grid(. ~ year, scales = "free_x", space = "free_x") +
-  scale_color_treatments() +
-  scale_fill_treatments() +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
-  labs(
-    x = "Month",
-    y = expression("Daily N"[2]*"O Flux (g N ha"^"-1"*")"),
-    color = "Treatment",
-    fill = "Treatment"
-  ) +
-  theme_publication() +
-  theme(legend.position = "bottom")
-
-ggsave("figures/figure1_flux_timeseries.png", width = 12, height = 8, dpi = 300)
-```
-
-# Figure 2: Flow and Nitrogen Leaching Relationship
+This will give a good idea of the variation between flow and nitrogen leaching across treatments and years.
 
 ```{r debug-leaching-data}
 #| label: debug-leaching
@@ -686,7 +666,7 @@ if(nrow(plot_treatment_check) > 0) {
 }
 ```
 
-```{r figure-2}
+```{r figure-test}
 #| label: fig-flow-leaching
 #| fig-cap: "Annual tile drain flow and cumulative nitrogen losses by treatment"
 #| fig-width: 10
@@ -728,7 +708,7 @@ flow_n_plot <- ggplot(plot_flow_n_data, aes(x = year_treatment, group = plot)) +
   # Nitrogen points (scaled to flow axis) for individual plots
   geom_point(aes(y = total_n_loss_mg * max(total_flow_L, na.rm = TRUE) / max(total_n_loss_mg, na.rm = TRUE), 
                  color = treatment), 
-             position = position_dodge(width = 0.8), size = 3, shape = 18) +
+             position = position_dodge(width = 0.8), size = 4, shape = 18) +
   # Scales and formatting
   scale_fill_treatments() +
   scale_color_treatments() +
@@ -764,6 +744,455 @@ flow_n_plot <- ggplot(plot_flow_n_data, aes(x = year_treatment, group = plot)) +
 flow_n_plot
 
 ggsave("figures/figure2_flow_nitrogen_relationship.png", width = 10, height = 6, dpi = 300)
+```
+
+# Figure 1: Precipitation and Temperature 
+
+```{r figure-weather}
+#| label: fig-weather
+#| fig-cap: "Daily precipitation, temperature, and soil moisture over the study period"
+#| fig-width: 10
+#| fig-height: 6
+
+# Exclude current years from the envelope
+hist_env <- gdd %>%
+  filter(!(year %in% c(2023, 2024))) %>%
+  group_by(doy_date) %>%
+  summarize(
+    min_cum = min(cumulative_gdd, na.rm = TRUE),
+    max_cum = max(cumulative_gdd, na.rm = TRUE)
+  )
+
+gdd_2023 <- filter(gdd, year == 2023)
+gdd_2024 <- filter(gdd, year == 2024)
+
+ggplot() +
+  # Shaded region for historical envelope
+  geom_ribbon(
+    data = hist_env,
+    aes(x = doy_date, ymin = min_cum, ymax = max_cum),
+    fill = "gray80", alpha = 0.6
+  ) +
+  # 2023 solid line
+  geom_line(
+    data = gdd_2023,
+    aes(x = doy_date, y = cumulative_gdd),
+    color = "#E41A1C", size = 1.2, linetype = "solid"
+  ) +
+  # 2024 dashed line
+  geom_line(
+    data = gdd_2024,
+    aes(x = doy_date, y = cumulative_gdd),
+    color = "#377EB8", size = 1.2, linetype = "dashed"
+  ) +
+  scale_x_date(
+    date_breaks = "1 month", # Breaks at each month
+    date_labels = "%b" # Label as abbreviated month names
+  ) +
+  labs(
+    title = "Cumulative Rainfall: Historical Range vs. Recent Years",
+    x = "Day of Year",
+    y = "Cumulative Precipitation (mm)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  # Custom legend via manual color/linetype mapping:
+  scale_color_manual(
+    name = "Year",
+    values = c("2023" = "#E41A1C", "2024" = "#377EB8")
+  ) +
+  scale_linetype_manual(
+    name = "Year",
+    values = c("2023" = "solid", "2024" = "dashed")
+  )
+
+gdd_highlight <- gdd %>%
+  filter(year %in% c(2023, 2024)) %>%
+  mutate(year = as.character(year))
+
+ggplot() +
+  geom_ribbon(
+    data = hist_env,
+    aes(x = doy_date, ymin = min_cum, ymax = max_cum),
+    fill = "gray80", alpha = 0.6
+  ) +
+  geom_line(
+    data = gdd_highlight,
+    aes(x = doy_date, y = cumulative_gdd, color = year, linetype = year),
+    size = 1.2
+  ) +
+  scale_color_manual(
+    name = "Year",
+    values = c("2023" = "#E41A1C", "2024" = "#377EB8"),
+    labels = c("2023", "2024")
+  ) +
+  scale_linetype_manual(
+    name = "Year",
+    values = c("2023" = "solid", "2024" = "dashed"),
+    labels = c("2023", "2024")
+  ) +
+  scale_x_date(
+    date_breaks = "1 month", # Breaks at each month
+    date_labels = "%b" # Label as abbreviated month names
+  ) +
+  labs(
+    title = "Cumulative Rainfall: Historical Range vs. Recent Years",
+    x = "Day of Year",
+    y = "Cumulative Growing Degree Days (GDD)"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+mean_cum <- gdd %>%
+  filter(!(year %in% c(2023, 2024))) %>% # use only historical for mean
+  group_by(doy_date) %>%
+  summarize(cumulative_gdd = mean(cumulative_gdd, na.rm = TRUE)) %>%
+  mutate(year = "Mean") %>%
+  filter(doy_date != "2000-12-31")
+
+gdd_highlight <- gdd %>%
+  filter(year %in% c(2023, 2024)) %>%
+  mutate(year = as.character(year)) %>%
+  bind_rows(mean_cum)
+
+gdd_plot_v2 <- ggplot() +
+  geom_ribbon(
+    data = hist_env,
+    aes(x = doy_date, ymin = min_cum, ymax = max_cum),
+    fill = "gray80", alpha = 0.6
+  ) +
+  geom_line(
+    data = gdd_highlight,
+    aes(x = doy_date, y = cumulative_gdd, color = year, linetype = year),
+    size = 1.2
+  ) +
+  scale_color_manual(
+    name = "Year",
+    values = c(
+      "2023" = "#E41A1C",
+      "2024" = "#377EB8",
+      "Mean" = "black"
+    ),
+    labels = c(
+      "2023" = "2023",
+      "2024" = "2024",
+      "Mean" = "Mean (Historical)"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Year",
+    values = c(
+      "2023" = "solid",
+      "2024" = "dashed",
+      "Mean" = "dotdash"
+    ),
+    labels = c(
+      "2023" = "2023",
+      "2024" = "2024",
+      "Mean" = "Mean (Historical)"
+    )
+  ) +
+  scale_x_date(
+    date_breaks = "1 month", # Breaks at each month
+    date_labels = "%b" # Label as abbreviated month names
+  ) +
+  labs(
+    x = "",  # Remove x-axis label since it aligns with bottom plots
+    y = "Cumulative Growing Degree Days (GDD)"
+  ) +
+  theme_publication() +
+  theme(
+    axis.text.x = element_blank(),  # Remove x-axis text since it aligns with bottom plots
+    axis.ticks.x = element_blank(),  # Remove x-axis ticks
+    legend.position = "top"
+  )
+
+gdd_plot_v2 <- gdd_plot_v2 + guides(color = "none", fill = "none", linetype = "none", shape = "none")
+
+hist_env <- rain %>%
+  filter(!(year %in% c(2023, 2024))) %>%
+  group_by(doy_date) %>%
+  summarize(
+    min_cum = min(cumulative_precip, na.rm = TRUE),
+    max_cum = max(cumulative_precip, na.rm = TRUE)
+  )
+
+rain_2023 <- filter(rain, year == 2023)
+rain_2024 <- filter(rain, year == 2024)
+
+ggplot() +
+  # Shaded region for historical envelope
+  geom_ribbon(
+    data = hist_env,
+    aes(x = doy_date, ymin = min_cum, ymax = max_cum),
+    fill = "gray80", alpha = 0.6
+  ) +
+  # 2023 solid line
+  geom_line(
+    data = rain_2023,
+    aes(x = doy_date, y = cumulative_precip),
+    color = "#E41A1C", size = 1.2, linetype = "solid"
+  ) +
+  # 2024 dashed line
+  geom_line(
+    data = rain_2024,
+    aes(x = doy_date, y = cumulative_precip),
+    color = "#377EB8", size = 1.2, linetype = "dashed"
+  ) +
+  scale_x_date(
+    date_breaks = "1 month", # Breaks at each month
+    date_labels = "%b" # Label as abbreviated month names
+  ) +
+  labs(
+    title = "Cumulative Rainfall: Historical Range vs. Recent Years",
+    x = "Day of Year",
+    y = "Cumulative Precipitation (mm)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  # Custom legend via manual color/linetype mapping:
+  scale_color_manual(
+    name = "Year",
+    values = c("2023" = "#E41A1C", "2024" = "#377EB8")
+  ) +
+  scale_linetype_manual(
+    name = "Year",
+    values = c("2023" = "solid", "2024" = "dashed")
+  )
+
+rain_highlight <- rain %>%
+  filter(year %in% c(2023, 2024)) %>%
+  mutate(year = as.character(year))
+
+ggplot() +
+  geom_ribbon(
+    data = hist_env,
+    aes(x = doy_date, ymin = min_cum, ymax = max_cum),
+    fill = "gray80", alpha = 0.6
+  ) +
+  geom_line(
+    data = rain_highlight,
+    aes(x = doy_date, y = cumulative_precip, color = year, linetype = year),
+    size = 1.2
+  ) +
+  scale_color_manual(
+    name = "Year",
+    values = c("2023" = "#E41A1C", "2024" = "#377EB8"),
+    labels = c("2023", "2024")
+  ) +
+  scale_linetype_manual(
+    name = "Year",
+    values = c("2023" = "solid", "2024" = "dashed"),
+    labels = c("2023", "2024")
+  ) +
+  scale_x_date(
+    date_breaks = "1 month", # Breaks at each month
+    date_labels = "%b" # Label as abbreviated month names
+  ) +
+  labs(
+    title = "Cumulative Rainfall: Historical Range vs. Recent Years",
+    x = "Day of Year",
+    y = "Cumulative Precipitation (mm)"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+mean_cum <- rain %>%
+  filter(!(year %in% c(2023, 2024))) %>% # use only historical for mean
+  group_by(doy_date) %>%
+  summarize(cumulative_precip = mean(cumulative_precip, na.rm = TRUE)) %>%
+  mutate(year = "Mean") %>%
+  filter(doy_date != "2000-12-31")
+
+rain_highlight <- rain %>%
+  filter(year %in% c(2023, 2024)) %>%
+  mutate(year = as.character(year)) %>%
+  bind_rows(mean_cum)
+
+rain_plot_v2 <- ggplot() +
+  geom_ribbon(
+    data = hist_env,
+    aes(x = doy_date, ymin = min_cum, ymax = max_cum),
+    fill = "gray80", alpha = 0.6
+  ) +
+  geom_line(
+    data = rain_highlight,
+    aes(x = doy_date, y = cumulative_precip, color = year, linetype = year),
+    size = 1.2
+  ) +
+  scale_color_manual(
+    name = "Year",
+    values = c(
+      "2023" = "#E41A1C",
+      "2024" = "#377EB8",
+      "Mean" = "black"
+    ),
+    labels = c(
+      "2023" = "2023",
+      "2024" = "2024",
+      "Mean" = "Mean (Historical)"
+    )
+  ) +
+  scale_linetype_manual(
+    name = "Year",
+    values = c(
+      "2023" = "solid",
+      "2024" = "dashed",
+      "Mean" = "dotdash"
+    ),
+    labels = c(
+      "2023" = "2023",
+      "2024" = "2024",
+      "Mean" = "Mean (Historical)"
+    )
+  ) +
+  scale_x_date(
+    date_breaks = "1 month", # Breaks at each month
+    date_labels = "%b" # Label as abbreviated month names
+  ) +
+  labs(
+    x = "",  # Remove x-axis label since it aligns with bottom plots
+    y = "Cumulative Precipitation (mm)"
+  ) +
+  theme_publication() +
+  theme(
+    axis.text.x = element_blank(),  # Remove x-axis text since it aligns with bottom plots
+    axis.ticks.x = element_blank(),  # Remove x-axis ticks
+    legend.position = "top"
+  )
+
+rain_plot_v2
+# Modify pdplot to have centered legend
+pdplot <- rain_plot_v2 | gdd_plot_v2 +
+  plot_annotation(
+    theme = theme_publication() + theme(
+      legend.position = "top",
+      legend.justification = "center",  # Changed to center
+      legend.direction = "horizontal"
+    )
+  )
+
+ggsave(
+  "figures/gdd_plot_v2.png",
+  pdplot,
+  width = 8.5, height = 11, dpi = 350
+)
+pdplot
+```
+
+# Figure 1: Soil Moisture and Temperature
+```{r}
+#| label: fig-soil-moisture-temp
+#| fig-cap: "Daily soil moisture and temperature over the study period"
+#| fig-width: 10
+#| fig-height: 8
+
+moist_temp <- flux_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  group_by(treatment, year, date) %>%
+  summarise(
+    mean_soil_moisture = mean(swc_2_mean, na.rm = TRUE),
+    mean_soil_temp = mean(ts_2_mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Split data by year
+moist_temp_2023 <- filter(moist_temp, year == 2023)
+moist_temp_2024 <- filter(moist_temp, year == 2024)
+
+# 2023 Soil Moisture (top left)
+p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = treatment, shape = treatment)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_treatments() +
+  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +  # circle and square
+  scale_x_date(date_breaks = "1 month", date_labels = "%b", 
+               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
+  labs(
+    x = "",  # No x-axis label for top plots
+    y = "2023 Soil Moisture (m³/m³)"
+  ) +
+  theme_publication() +
+  theme(
+    axis.text.x = element_blank(),  # Remove x-axis text for top plots
+    axis.ticks.x = element_blank(),
+    legend.position = "none"
+  )
+
+# 2024 Soil Moisture (bottom left)  
+p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = treatment, shape = treatment)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_treatments() +
+  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b", 
+               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
+  labs(
+    x = "Month",
+    y = "2024 Soil Moisture (m³/m³)"
+  ) +
+  theme_publication() +
+  theme(
+    legend.position = "bottom"
+  ) +
+  labs(color = "Treatment", shape = "Treatment")
+
+# 2023 Soil Temperature (top right)
+p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = treatment, shape = treatment)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_treatments() +
+  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b", 
+               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
+  labs(
+    x = "",
+    y = "2023 Soil Temperature (°C)"
+  ) +
+  theme_publication() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "none"
+  )
+
+# 2024 Soil Temperature (bottom right)
+p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = treatment, shape = treatment)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_treatments() +
+  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b", 
+               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
+  labs(
+    x = "Month",
+    y = "2024 Soil Temperature (°C)",
+    color = "Treatment",
+    shape = "Treatment"
+  ) +
+  theme_publication() +
+  theme(legend.position = "none")
+p4
+# Modify soil_4panel to also have centered top legend
+soil_4panel <- (p1 | p3) / (p2 | p4) +
+  plot_annotation(
+    theme = theme_publication() + theme(
+      legend.position = "top",  # Changed from "bottom" to "top"
+      legend.justification = "center",  # Center justified
+      legend.direction = "horizontal"
+    )
+  )
+
+# Keep the combined plot simple
+six_panel_plot <- pdplot / soil_4panel +
+  plot_layout(heights = c(1, 1))
+# Save the plots
+ggsave("figures/soil_4panel.png", soil_4panel, width = 10, height = 8, dpi = 300)
+ggsave("figures/six_panel_weather_soil.png", six_panel_plot, width = 10, height = 12, dpi = 300)
+
+six_panel_plot
 ```
 
 # Summary
