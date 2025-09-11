@@ -908,8 +908,6 @@ gdd_plot_v2 <- ggplot() +
     legend.position = "top"
   )
 
-gdd_plot_v2 <- gdd_plot_v2 + guides(color = "none", fill = "none", linetype = "none", shape = "none")
-
 hist_env <- rain %>%
   filter(!(year %in% c(2023, 2024))) %>%
   group_by(doy_date) %>%
@@ -1065,14 +1063,7 @@ rain_plot_v2 <- ggplot() +
 
 rain_plot_v2
 # Modify pdplot to have centered legend
-pdplot <- rain_plot_v2 | gdd_plot_v2 +
-  plot_annotation(
-    theme = theme_publication() + theme(
-      legend.position = "top",
-      legend.justification = "center",  # Changed to center
-      legend.direction = "horizontal"
-    )
-  )
+pdplot <- rain_plot_v2 | gdd_plot_v2 
 
 ggsave(
   "figures/gdd_plot_v2.png",
@@ -1082,38 +1073,85 @@ ggsave(
 pdplot
 ```
 
-# Figure 1: Soil Moisture and Temperature
+# Figure 1: Soil Moisture and Temperature (with per-date significance)
 ```{r}
 #| label: fig-soil-moisture-temp
-#| fig-cap: "Daily soil moisture and temperature over the study period"
+#| fig-cap: "Daily soil moisture and temperature over the study period (asterisks indicate p < 0.05 between treatments for that date)"
 #| fig-width: 10
 #| fig-height: 8
 
 moist_temp <- flux_data %>%
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
-  group_by(treatment, year, date) %>%
+  rename(Treatment = treatment) %>%
+  group_by(Treatment, year, date) %>%
   summarise(
     mean_soil_moisture = mean(swc_2_mean, na.rm = TRUE),
     mean_soil_temp = mean(ts_2_mean, na.rm = TRUE),
     .groups = "drop"
   )
+colnames(moist_temp)
+# --- Per-date (year + date) t-tests between treatments on raw replicate data ---
+raw_soil <- flux_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  rename(Treatment = treatment) %>%
+  mutate(year = year(date)) 
+colnames(raw_soil)
+get_date_pvals <- function(df, value_col) {
+  df %>%
+    group_by(year, date) %>%
+    summarise(
+      p = {
+        vals <- .data[[value_col]]
+        trt  <- Treatment
+        # Need exactly the two treatments and at least one non-NA in each
+        has_two <- length(unique(na.omit(trt))) == 2
+        counts  <- table(trt[!is.na(vals)])
+        ok <- has_two && all(counts >= 1) && length(na.omit(vals)) >= 2
+        if (ok) {
+          out <- tryCatch(t.test(vals ~ trt)$p.value, error = function(e) NA_real_)
+          out
+        } else NA_real_
+      },
+      .groups = "drop"
+    ) %>%
+    filter(!is.na(p) & p < 0.05)
+}
+
+pvals_moist <- get_date_pvals(raw_soil, "swc_2_mean")
+pvals_temp  <- get_date_pvals(raw_soil, "ts_2_mean")
+
+# Star positions (5% headroom above that date's max mean)
+moisture_stars <- moist_temp %>%
+  group_by(year, date) %>%
+  summarise(y_star = max(mean_soil_moisture, na.rm = TRUE) * 1.05, .groups = "drop") %>%
+  inner_join(pvals_moist, by = c("year", "date")) %>%
+  filter(is.finite(y_star))
+
+temp_stars <- moist_temp %>%
+  group_by(year, date) %>%
+  summarise(y_star = max(mean_soil_temp, na.rm = TRUE) * 1.05, .groups = "drop") %>%
+  inner_join(pvals_temp, by = c("year", "date")) %>%
+  filter(is.finite(y_star))
 
 # Split data by year
 moist_temp_2023 <- filter(moist_temp, year == 2023)
 moist_temp_2024 <- filter(moist_temp, year == 2024)
 
 # 2023 Soil Moisture (top left)
-p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = treatment, shape = treatment)) +
+p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Treatment, shape = Treatment)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +  # circle and square
   scale_x_date(date_breaks = "1 month", date_labels = "%b", 
                limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.12))) +
   labs(
     x = "",  # No x-axis label for top plots
     y = "2023 Soil Moisture (m³/m³)"
   ) +
+  geom_text(data = moisture_stars %>% filter(year == 2023),
+            aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0) +
   theme_publication() +
   theme(
     axis.text.x = element_blank(),  # Remove x-axis text for top plots
@@ -1122,17 +1160,20 @@ p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = trea
   )
 
 # 2024 Soil Moisture (bottom left)  
-p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = treatment, shape = treatment)) +
+p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Treatment, shape = Treatment)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b", 
                limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.12))) +
   labs(
     x = "Month",
     y = "2024 Soil Moisture (m³/m³)"
   ) +
+  geom_text(data = moisture_stars %>% filter(year == 2024),
+            aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0) +
   theme_publication() +
   theme(
     legend.position = "bottom"
@@ -1140,17 +1181,20 @@ p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = trea
   labs(color = "Treatment", shape = "Treatment")
 
 # 2023 Soil Temperature (top right)
-p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = treatment, shape = treatment)) +
+p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatment, shape = Treatment)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b", 
                limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.12))) +
   labs(
     x = "",
     y = "2023 Soil Temperature (°C)"
   ) +
+  geom_text(data = temp_stars %>% filter(year == 2023),
+            aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0) +
   theme_publication() +
   theme(
     axis.text.x = element_blank(),
@@ -1159,39 +1203,40 @@ p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = treatmen
   )
 
 # 2024 Soil Temperature (bottom right)
-p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = treatment, shape = treatment)) +
+p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatment, shape = Treatment)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b", 
                limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.12))) +
   labs(
     x = "Month",
     y = "2024 Soil Temperature (°C)",
     color = "Treatment",
     shape = "Treatment"
   ) +
+  geom_text(data = temp_stars %>% filter(year == 2024),
+            aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0) +
   theme_publication() +
   theme(legend.position = "none")
 p4
 # Modify soil_4panel to also have centered top legend
-soil_4panel <- (p1 | p3) / (p2 | p4) +
-  plot_annotation(
-    theme = theme_publication() + theme(
-      legend.position = "top",  # Changed from "bottom" to "top"
-      legend.justification = "center",  # Center justified
-      legend.direction = "horizontal"
-    )
+soil_4panel <- (p1 | p3) / (p2 | p4) 
+
+six_panel_plot <-
+  (pdplot / soil_4panel) +
+  patchwork::plot_layout(guides = "collect", heights = c(1, 1)) &
+  theme(
+    legend.position      = "top",
+    legend.justification = "center",
+    legend.direction     = "horizontal",
+    legend.box           = "horizontal",   # keeps multiple guides in one row when possible
+    legend.margin        = margin(b = 4)
   )
 
-# Keep the combined plot simple
-six_panel_plot <- pdplot / soil_4panel +
-  plot_layout(heights = c(1, 1))
-# Save the plots
-ggsave("figures/soil_4panel.png", soil_4panel, width = 10, height = 8, dpi = 300)
 ggsave("figures/six_panel_weather_soil.png", six_panel_plot, width = 10, height = 12, dpi = 300)
-
 six_panel_plot
 ```
 
