@@ -53,3 +53,6 @@ leaching_data <- df %>%
     cumulative_n_loss_mg = cumsum(total_n_loss_mg)
   ) %>%
   ungroup()
+
+# Save cleaned data
+write_csv(leaching_data, "data/clean_leaching.csv")
