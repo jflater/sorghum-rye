@@ -1391,6 +1391,179 @@ figure2
 ggsave("figures/figure2_daily_flux_precip_cumulative_2023_2024.png",
        figure2, width = 10, height = 9, dpi = 300, bg = "white")
 ```
+
+# Figure 3: Nitrogen Leaching
+
+```{r figure-leaching}
+#| label: fig-leaching
+#| fig-cap: "Tile-drain nitrogen loss and cumulative leaching"
+#| fig-width: 10
+#| fig-height: 9
+
+# Prepare daily leaching data for Sorghum systems
+leaching_daily <- leaching_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(
+    total_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha,
+    cumulative_n_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
+  ) %>%
+  group_by(treatment, year, date) %>%
+  summarise(
+    mean_loss = mean(total_n_loss_kgha, na.rm = TRUE),
+    se_loss = sd(total_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(total_n_loss_kgha))),
+    mean_cum = mean(cumulative_n_loss_kgha, na.rm = TRUE),
+    se_cum = sd(cumulative_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(cumulative_n_loss_kgha))),
+    .groups = "drop"
+  )
+
+# Axis limits
+max_daily <- max(leaching_daily$mean_loss + leaching_daily$se_loss, na.rm = TRUE)
+max_cum <- max(leaching_daily$mean_cum + leaching_daily$se_cum, na.rm = TRUE)
+
+# Top panels: event total N loss
+loss_2023 <- leaching_daily %>% filter(year == 2023)
+loss_2024 <- leaching_daily %>% filter(year == 2024)
+
+top_2023 <- ggplot(loss_2023, aes(x = date, y = mean_loss, fill = treatment)) +
+  geom_col(position = position_dodge(width = 0.9), width = 0.8) +
+  geom_errorbar(aes(ymin = pmax(mean_loss - se_loss, 0), ymax = mean_loss + se_loss),
+                position = position_dodge(width = 0.9), width = 0.2) +
+  scale_fill_treatments() +
+  scale_y_continuous(limits = c(0, max_daily), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
+               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
+  labs(x = NULL, y = expression("Event N loss (kg N ha"^{-1}*")"),
+       fill = "Treatment", title = "2023") +
+  theme_publication() +
+  theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+top_2024 <- ggplot(loss_2024, aes(x = date, y = mean_loss, fill = treatment)) +
+  geom_col(position = position_dodge(width = 0.9), width = 0.8) +
+  geom_errorbar(aes(ymin = pmax(mean_loss - se_loss, 0), ymax = mean_loss + se_loss),
+                position = position_dodge(width = 0.9), width = 0.2) +
+  scale_fill_treatments() +
+  scale_y_continuous(limits = c(0, max_daily), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
+               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
+  labs(x = NULL, y = NULL, fill = "Treatment", title = "2024") +
+  theme_publication() +
+  theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+# Bottom panels: cumulative N loss
+cum_2023 <- ggplot(loss_2023, aes(x = date, y = mean_cum, color = treatment, fill = treatment)) +
+  geom_ribbon(aes(ymin = pmax(mean_cum - se_cum, 0), ymax = mean_cum + se_cum),
+              alpha = 0.2, linewidth = 0) +
+  geom_line(linewidth = 1.1) +
+  scale_color_treatments() +
+  scale_fill_treatments() +
+  scale_y_continuous(limits = c(0, max_cum), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
+               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
+  labs(x = "Month", y = expression("Cumulative N loss (kg N ha"^{-1}*")"),
+       color = "Treatment", fill = "Treatment") +
+  theme_publication() +
+  theme(legend.position = "none")
+
+cum_2024 <- ggplot(loss_2024, aes(x = date, y = mean_cum, color = treatment, fill = treatment)) +
+  geom_ribbon(aes(ymin = pmax(mean_cum - se_cum, 0), ymax = mean_cum + se_cum),
+              alpha = 0.2, linewidth = 0) +
+  geom_line(linewidth = 1.1) +
+  scale_color_treatments() +
+  scale_fill_treatments() +
+  scale_y_continuous(limits = c(0, max_cum), expand = expansion(mult = c(0, 0.05))) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
+               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
+  labs(x = "Month", y = NULL, color = "Treatment", fill = "Treatment") +
+  theme_publication() +
+  theme(legend.position = "bottom")
+
+# Combine panels
+figure3 <- (top_2023 + top_2024) / (cum_2023 + cum_2024) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+figure3
+
+ggsave("figures/figure3_leaching_four_panel.png", figure3, width = 10, height = 9, dpi = 300, bg = "white")
+```
+
+# Figure 4: Annual Nitrogen Losses
+
+```{r figure-annual-loss}
+#| label: fig-annual-loss
+#| fig-cap: "Stacked annual nitrogen losses by treatment"
+#| fig-width: 10
+#| fig-height: 6
+
+# Summaries for annual leaching and N2O
+leach_summary <- annual_leaching %>%
+  group_by(treatment, year) %>%
+  summarise(
+    mean_leach = mean(annual_cumulative_leaching, na.rm = TRUE),
+    se_leach = sd(annual_cumulative_leaching, na.rm = TRUE) / sqrt(sum(!is.na(annual_cumulative_leaching))),
+    .groups = "drop"
+  )
+
+n2o_summary <- plot_cumulative_n2o %>%
+  group_by(treatment, year) %>%
+  summarise(
+    mean_n2o = mean(annual_cumulative_n2o, na.rm = TRUE),
+    se_n2o = sd(annual_cumulative_n2o, na.rm = TRUE) / sqrt(sum(!is.na(annual_cumulative_n2o))),
+    .groups = "drop"
+  )
+
+# Significance letters for each component
+get_letters <- function(df, value_col) {
+  pw <- pairwise.t.test(df[[value_col]], df$treatment, p.adjust.method = "none")
+  multcompView::multcompLetters(pw$p.value)$Letters %>%
+    enframe(name = "treatment", value = "letter")
+}
+
+letters_leach <- annual_leaching %>%
+  group_by(year) %>%
+  group_modify(~ get_letters(.x, "annual_cumulative_leaching"))
+
+letters_n2o <- plot_cumulative_n2o %>%
+  group_by(year) %>%
+  group_modify(~ get_letters(.x, "annual_cumulative_n2o"))
+
+# Combine summaries and letters
+combined_loss <- full_join(leach_summary, n2o_summary, by = c("treatment", "year")) %>%
+  left_join(letters_leach %>% rename(letter_leach = letter), by = c("treatment", "year")) %>%
+  left_join(letters_n2o %>% rename(letter_n2o = letter), by = c("treatment", "year"))
+
+loss_long <- combined_loss %>%
+  pivot_longer(cols = c(mean_leach, mean_n2o), names_to = "component", values_to = "value") %>%
+  mutate(
+    se = if_else(component == "mean_leach", se_leach, se_n2o),
+    component = recode(component, mean_leach = "Leached N", mean_n2o = "Nitrous Oxide"),
+    letter = if_else(component == "Leached N", letter_leach, letter_n2o),
+    treatment = factor(treatment, levels = c("Corn", "Soy", "Sorghum", "Sorghum + Rye"))
+  )
+
+loss_colors <- c("Leached N" = "#95C36EFF", "Nitrous Oxide" = "#0A2E57FF")
+
+max_total <- loss_long %>%
+  group_by(year, treatment) %>%
+  summarise(total = sum(value), .groups = "drop") %>%
+  summarise(max_total = max(total, na.rm = TRUE)) %>%
+  pull(max_total)
+
+figure4 <- ggplot(loss_long, aes(x = treatment, y = value, fill = component)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = letter), position = position_stack(vjust = 1.02), color = "black", size = 3) +
+  facet_wrap(~year, nrow = 1) +
+  scale_fill_manual(values = loss_colors, name = "Loss Type") +
+  scale_y_continuous(limits = c(0, max_total * 1.05), expand = expansion(mult = c(0, 0.05))) +
+  labs(x = "Treatment", y = expression("Annual N loss (kg N ha"^{-1}*")")) +
+  theme_publication() +
+  theme(legend.position = "top")
+
+figure4
+
+ggsave("figures/figure4_stacked_n_loss.png", figure4, width = 10, height = 6, dpi = 300, bg = "white")
+```
+
 # Summary
 
 This document provides clean, efficient analysis following tidyverse principles:
