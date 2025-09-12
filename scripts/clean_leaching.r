@@ -44,13 +44,19 @@ df <- leaching_data %>%
   ) %>%
   left_join(trt_year, by = c("plot", "year"))
 
-# Calculate cumulateive flow and N loss per plot per year
+# Recalculate total N loss using existing nitrate and ammonia loss columns
+df <- df %>%
+  mutate(
+    total_n_loss_mg = nitrate_loss_mg + ammonia_loss_mg
+  )
+
+# Calculate cumulative flow and N loss per plot per year
 leaching_data <- df %>%
   group_by(plot, treatment, year) %>%
   arrange(date) %>%
   mutate(
     cumulative_flow_l = cumsum(flow_l),
-    cumulative_n_loss_mg = cumsum(total_n_loss_mg)
+    cumulative_n_loss_mg = cumsum(replace_na(total_n_loss_mg, 0))
   ) %>%
   ungroup()
 
