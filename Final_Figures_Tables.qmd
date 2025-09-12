@@ -33,6 +33,7 @@ library(janitor)
 library(broom)
 library(readxl)
 library(patchwork)
+library(multcompView)
 
 # Re-establish dplyr preferences after loading packages
 if (requireNamespace("conflicted", quietly = TRUE)) {
@@ -740,7 +741,7 @@ flow_n_plot <- ggplot(plot_flow_n_data, aes(x = year_treatment, group = plot)) +
 
 flow_n_plot
 
-ggsave("figures/figure2_flow_nitrogen_relationship.png", width = 10, height = 6, dpi = 300)
+ggsave("figures/figuresupp1_flow_nitrogen_relationship.png", width = 10, height = 6, dpi = 300)
 ```
 
 # Figure 1: Precipitation and Temperature 
@@ -1235,7 +1236,7 @@ six_panel_plot <-
     legend.margin        = margin(b = 4)
   )
 
-ggsave("figures/six_panel_weather_soil.png", six_panel_plot, width = 10, height = 12, dpi = 300)
+ggsave("figures/figure1_six_panel_weather_soil.png", six_panel_plot, width = 10, height = 12, dpi = 300)
 six_panel_plot
 ```
 
@@ -1393,94 +1394,161 @@ ggsave("figures/figure2_daily_flux_precip_cumulative_2023_2024.png",
 ```
 
 # Figure 3: Nitrogen Leaching
-
 ```{r figure-leaching}
 #| label: fig-leaching
 #| fig-cap: "Tile-drain nitrogen loss and cumulative leaching"
 #| fig-width: 10
 #| fig-height: 9
 
-# Prepare daily leaching data for Sorghum systems
-leaching_daily <- leaching_data %>%
+# Get leaching measurement date ranges for each year (similar to Figure 2)
+leaching_date_ranges <- leaching_data %>%
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
-  mutate(
-    total_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha,
-    cumulative_n_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
-  ) %>%
-  group_by(treatment, year, date) %>%
+  group_by(year) %>%
   summarise(
-    mean_loss = mean(total_n_loss_kgha, na.rm = TRUE),
-    se_loss = sd(total_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(total_n_loss_kgha))),
-    mean_cum = mean(cumulative_n_loss_kgha, na.rm = TRUE),
-    se_cum = sd(cumulative_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(cumulative_n_loss_kgha))),
+    min_date = floor_date(min(date, na.rm = TRUE), "month"),  # Align with monthly data
+    max_date = ceiling_date(max(date, na.rm = TRUE), "month") - days(1),  # End of last month with data
     .groups = "drop"
   )
 
-# Axis limits
-max_daily <- max(leaching_daily$mean_loss + leaching_daily$se_loss, na.rm = TRUE)
-max_cum <- max(leaching_daily$mean_cum + leaching_daily$se_cum, na.rm = TRUE)
+print(leaching_date_ranges)
+cat("Leaching measurement ranges:\n")
+print(leaching_date_ranges)
 
-# Top panels: event total N loss
-loss_2023 <- leaching_daily %>% filter(year == 2023)
-loss_2024 <- leaching_daily %>% filter(year == 2024)
+# Build cumulative leaching data using the same approach as Figure 2
+# First get daily leaching rates per plot
+daily_leaching <- leaching_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(
+    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+  ) %>%
+  group_by(plot, treatment, year, date) %>%
+  summarise(
+    daily_loss = mean(daily_n_loss_kgha, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(plot, treatment, year, date)
 
-top_2023 <- ggplot(loss_2023, aes(x = date, y = mean_loss, fill = treatment)) +
-  geom_col(position = position_dodge(width = 0.9), width = 0.8) +
-  geom_errorbar(aes(ymin = pmax(mean_loss - se_loss, 0), ymax = mean_loss + se_loss),
-                position = position_dodge(width = 0.9), width = 0.2) +
+# Calculate treatment means and SE for daily losses
+daily_leaching_summary <- daily_leaching %>%
+  group_by(treatment, year, date) %>%
+  summarise(
+    mean_loss = mean(daily_loss, na.rm = TRUE),
+    se_loss = sd(daily_loss, na.rm = TRUE) / sqrt(sum(!is.na(daily_loss))),
+    .groups = "drop"
+  )
+
+# Build cumulative leaching using same interpolation approach as Figure 2
+cum_leaching_combined <- daily_leaching_summary %>%
+  arrange(treatment, year, date) %>%
+  group_by(treatment, year) %>%
+  # Use actual measurement date ranges instead of full calendar year
+  left_join(leaching_date_ranges, by = "year") %>%
+  summarise(
+    start_date = first(min_date),
+    end_date = first(max_date),
+    .groups = "drop"
+  ) %>%
+  rowwise() %>%
+  mutate(all_dates = list(seq.Date(start_date, end_date, by = "day"))) %>%
+  unnest(all_dates) %>%
+  rename(date = all_dates) %>%
+  select(-start_date, -end_date) %>%
+  # Join with observed data
+  left_join(daily_leaching_summary, by = c("treatment", "year", "date")) %>%
+  group_by(treatment, year) %>%
+  # Interpolate within observed ranges only (rule = 1)
+  mutate(
+    mean_loss_interp = approx(
+      x = date[!is.na(mean_loss)],
+      y = mean_loss[!is.na(mean_loss)],
+      xout = date, rule = 1, ties = "ordered"
+    )$y,
+    se_loss_interp = approx(
+      x = date[!is.na(se_loss)],
+      y = se_loss[!is.na(se_loss)],
+      xout = date, rule = 1, ties = "ordered"
+    )$y
+  ) %>%
+  # Filter to only include dates within measurement range
+  filter(!is.na(mean_loss_interp)) %>%
+  # Calculate cumulative
+  mutate(
+    cum_loss = cumsum(mean_loss_interp),
+    cum_se = sqrt(cumsum(se_loss_interp^2))
+  ) %>%
+  ungroup()
+
+# Create base theme for consistent formatting
+base_theme_leaching <- theme_publication() +
+  theme(
+    axis.title.x = element_blank(),
+    legend.position = "none",
+    strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+    panel.spacing = unit(2, "lines")
+  )
+
+# 1) Monthly leaching loss (faceted, top row) - using daily summary data aggregated by month
+monthly_leaching <- daily_leaching_summary %>%
+  # Trim to measurement date ranges
+  left_join(leaching_date_ranges, by = "year") %>%
+  filter(date >= min_date, date <= max_date) %>%
+  select(-min_date, -max_date) %>%
+  mutate(month_year = floor_date(date, "month")) %>%
+  group_by(treatment, year, month_year) %>%
+  summarise(
+    monthly_total = sum(mean_loss, na.rm = TRUE),
+    monthly_se = sqrt(sum(se_loss^2, na.rm = TRUE)),
+    .groups = "drop"
+  )
+
+monthly_plot <- ggplot(monthly_leaching, aes(x = month_year, y = monthly_total, fill = treatment)) +
+  geom_col(position = position_dodge(width = 20), width = 15) +
+  geom_errorbar(aes(ymin = pmax(monthly_total - monthly_se, 0), ymax = monthly_total + monthly_se),
+                position = position_dodge(width = 20), width = 5) +
+  # Add invisible points to set x-axis limits based on measurement ranges
+  geom_blank(data = leaching_date_ranges, inherit.aes = FALSE,
+             aes(x = min_date, y = 0)) +
+  geom_blank(data = leaching_date_ranges, inherit.aes = FALSE,
+             aes(x = max_date, y = 0)) +
   scale_fill_treatments() +
-  scale_y_continuous(limits = c(0, max_daily), expand = expansion(mult = c(0, 0.05))) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b",
-               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
-  labs(x = NULL, y = expression("Event N loss (kg N ha"^{-1}*")"),
-       fill = "Treatment", title = "2023") +
-  theme_publication() +
-  theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
-
-top_2024 <- ggplot(loss_2024, aes(x = date, y = mean_loss, fill = treatment)) +
-  geom_col(position = position_dodge(width = 0.9), width = 0.8) +
-  geom_errorbar(aes(ymin = pmax(mean_loss - se_loss, 0), ymax = mean_loss + se_loss),
-                position = position_dodge(width = 0.9), width = 0.2) +
-  scale_fill_treatments() +
-  scale_y_continuous(limits = c(0, max_daily), expand = expansion(mult = c(0, 0.05))) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b",
-               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
-  labs(x = NULL, y = NULL, fill = "Treatment", title = "2024") +
-  theme_publication() +
-  theme(legend.position = "none", axis.text.x = element_blank(), axis.ticks.x = element_blank())
-
-# Bottom panels: cumulative N loss
-cum_2023 <- ggplot(loss_2023, aes(x = date, y = mean_cum, color = treatment, fill = treatment)) +
-  geom_ribbon(aes(ymin = pmax(mean_cum - se_cum, 0), ymax = mean_cum + se_cum),
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(y = expression("Monthly N Loss (kg N ha"^-1*")"), fill = "Treatment") +
+  facet_wrap(~year, nrow = 1, scales = "free_x") +
+  base_theme_leaching +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  )
+monthly_plot
+# 2) Cumulative leaching plot (faceted, bottom row with x-axis labels)
+cumulative_leaching_plot <- ggplot(cum_leaching_combined, aes(x = date, y = cum_loss, color = treatment, fill = treatment)) +
+  geom_ribbon(aes(ymin = pmax(cum_loss - cum_se, 0), ymax = cum_loss + cum_se),
               alpha = 0.2, linewidth = 0) +
   geom_line(linewidth = 1.1) +
+  # Add invisible points to set x-axis limits based on measurement ranges
+  geom_blank(data = leaching_date_ranges, inherit.aes = FALSE,
+             aes(x = min_date, y = 0)) +
+  geom_blank(data = leaching_date_ranges, inherit.aes = FALSE,
+             aes(x = max_date, y = 0)) +
   scale_color_treatments() +
   scale_fill_treatments() +
-  scale_y_continuous(limits = c(0, max_cum), expand = expansion(mult = c(0, 0.05))) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b",
-               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
-  labs(x = "Month", y = expression("Cumulative N loss (kg N ha"^{-1}*")"),
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "Month", 
+       y = expression("Cumulative N Loss (kg N ha"^-1*")"),
        color = "Treatment", fill = "Treatment") +
+  facet_wrap(~year, nrow = 1, scales = "free_x") +
   theme_publication() +
-  theme(legend.position = "none")
-
-cum_2024 <- ggplot(loss_2024, aes(x = date, y = mean_cum, color = treatment, fill = treatment)) +
-  geom_ribbon(aes(ymin = pmax(mean_cum - se_cum, 0), ymax = mean_cum + se_cum),
-              alpha = 0.2, linewidth = 0) +
-  geom_line(linewidth = 1.1) +
-  scale_color_treatments() +
-  scale_fill_treatments() +
-  scale_y_continuous(limits = c(0, max_cum), expand = expansion(mult = c(0, 0.05))) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b",
-               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
-  labs(x = "Month", y = NULL, color = "Treatment", fill = "Treatment") +
-  theme_publication() +
-  theme(legend.position = "bottom")
-
-# Combine panels
-figure3 <- (top_2023 + top_2024) / (cum_2023 + cum_2024) +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
+  theme(
+    strip.text = element_blank(),  # Hide strip text for bottom row
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+    panel.spacing = unit(2, "lines")
+  )
+cumulative_leaching_plot
+# Assemble final figure: 2 faceted rows
+figure3 <- (monthly_plot / cumulative_leaching_plot) +
+  patchwork::plot_layout(heights = c(1, 1.2))
 
 figure3
 
