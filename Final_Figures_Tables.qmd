@@ -1342,6 +1342,50 @@ flux_date_ranges <- daily_flux %>%
     .groups = "drop"
   )
 
+# Calculate daily significance tests between treatments
+daily_significance <- flux_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(year = lubridate::year(date)) %>%
+  filter(year %in% c(2023, 2024)) %>%
+  group_by(year, date) %>%
+  summarise(
+    p_value = {
+      # Get flux values for each treatment
+      sorghum_flux <- gnha_day_no_negative[treatment == "Sorghum"]
+      sorghum_rye_flux <- gnha_day_no_negative[treatment == "Sorghum + Rye"]
+
+      # Remove NA values
+      sorghum_flux <- sorghum_flux[!is.na(sorghum_flux)]
+      sorghum_rye_flux <- sorghum_rye_flux[!is.na(sorghum_rye_flux)]
+
+      # Perform t-test if we have enough data
+      if (length(sorghum_flux) >= 2 && length(sorghum_rye_flux) >= 2) {
+        tryCatch({
+          t_result <- t.test(sorghum_flux, sorghum_rye_flux)
+          t_result$p.value
+        }, error = function(e) NA_real_)
+      } else {
+        NA_real_
+      }
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    significant = p_value < 0.05,
+    star_label = ifelse(significant & !is.na(p_value), "*", "")
+  )
+
+# Get max flux values for star positioning
+max_flux_by_date <- daily_flux %>%
+  group_by(year, date) %>%
+  summarise(max_flux = max(mean_flux + se_flux, na.rm = TRUE), .groups = "drop")
+
+# Combine significance data with position data
+star_data <- daily_significance %>%
+  left_join(max_flux_by_date, by = c("year", "date")) %>%
+  filter(star_label == "*") %>%
+  mutate(star_y = max_flux * 1.1)  # Position stars 10% above the highest error bar
+
 # Filter precipitation to match flux measurement periods only
 daily_precip_trimmed <- rain %>%
   transmute(date, year, precipmm) %>%
@@ -1378,14 +1422,17 @@ precip_plot <- ggplot(daily_precip_trimmed, aes(x = date, y = precipmm)) +
 daily_flux_plot <- ggplot(daily_flux, aes(x = date, y = mean_flux, color = Treatment)) +
   geom_line(linewidth = 1.1, alpha = 0.85) +
   geom_point(size = 2) +
-  geom_errorbar(aes(ymin = mean_flux - se_flux, ymax = mean_flux + se_flux), 
+  geom_errorbar(aes(ymin = mean_flux - se_flux, ymax = mean_flux + se_flux),
                 width = 0.2, alpha = 0.5) +
-  geom_vline(data = fert_events, 
-             aes(xintercept = as.numeric(fertilizer_date)), 
+  geom_vline(data = fert_events,
+             aes(xintercept = as.numeric(fertilizer_date)),
              linetype = "dashed", color = "red", alpha = 0.7, inherit.aes = FALSE) +
+  geom_text(data = star_data,
+            aes(x = date, y = star_y, label = star_label),
+            color = "black", size = 5, inherit.aes = FALSE) +
   scale_color_treatments() +
   scale_x_date(date_breaks = "1 month", date_labels = "%b") +
-  labs(y = expression("Daily N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"), 
+  labs(y = expression("Daily N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
        color = "Treatment") +
   facet_wrap(~year, nrow = 1, scales = "free_x") +
   theme_publication() +
@@ -1470,7 +1517,7 @@ ggsave("figures/figure2_daily_flux_precip_cumulative_2023_2024.png",
 ```
 
 Figure 2. Daily and cumulative N₂O fluxes and precipitation by year.
-Top panels: Daily N₂O flux and precipitation, trimmed to measurement windows. Bottom panels: Cumulative N₂O flux. Faceted by year. Colors indicate treatment. Axes are aligned for direct comparison.
+Top panels: Daily N₂O flux and precipitation, trimmed to measurement windows. Middle panels: Daily N₂O flux with asterisks (*) indicating dates where flux differs significantly between treatments (p < 0.05). Bottom panels: Cumulative N₂O flux. Faceted by year. Colors indicate treatment. Axes are aligned for direct comparison.
 
 # Figure 3: Nitrogen Leaching
 
