@@ -195,7 +195,16 @@ create_source_table <- function(model_results) {
     )
 }
 ```
+# Table 1: Soil Properties
 
+```{r}
+# Table 1: Soil Properties
+# column names Soil Property, Sorghum, Sorghum + Rye
+colnames <- c("Soil Property", "Sorghum", "Sorghum + Rye")
+rows <- c("Soil Series", "Texture", "pH", "Soil Organic Matter (%)")
+
+
+```
 # Table 2: Salt-extractable Inorganic Nitrogen
 
 ```{r table-2}
@@ -335,7 +344,8 @@ table2_gt <- table2_complete %>%
 
 # Save table
 gtsave(table2_gt, "tables/table2_soil_nitrogen.rtf")
-
+# Save as .png for manuscript
+gtsave(table2_gt, "tables/table2_soil_nitrogen.png")
 table2_gt
 ```
 
@@ -437,6 +447,175 @@ cat("Plot-level leaching data:", nrow(annual_leaching), "observations\n")
 ```
 
 # Table 3: Annual Nitrogen Losses
+
+```{r}
+# Summarize N2O data by treatment and year
+n2o_summary <- plot_cumulative_n2o %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_n2o = mean(annual_cumulative_n2o, na.rm = TRUE),
+    sd_n2o = sd(annual_cumulative_n2o, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))
+
+# Summarize leaching data by treatment and year
+leaching_summary <- annual_leaching %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_leaching = mean(annual_cumulative_leaching, na.rm = TRUE),
+    sd_leaching = sd(annual_cumulative_leaching, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))
+
+# Calculate 2-year totals
+n2o_two_year <- plot_cumulative_n2o %>%
+  group_by(plot, rowvs_interrow, treatment) %>%
+  summarise(total_n2o = sum(annual_cumulative_n2o, na.rm = TRUE), .groups = "drop") %>%
+  group_by(treatment) %>%
+  summarise(
+    mean_n2o = mean(total_n2o, na.rm = TRUE),
+    sd_n2o = sd(total_n2o, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    year = "2023-2024",
+    n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o)
+  )
+
+leaching_two_year <- annual_leaching %>%
+  group_by(plot, treatment) %>%
+  summarise(total_leaching = sum(annual_cumulative_leaching, na.rm = TRUE), .groups = "drop") %>%
+  group_by(treatment) %>%
+  summarise(
+    mean_leaching = mean(total_leaching, na.rm = TRUE),
+    sd_leaching = sd(total_leaching, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    year = "2023-2024", 
+    leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching)
+  )
+compare_df_cols(n2o_two_year, leaching_two_year, n2o_summary, leaching_summary)
+
+# Combine annual and 2-year data
+combined_nitrogen_data <- bind_rows(
+  n2o_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, n2o_result),
+  n2o_two_year %>% select(year, treatment, n2o_result)
+) %>%
+  full_join(
+    bind_rows(
+      leaching_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, leaching_result),
+      leaching_two_year %>% select(year, treatment, leaching_result)
+    ),
+    by = c("year", "treatment")
+  ) %>%
+  mutate(
+    year_order = case_when(
+      year == "2023" ~ 1,
+      year == "2024" ~ 2,
+      year == "2023-2024" ~ 3
+    ),
+    total_environmental_cost = "TBD" # Placeholder for future calculation
+  ) %>%
+  arrange(year_order, treatment)
+
+# Source of variation analysis
+# N2O ANOVA
+combined_n2o_data <- plot_cumulative_n2o %>% mutate(year_factor = as.factor(year))
+aov_n2o <- aov(annual_cumulative_n2o ~ year_factor * treatment, data = combined_n2o_data)
+
+# Leaching ANOVA  
+combined_leaching_data <- annual_leaching %>% mutate(year_factor = as.factor(year))
+aov_leaching <- aov(annual_cumulative_leaching ~ year_factor * treatment, data = combined_leaching_data)
+
+# Source of variation table
+source_variation_n <- tibble(
+  source = c("Year", "Treatment", "Year × Treatment"),
+  n2o_p = summary(aov_n2o)[[1]][1:3, "Pr(>F)"],
+  leaching_p = summary(aov_leaching)[[1]][1:3, "Pr(>F)"]
+) %>%
+  mutate(
+    across(c(n2o_p, leaching_p), ~ case_when(
+      .x < 0.001 ~ "< 0.001",
+      .x < 0.01 ~ sprintf("%.3f", .x),
+      TRUE ~ sprintf("%.2f", .x)
+    )),
+    year = "",
+    year_order = 4,
+    treatment = source,
+    n2o_result = n2o_p,
+    leaching_result = leaching_p,
+    total_environmental_cost = "TBD"
+  ) %>%
+  select(-source, -n2o_p, -leaching_p)
+
+# Create complete table
+separator_n <- tibble(
+  year = "Source of Variation", year_order = 3.5, treatment = "",
+  n2o_result = "", leaching_result = "", total_environmental_cost = ""
+)
+
+table3_complete <- bind_rows(
+  combined_nitrogen_data,
+  separator_n,
+  source_variation_n
+) %>%
+  arrange(year_order, treatment) %>%
+  mutate(
+    year_display = case_when(
+      year == "Source of Variation" ~ year,
+      year != lag(year, default = "") ~ as.character(year),
+      TRUE ~ ""
+    ),
+    is_new_section = year != lag(year, default = "") & year != "Source of Variation"
+  )
+
+# Create gt table
+table3_gt <- table3_complete %>%
+  select(
+    Year = year_display,
+    Treatment = treatment,
+    `N2O Loss` = n2o_result,
+    `N Leaching` = leaching_result, 
+    `Total Environmental Cost` = total_environmental_cost,
+    is_new_section
+  ) %>%
+  gt() %>%
+  tab_header(title = md("**Table 3. Annual nitrogen losses**")) %>%
+  cols_label(
+    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
+    `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
+    `Total Environmental Cost` = md("Total Environmental Cost<br>(kg N equivalent)")
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_section == TRUE)
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Year == "Source of Variation")  
+  ) %>%
+  cols_hide(columns = is_new_section) %>%
+  tab_footnote(
+    footnote = "Values are mean ± standard deviation. Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
+    locations = cells_title()
+  )
+
+# Save table
+gtsave(table3_gt, "tables/table3_nitrogen_losses.rtf")
+# Save as .png for manuscript
+gtsave(table3_gt, "tables/table3_nitrogen_losses.png")
+table3_gt
+```
+
 **Table 3. Annual nitrogen losses by treatment.** Values are mean ± standard deviation. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ($\alpha=0.05$). Source of variation p-values are from ANOVA
 ```{r table-3}
 #| label: tbl-nitrogen-losses
@@ -1600,6 +1779,10 @@ effectsize::cohens_d(annual_cumulative_n2o ~ treatment,
 effectsize::cohens_d(annual_cumulative_n2o ~ treatment,
                      data = subset(plot_cumulative_n2o, year == 2024))
 ```
+
+# Nitrogen removal bt cereal rye
+
+
 # Summary
 
 This document provides clean, efficient analysis following tidyverse principles:
