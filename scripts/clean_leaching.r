@@ -62,3 +62,32 @@ leaching_data <- df %>%
 
 # Save cleaned data
 write_csv(leaching_data, "data/clean_leaching.csv")
+
+## Weekly heatmap: two rows per plot (Sample, Flow) without overlap
+wk <- leaching_data %>%
+  mutate(week = floor_date(date, "week")) %>%
+  group_by(plot, treatment, year, week) %>%
+  summarise(flow = sum(flow_l, na.rm = TRUE), sample = any(sample_y_n == "Y", na.rm = TRUE), .groups = "drop") %>%
+  pivot_longer(c(sample, flow), names_to = "measure", values_to = "value") %>%
+  mutate(plot_row = paste(plot, if_else(measure == "sample", "Sample", "Flow")))
+
+ggplot() +
+  geom_tile(
+    data = ~ dplyr::filter(wk, measure == "flow"),
+    aes(x = week, y = plot_row, fill = value), color = NA
+  ) +
+  geom_tile(
+    data = ~ dplyr::filter(wk, measure == "sample" & value),
+    aes(x = week, y = plot_row), fill = "#1100ff", color = NA
+  ) +
+  facet_grid(treatment ~ year, scales = "free") +
+  # 0 flow = red; any positive flow transitions from light to dark green
+  scale_fill_gradientn(
+    colors = c("red", "#BDECB6", "#006400"),
+    values = c(0, 1e-6, 1),
+    name = "Weekly flow (L)"
+  ) +
+  theme_minimal() +
+  labs(x = "Week", y = "Plot") +
+  theme_publication()
+ggsave("figures/supp2_weekly_sample_flow_heatmap.png", width = 12, height = 8, dpi = 300)

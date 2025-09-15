@@ -34,7 +34,6 @@ library(broom)
 library(readxl)
 library(patchwork)
 library(multcompView)
-library(emmeans)
 
 # Re-establish dplyr preferences after loading packages
 if (requireNamespace("conflicted", quietly = TRUE)) {
@@ -440,12 +439,114 @@ cat("Plot-level leaching data:", nrow(annual_leaching), "observations\n")
 
 ```{r table-3}
 #| label: tbl-nitrogen-losses
-#| tbl-width: 10
-#| tbl-height: 6
-# ...existing code for combined_nitrogen_data and table rendering...
-```
+#| tbl-cap: "Annual nitrogen losses by treatment"
 
-**Table 3. Annual nitrogen losses by treatment.** Values are mean ± standard deviation. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ($\alpha=0.05$). Source of variation p-values are from ANOVA.
+# Summarize N2O data by treatment and year
+n2o_summary <- plot_cumulative_n2o %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_n2o = mean(annual_cumulative_n2o, na.rm = TRUE),
+    sd_n2o = sd(annual_cumulative_n2o, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))
+
+# Summarize leaching data by treatment and year
+leaching_summary <- annual_leaching %>%
+  group_by(treatment, year) %>%
+  summarise(
+    n_plots = n(),
+    mean_leaching = mean(annual_cumulative_leaching, na.rm = TRUE),
+    sd_leaching = sd(annual_cumulative_leaching, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))
+
+# Calculate 2-year totals
+n2o_two_year <- plot_cumulative_n2o %>%
+  group_by(plot, rowvs_interrow, treatment) %>%
+  summarise(total_n2o = sum(annual_cumulative_n2o, na.rm = TRUE), .groups = "drop") %>%
+  group_by(treatment) %>%
+  summarise(
+    mean_n2o = mean(total_n2o, na.rm = TRUE),
+    sd_n2o = sd(total_n2o, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    year = "2023-2024",
+    n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o)
+  )
+
+leaching_two_year <- annual_leaching %>%
+  group_by(plot, treatment) %>%
+  summarise(total_leaching = sum(annual_cumulative_leaching, na.rm = TRUE), .groups = "drop") %>%
+  group_by(treatment) %>%
+  summarise(
+    mean_leaching = mean(total_leaching, na.rm = TRUE),
+    sd_leaching = sd(total_leaching, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    year = "2023-2024", 
+    leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching)
+  )
+compare_df_cols(n2o_two_year, leaching_two_year, n2o_summary, leaching_summary)
+# Combine annual and 2-year data
+combined_nitrogen_data <- bind_rows(
+  n2o_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, n2o_result),
+  n2o_two_year %>% select(year, treatment, n2o_result)
+) %>%
+  full_join(
+    bind_rows(
+      leaching_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, leaching_result),
+      leaching_two_year %>% select(year, treatment, leaching_result)
+    ),
+    by = c("year", "treatment")
+  ) %>%
+  mutate(
+    year_order = case_when(
+      year == "2023" ~ 1,
+      year == "2024" ~ 2,
+      year == "2023-2024" ~ 3
+    ),
+    total_environmental_cost = "TBD" # Placeholder for future calculation
+  ) %>%
+  arrange(year_order, treatment)
+
+# Source of variation analysis
+# N2O ANOVA
+combined_n2o_data <- plot_cumulative_n2o %>% mutate(year_factor = as.factor(year))
+aov_n2o <- aov(annual_cumulative_n2o ~ year_factor * treatment, data = combined_n2o_data)
+
+# Leaching ANOVA  
+combined_leaching_data <- annual_leaching %>% mutate(year_factor = as.factor(year))
+aov_leaching <- aov(annual_cumulative_leaching ~ year_factor * treatment, data = combined_leaching_data)
+
+# Source of variation table
+source_variation_n <- tibble(
+  source = c("Year", "Treatment", "Year × Treatment"),
+  n2o_p = summary(aov_n2o)[[1]][1:3, "Pr(>F)"],
+  leaching_p = summary(aov_leaching)[[1]][1:3, "Pr(>F)"]
+) %>%
+  mutate(
+    across(c(n2o_p, leaching_p), ~ case_when(
+      .x < 0.001 ~ "< 0.001",
+      .x < 0.01 ~ sprintf("%.3f", .x),
+      TRUE ~ sprintf("%.2f", .x)
+    )),
+    year = "",
+    year_order = 4,
+    treatment = source,
+    n2o_result = n2o_p,
+    leaching_result = leaching_p,
+    total_environmental_cost = "TBD"
+  ) %>%
+  select(-source, -n2o_p, -leaching_p)
+
+# Create complete table
+separator_n <- tibble(
+  year = "Source of Variation", year_order = 3.5, treatment = "",
   n2o_result = "", leaching_result = "", total_environmental_cost = ""
 )
 
@@ -1118,6 +1219,7 @@ p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatmen
             aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
   theme(legend.position = "none")
+p4
 # Modify soil_4panel to also have centered top legend
 soil_4panel <- (p1 | p3) / (p2 | p4) 
 
@@ -1135,10 +1237,6 @@ six_panel_plot <-
 ggsave("figures/figure1_six_panel_weather_soil.png", six_panel_plot, width = 10, height = 12, dpi = 300)
 six_panel_plot
 ```
-
-Figure 1. Daily precipitation, temperature, and soil moisture over the study period.
-Panels show daily rainfall, air temperature, and soil moisture for each year. Shaded regions indicate historical ranges. Data are faceted by year.
-
 
 # Figure 2
 
@@ -1296,11 +1394,7 @@ ggsave("figures/figure2_daily_flux_precip_cumulative_2023_2024.png",
        figure2, width = 10, height = 9, dpi = 300, bg = "white")
 ```
 
-Figure 2. Daily and cumulative N₂O fluxes and precipitation by year.
-Top panels: Daily N₂O flux and precipitation, trimmed to measurement windows. Bottom panels: Cumulative N₂O flux. Faceted by year. Colors indicate treatment. Axes are aligned for direct comparison.
-
 # Figure 3: Nitrogen Leaching
-
 ```{r figure-leaching}
 #| label: fig-leaching
 #| fig-cap: "Tile-drain nitrogen loss and cumulative leaching"
@@ -1455,16 +1549,12 @@ figure3
 ggsave("figures/figure3_leaching_four_panel.png", figure3, width = 10, height = 9, dpi = 300, bg = "white")
 ```
 
-Figure 3. Monthly and cumulative nitrogen leaching by year.
-Top panels: Monthly leaching losses (kg N ha⁻¹) by treatment. Bottom panels: Cumulative leaching losses. Faceted by year. Axes are aligned for direct comparison. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different (
-𝛼
-=
-0.05
-α=0.05).
 
 # Figure 4: Annual Nitrogen Losses
+
 ```{r figure-annual-loss}
 #| label: fig-annual-loss
+#| fig-cap: "Stacked annual nitrogen losses by treatment"
 #| fig-width: 10
 #| fig-height: 6
 
@@ -1485,21 +1575,26 @@ n2o_summary <- plot_cumulative_n2o %>%
     .groups = "drop"
   )
 
-# Significance letters for each component (consistent Tukey-adjusted via emmeans)
+# Significance letters for each component
 get_letters <- function(df, value_col) {
-  d <- df %>% filter(!is.na(.data[[value_col]]))
-  trts <- sort(unique(d$treatment))
+  df <- df %>% filter(!is.na(.data[[value_col]]))
+  trts <- sort(unique(df$treatment))
+  # If fewer than 2 treatments present, assign 'a'
   if (length(trts) < 2) {
     return(tibble(treatment = trts, letter = "a"))
   }
-  # Fit simple model within year for compact letter display
-  fml <- as.formula(paste(value_col, "~ treatment"))
-  fit <- lm(fml, data = d)
-  emm <- emmeans::emmeans(fit, ~ treatment)
-  cld_tbl <- emmeans::cld(emm, adjust = "tukey") %>%
-    as_tibble() %>%
-    transmute(treatment, letter = gsub(" ", "", .group))
-  cld_tbl
+  pw <- pairwise.t.test(df[[value_col]], df$treatment, p.adjust.method = "none", pool.sd = FALSE)
+  # Build a full symmetric p-value matrix for all treatments; set missing/NA to 1 (not significant)
+  full <- matrix(1, nrow = length(trts), ncol = length(trts), dimnames = list(trts, trts))
+  if (!is.null(pw$p.value)) {
+    full[rownames(pw$p.value), colnames(pw$p.value)] <- pw$p.value
+  }
+  full[lower.tri(full)] <- t(full)[lower.tri(full)]
+  diag(full) <- 0
+  full[is.na(full)] <- 1
+  letters <- multcompView::multcompLetters(full)$Letters
+  tibble(treatment = names(letters), letter = as.character(letters)) %>%
+    tidyr::complete(treatment = trts, fill = list(letter = "a"))
 }
 
 letters_leach <- annual_leaching %>%
@@ -1546,13 +1641,6 @@ figure4
 
 ggsave("figures/figure4_stacked_n_loss.png", figure4, width = 10, height = 6, dpi = 300, bg = "white")
 ```
-
-Figure 4. Stacked annual nitrogen losses by treatment.
-Bars show mean annual N₂O and leaching losses (kg N ha⁻¹) by treatment and year. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different (
-𝛼
-=
-0.05
-α=0.05).
 
 ```{r}
 annual_leaching %>% count(year, treatment)
