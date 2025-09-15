@@ -437,18 +437,12 @@ cat("Plot-level leaching data:", nrow(annual_leaching), "observations\n")
 ```
 
 # Table 3: Annual Nitrogen Losses
-
+**Table 3. Annual nitrogen losses by treatment.** Values are mean ± standard deviation. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ($\alpha=0.05$). Source of variation p-values are from ANOVA
 ```{r table-3}
 #| label: tbl-nitrogen-losses
 #| tbl-width: 10
 #| tbl-height: 6
 # ...existing code for combined_nitrogen_data and table rendering...
-```
-
-**Table 3. Annual nitrogen losses by treatment.** Values are mean ± standard deviation. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ($\alpha=0.05$). Source of variation p-values are from ANOVA.
-  n2o_result = "", leaching_result = "", total_environmental_cost = ""
-)
-
 table3_complete <- bind_rows(
   combined_nitrogen_data,
   separator_n,
