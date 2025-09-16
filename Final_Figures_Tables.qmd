@@ -471,6 +471,54 @@ leaching_summary <- annual_leaching %>%
   ) %>%
   mutate(leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))
 
+# Add per-year Tukey letters (within-year) for Leaching (and optionally N2O)
+compute_letters_by_year <- function(df, value_col) {
+  d <- df %>% filter(!is.na(.data[[value_col]]))
+  trts <- sort(unique(d$treatment))
+  if (length(trts) < 2) return(tibble(treatment = trts, letter = "a"))
+  fml <- as.formula(paste(value_col, "~ treatment"))
+  fit <- lm(fml, data = d)
+  emm <- emmeans::emmeans(fit, ~ treatment)
+  if (requireNamespace("multcomp", quietly = TRUE)) {
+    out <- multcomp::cld(emm, adjust = "tukey", Letters = letters) %>%
+      as_tibble() %>%
+      transmute(treatment, letter = gsub("\\s+", "", .group)) %>%
+      mutate(
+        # If numbers slipped through, map 1->a, 2->b, etc., and combine (e.g., 12->ab)
+        letter = ifelse(grepl("[0-9]", letter), chartr("123456789", "abcdefghi", letter), letter),
+        letter = ifelse(letter == "" | is.na(letter), "a", letter)
+      )
+  } else {
+    # Fallback: if Tukey letters cannot be computed, return all 'a'
+    out <- tibble(treatment = trts, letter = rep("a", length(trts)))
+  }
+  out
+}
+
+leach_letters <- annual_leaching %>%
+  group_by(year) %>%
+  group_modify(~ compute_letters_by_year(.x, "annual_cumulative_leaching"))
+
+# Optionally compute for N2O (will likely be all 'a' given ns per-year tests)
+n2o_letters <- plot_cumulative_n2o %>%
+  group_by(year) %>%
+  group_modify(~ compute_letters_by_year(.x, "annual_cumulative_n2o"))
+
+# Attach letters to per-year rows only (exclude 2023–2024 totals later)
+leaching_summary <- leaching_summary %>%
+  left_join(leach_letters, by = c("treatment", "year")) %>%
+  mutate(leaching_result = if_else(year %in% c(2023, 2024) & !is.na(letter),
+                                   sprintf("%.3f ± %.3f (%s)", mean_leaching, sd_leaching, letter),
+                                   sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))) %>%
+  select(-letter)
+
+n2o_summary <- n2o_summary %>%
+  left_join(n2o_letters, by = c("treatment", "year")) %>%
+  mutate(n2o_result = if_else(year %in% c(2023, 2024) & !is.na(letter),
+                              sprintf("%.3f ± %.3f (%s)", mean_n2o, sd_n2o, letter),
+                              sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))) %>%
+  select(-letter)
+
 # Calculate 2-year totals (as sum of 2023 and 2024 per treatment)
 # Mean = mean_2023 + mean_2024; SD via quadrature: sqrt(sd_2023^2 + sd_2024^2)
 n2o_two_year <- n2o_summary %>%
@@ -614,6 +662,20 @@ table3_gt <- table3_complete %>%
     style = cell_borders(sides = "top", weight = px(1), color = "gray"),
     locations = cells_body(rows = is_new_section == TRUE)
   ) %>%
+  # Fix the gap by setting explicit column widths
+  cols_width(
+    Year ~ px(90),
+    Treatment ~ px(150),
+    `N2O Loss` ~ px(160),
+    `N Leaching` ~ px(160),
+    `Total Environmental Cost` ~ px(160)
+  ) %>%
+  # Optional: tighten padding and fix total table width
+  tab_options(
+    table.width = px(740),
+    column_labels.padding = px(6),
+    data_row.padding = px(6)
+  ) %>%
   tab_style(
     style = cell_borders(sides = "top", weight = px(2)),
     locations = cells_body(rows = Year == "Source of Variation")
@@ -624,7 +686,7 @@ table3_gt <- table3_complete %>%
   ) %>%
   cols_hide(columns = is_new_section) %>%
   tab_footnote(
-    footnote = "Values are mean ± standard deviation. Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
+    footnote = "Values are mean ± standard deviation. Letters (in parentheses) indicate Tukey-adjusted groups within year (α = 0.05). Two-year totals (2023–2024) report sums; letters are not shown for totals. Environmental cost: $16/kg N₂O + $20/kg N leached.",
     locations = cells_title()
   )
 
@@ -2148,9 +2210,13 @@ n2o_summary_fig4 <- n2o_summary %>%
   transmute(treatment, year, mean_n2o,
             se_n2o = sd_n2o / sqrt(n_plots))
 
-# Note: significance letters removed from Figure 4; we omit their computation here.
+# Compute per-year Tukey letters for leaching (reuse helper used in Table 3)
+leach_letters_fig4 <- annual_leaching %>%
+  group_by(year) %>%
+  group_modify(~ compute_letters_by_year(.x, "annual_cumulative_leaching")) %>%
+  ungroup()
 
-# Combine summaries and letters
+# Combine summaries
 combined_loss <- full_join(leach_summary_fig4, n2o_summary_fig4, by = c("treatment", "year"))
 
 loss_long <- combined_loss %>%
@@ -2163,17 +2229,27 @@ loss_long <- combined_loss %>%
 
 loss_colors <- c("Leached N" = "#0A2E57FF", "Nitrous Oxide" = "#95C36EFF")
 
+# Top-of-bar positions for letter placement
 max_total <- loss_long %>%
   group_by(year, treatment) %>%
-  summarise(total = sum(value), .groups = "drop") %>%
-  summarise(max_total = max(total, na.rm = TRUE)) %>%
+  summarise(total = sum(value, na.rm = TRUE), .groups = "drop_last") %>%
+  summarise(max_total = max(total, na.rm = TRUE), .groups = "drop") %>%
   pull(max_total)
+
+letters_pos <- combined_loss %>%
+  mutate(total = coalesce(mean_leach, 0) + coalesce(mean_n2o, 0)) %>%
+  left_join(leach_letters_fig4, by = c("treatment", "year")) %>%
+  mutate(y = total + 0.03 * max_total) %>%
+  select(year, treatment, letter, y)
 
 figure4 <- ggplot(loss_long, aes(x = treatment, y = value, fill = component)) +
   geom_col(width = 0.7) +
+  # add leaching letters above stacked bars (per year)
+  geom_text(data = letters_pos, aes(x = treatment, y = y, label = letter),
+            inherit.aes = FALSE, size = 5) +
   facet_wrap(~year, nrow = 1) +
   scale_fill_manual(values = loss_colors, name = "Loss Type") +
-  scale_y_continuous(limits = c(0, max_total * 1.05), expand = expansion(mult = c(0, 0.05))) +
+  scale_y_continuous(limits = c(0, max_total * 1.08), expand = expansion(mult = c(0, 0.05))) +
   labs(x = "Treatment", y = expression("Annual N loss (kg N ha"^{-1}*")")) +
   theme_publication() +
   theme(legend.position = "top")

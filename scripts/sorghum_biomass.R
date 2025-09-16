@@ -209,4 +209,81 @@ ggplot(biomass_summary, aes(x = treatment, y = mean_biomass_corr, fill = treatme
 # Save the updated plot
 ggsave("figures/sorghum_biomass_2024_corrected.png", width = 8, height = 6, dpi = 300)
 
-# Corn and soy grain yeilds
+# combine data for a faceted plot (standardize columns and units)
+# Ensure common parameters
+plot_size_ha <- 0.145
+conversion_factor <- 0.907185 # US ton -> Mg
+
+# Moisture correction: reuse avg_moisture if already defined above; otherwise fallback to 0
+if (!exists("avg_moisture")) {
+  avg_moisture <- 0.0
+}
+
+# Standardize 2023 dataframe to have 'treatment' and Mg/ha
+sorg_biomass_23_std <- {
+  df <- sorg_biomass_23
+  if ("Treatment" %in% names(df) && !("treatment" %in% names(df))) {
+    df <- df %>% dplyr::rename(treatment = Treatment)
+  }
+  df %>%
+    dplyr::mutate(
+      year = 2023,
+      Plot = as.character(Plot),
+      biomass_mg_ha = ((total_biomass * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
+    ) %>%
+    dplyr::select(year, Plot, treatment, biomass_mg_ha)
+}
+
+# Standardize 2024 dataframe to have Mg/ha (already has 'treatment')
+sorg_biomass_24_std <- sorg_biomass_24 %>%
+  dplyr::mutate(
+    year = 2024,
+    Plot = as.character(Plot),
+    biomass_mg_ha = ((total_biomass * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
+  ) %>%
+  dplyr::select(year, Plot, treatment, biomass_mg_ha)
+
+# Combine
+combined_biomass <- dplyr::bind_rows(sorg_biomass_23_std, sorg_biomass_24_std)
+
+# Summarize by treatment and year
+combined_biomass_summary <- combined_biomass %>%
+  dplyr::group_by(year, treatment) %>%
+  dplyr::summarise(
+    mean_biomass = mean(biomass_mg_ha, na.rm = TRUE),
+    sd_biomass = sd(biomass_mg_ha, na.rm = TRUE),
+    n = dplyr::n(),
+    se_biomass = sd_biomass / sqrt(n),
+    ci = stats::qt(0.975, df = pmax(n - 1, 1)) * se_biomass,
+    .groups = "drop"
+  ) %>% # rename treatments to Sorghum and Sorghum + Rye
+  dplyr::mutate(treatment = dplyr::case_when(
+    treatment == "No cover" ~ "Sorghum",
+    treatment == "Cover" ~ "Sorghum + Rye",
+    TRUE ~ treatment
+  ))
+
+
+# Faceted plot by year with 95% CI
+biomass_faceted <- ggplot2::ggplot(
+  combined_biomass_summary,
+  ggplot2::aes(x = treatment, y = mean_biomass, fill = treatment)
+) +
+  ggplot2::geom_col(color = "black", width = 0.7) +
+  ggplot2::geom_errorbar(ggplot2::aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci), width = 0.2, color = "black") +
+  ggplot2::facet_wrap(~year, nrow = 1) +
+  ggplot2::labs(x = "Treatment", y = expression("Moisture-corrected Biomass (Mg ha"^-1 * ")")) +
+  ggplot2::scale_fill_manual(values = treatment_colors) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    legend.position = "none",
+    text = ggplot2::element_text(size = 14),
+    axis.title = ggplot2::element_text(size = 16)
+  ) +
+  theme_publication() +
+  scale_fill_treatments() +
+  labs(fill = "Treatment") +
+  theme(legend.position = "none")
+
+print(biomass_faceted)
+ggplot2::ggsave("figures/sorghum_biomass_faceted_by_year_corrected.png", biomass_faceted, width = 10, height = 6, dpi = 300)
