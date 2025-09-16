@@ -501,6 +501,17 @@ leaching_two_year <- annual_leaching %>%
   )
 compare_df_cols(n2o_two_year, leaching_two_year, n2o_summary, leaching_summary)
 
+# Extract mean values for environmental cost calculation
+n2o_means <- bind_rows(
+  n2o_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, mean_n2o),
+  n2o_two_year %>% select(year, treatment, mean_n2o)
+)
+
+leaching_means <- bind_rows(
+  leaching_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, mean_leaching),
+  leaching_two_year %>% select(year, treatment, mean_leaching)
+)
+
 # Combine annual and 2-year data
 combined_nitrogen_data <- bind_rows(
   n2o_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, n2o_result),
@@ -513,13 +524,18 @@ combined_nitrogen_data <- bind_rows(
     ),
     by = c("year", "treatment")
   ) %>%
+  # Join with mean values for cost calculation
+  left_join(n2o_means, by = c("year", "treatment")) %>%
+  left_join(leaching_means, by = c("year", "treatment")) %>%
   mutate(
     year_order = case_when(
       year == "2023" ~ 1,
       year == "2024" ~ 2,
       year == "2023-2024" ~ 3
     ),
-    total_environmental_cost = "TBD" # Placeholder for future calculation
+    # Calculate total environmental cost: $16/kg N₂O + $20/kg N leached
+    environmental_cost_dollars = (mean_n2o * 16) + (mean_leaching * 20),
+    total_environmental_cost = sprintf("$%.2f", environmental_cost_dollars)
   ) %>%
   arrange(year_order, treatment)
 
@@ -549,14 +565,18 @@ source_variation_n <- tibble(
     treatment = source,
     n2o_result = n2o_p,
     leaching_result = leaching_p,
-    total_environmental_cost = "TBD"
+    total_environmental_cost = "",  # No p-value for calculated cost
+    mean_n2o = NA_real_,  # Add for consistency
+    mean_leaching = NA_real_,  # Add for consistency
+    environmental_cost_dollars = NA_real_  # Add for consistency
   ) %>%
   select(-source, -n2o_p, -leaching_p)
 
 # Create complete table
 separator_n <- tibble(
   year = "Source of Variation", year_order = 3.5, treatment = "",
-  n2o_result = "", leaching_result = "", total_environmental_cost = ""
+  n2o_result = "", leaching_result = "", total_environmental_cost = "",
+  mean_n2o = NA_real_, mean_leaching = NA_real_, environmental_cost_dollars = NA_real_
 )
 
 table3_complete <- bind_rows(
@@ -589,7 +609,7 @@ table3_gt <- table3_complete %>%
   cols_label(
     `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
     `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
-    `Total Environmental Cost` = md("Total Environmental Cost<br>(kg N equivalent)")
+    `Total Environmental Cost` = md("Total Environmental Cost<br>(USD ha<sup>-1</sup>)")
   ) %>%
   tab_style(
     style = cell_borders(sides = "top", weight = px(1), color = "gray"),
@@ -652,7 +672,7 @@ table3_gt <- table3_complete %>%
   cols_label(
     `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
     `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
-    `Total Environmental Cost` = md("Total Environmental Cost<br>(kg N equivalent)")
+    `Total Environmental Cost` = md("Total Environmental Cost<br>(USD ha<sup>-1</sup>)")
   ) %>%
   tab_style(
     style = cell_borders(sides = "top", weight = px(1), color = "gray"),
@@ -1328,8 +1348,8 @@ daily_flux <- flux_data %>%
   filter(year %in% c(2023, 2024)) %>%
   group_by(Treatment, year, date) %>%
   summarise(
-    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
-    se_flux   = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(sum(!is.na(gnha_day_no_negative))),
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000,  # Convert g to kg
+    se_flux   = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(sum(!is.na(gnha_day_no_negative))) / 1000,  # Convert g to kg
     .groups = "drop"
   )
 
@@ -1523,34 +1543,39 @@ Top panels: Daily N₂O flux and precipitation, trimmed to measurement windows. 
 
 ```{r figure-2-dual-axis}
 #| label: fig-n2o-flux-dual-axis
-#| fig-cap: "Daily N2O flux and precipitation on dual axes"
+#| fig-cap: "Daily and cumulative N2O flux with precipitation on dual axes"
 #| fig-width: 10
-#| fig-height: 6
+#| fig-height: 8
 
 # Create dual-axis plots for each year
-create_dual_axis_plot <- function(year_data, year_val) {
+# Create dual-axis plots for each year
+# First calculate global maxima for consistent y-axes
+global_max_flux <- max(daily_flux$mean_flux + daily_flux$se_flux, na.rm = TRUE)
+global_max_precip <- max(daily_precip_trimmed$precipmm, na.rm = TRUE)
+global_max_cum_flux <- max(cum_flux_combined$cum_flux + cum_flux_combined$cum_se, na.rm = TRUE)
+
+# Scale precipitation to fit on flux scale, positioned from top down
+global_precip_scale_factor <- global_max_flux * 0.4 / global_max_precip
+global_plot_top <- global_max_flux * 1.1
+
+create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
   # Filter data for the specific year
   flux_year <- daily_flux %>% filter(year == year_val)
   precip_year <- daily_precip_trimmed %>% filter(year == year_val)
   star_year <- star_data %>% filter(year == year_val)
   fert_year <- fert_events %>% filter(year == year_val)
+  cum_flux_year <- cum_flux_combined %>% filter(year == year_val)
 
   # Get date range for this year
   date_range <- flux_date_ranges %>% filter(year == year_val)
 
-  # Calculate scaling factors for dual axis
-  max_flux <- max(flux_year$mean_flux + flux_year$se_flux, na.rm = TRUE)
-  max_precip <- max(precip_year$precipmm, na.rm = TRUE)
-
-  # Scale precipitation to fit on flux scale (inverted from top)
-  precip_scale_factor <- max_flux * 0.6 / max_precip  # Use 60% of flux range for precip
-
-  # Create the plot
-  p <- ggplot() +
-    # Precipitation bars (inverted from top)
-    geom_col(data = precip_year,
-             aes(x = date, y = -precipmm * precip_scale_factor),
-             fill = "lightblue", alpha = 0.7, width = 1) +
+  # Daily flux plot with precipitation
+  daily_plot <- ggplot() +
+    # Precipitation bars (from top down, above the data)
+    geom_rect(data = precip_year,
+              aes(xmin = date - 0.5, xmax = date + 0.5,
+                  ymin = global_plot_top - precipmm * global_precip_scale_factor, ymax = global_plot_top),
+              fill = "#377EB8", alpha = 0.7) +
 
     # Daily flux lines and points
     geom_line(data = flux_year,
@@ -1571,58 +1596,91 @@ create_dual_axis_plot <- function(year_data, year_val) {
     # Significance stars
     geom_text(data = star_year,
               aes(x = date, y = star_y, label = star_label),
-              color = "black", size = 5) +
+              color = "black", size = 8) +
 
     # Scales and styling
     scale_color_treatments() +
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
                  limits = c(date_range$min_date, date_range$max_date)) +
 
-    # Primary y-axis (flux)
+    # Primary y-axis (flux), using global limits for consistency
     scale_y_continuous(
-      name = expression("Daily N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
-      sec.axis = sec_axis(~ -. / precip_scale_factor,
-                          name = "Daily Precipitation (mm)")
+      name = if (!is_right_panel) expression("Daily N"[2]*"O Flux (kg N ha"^-1*" day"^-1*")") else "",
+      limits = c(0, global_plot_top),
+      sec.axis = sec_axis(~ (global_plot_top - .) / global_precip_scale_factor,
+                          name = if (is_right_panel) "Daily Precipitation (mm)" else "")
     ) +
 
     # Theme and labels
     theme_publication() +
     theme(
-      legend.position = "bottom",
-      legend.title = element_text(size = 10),
-      axis.title.y.right = element_text(color = "lightblue"),
-      axis.text.y.right = element_text(color = "lightblue")
+      legend.position = "none",
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      # Remove y-axis elements for right panel
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      # Remove secondary y-axis elements for left panel
+      axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
+      axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank()
     ) +
     labs(
-      title = paste("Year", year_val),
-      x = "Month",
-      color = "Treatment"
+      title = paste("", year_val),
+      x = ""
     ) +
 
     # Add horizontal line at y=0 for reference
     geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
 
-  return(p)
+  # Cumulative flux plot (bottom panel with x-axis labels)
+  cumulative_plot <- ggplot(cum_flux_year, aes(x = date, y = cum_flux, color = Treatment)) +
+    geom_ribbon(aes(ymin = pmax(cum_flux - cum_se, 0), ymax = cum_flux + cum_se, fill = Treatment),
+                alpha = 0.2, linewidth = 0) +
+    geom_line(linewidth = 1.1) +
+    scale_color_treatments() +
+    scale_fill_treatments() +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(date_range$min_date, date_range$max_date)) +
+    scale_y_continuous(
+      name = if (!is_right_panel) expression("Cumulative N"[2]*"O Flux (kg N ha"^-1*")") else "",
+      limits = c(0, global_max_cum_flux)
+    ) +
+    labs(x = "Month") +
+    theme_publication() +
+    theme(
+      legend.position = if (is_right_panel) "bottom" else "none",
+      # Remove y-axis elements for right panel
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text()
+    )
+
+  # Combine daily and cumulative plots vertically
+  combined_plot <- (daily_plot / cumulative_plot) +
+    patchwork::plot_layout(heights = c(1.2, 1))
+
+  return(combined_plot)
 }
 
 # Create plots for both years
-plot_2023 <- create_dual_axis_plot(daily_flux, 2023)
-plot_2024 <- create_dual_axis_plot(daily_flux, 2024)
+plot_2023 <- create_dual_axis_plot(2023, is_right_panel = FALSE)
+plot_2024 <- create_dual_axis_plot(2024, is_right_panel = TRUE)
 
 # Combine plots side by side
-figure2_dual_axis <- (plot_2023 | plot_2024) +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
+figure2_dual_axis <- (plot_2023 | plot_2024) / guide_area() +
+  theme(legend.position = "bottom", legend.justification = "center")
 
 figure2_dual_axis
 
 # Save the dual-axis version
-ggsave("figures/figure2_dual_axis_flux_precip_2023_2024.png",
-       figure2_dual_axis, width = 12, height = 6, dpi = 300, bg = "white")
+ggsave("figures/figure2_dual_axis_flux_precip_cumulative_2023_2024.png",
+       figure2_dual_axis, width = 12, height = 8, dpi = 300, bg = "white")
 ```
 
-Figure 2 Alternative. Daily N₂O flux and precipitation on dual axes by year.
-Precipitation bars "rain down" from the top (light blue, right y-axis) while daily N₂O flux is plotted along the bottom axis (colored lines, left y-axis). Asterisks (*) indicate dates where flux differs significantly between treatments (p < 0.05). Red dashed lines show fertilizer application dates.
+Figure 2 Alternative. Daily and cumulative N₂O flux with precipitation on dual axes by year.
+Top panels: Daily N₂O flux with precipitation bars "raining down" from the top (blue, right y-axis) and daily N₂O flux plotted along the bottom axis (colored lines, left y-axis). Asterisks (*) indicate dates where flux differs significantly between treatments (p < 0.05). Red dashed lines show fertilizer application dates. Bottom panels: Cumulative N₂O flux. X-axes are aligned between daily and cumulative panels for direct comparison.
 
 # Figure 3: Nitrogen Leaching
 
@@ -1864,15 +1922,19 @@ create_leaching_dual_axis_plot <- function(year_val) {
   max_loss <- max(leaching_year$mean_loss + leaching_year$se_loss, na.rm = TRUE)
   max_precip <- max(precip_year$precipmm, na.rm = TRUE)
 
-  # Scale precipitation to fit on leaching scale (inverted from top)
-  precip_scale_factor <- max_loss * 0.6 / max_precip  # Use 60% of leaching range for precip
+  # Scale precipitation to fit on leaching scale, positioned from top down
+  precip_scale_factor <- max_loss * 0.4 / max_precip  # Use 40% of leaching range for precip
+  
+  # Calculate the top position (110% of max loss for some headroom)
+  plot_top <- max_loss * 1.1
 
   # Create the plot
   p <- ggplot() +
-    # Precipitation bars (inverted from top)
-    geom_col(data = precip_year,
-             aes(x = date, y = -precipmm * precip_scale_factor),
-             fill = "lightblue", alpha = 0.7, width = 1) +
+    # Precipitation bars (from top down, above the data)
+    geom_rect(data = precip_year,
+              aes(xmin = date - 0.5, xmax = date + 0.5,
+                  ymin = plot_top - precipmm * precip_scale_factor, ymax = plot_top),
+              fill = "#377EB8", alpha = 0.7) +
 
     # Daily leaching lines and points
     geom_line(data = leaching_year,
@@ -1895,10 +1957,11 @@ create_leaching_dual_axis_plot <- function(year_val) {
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
                  limits = c(date_range$min_date, date_range$max_date)) +
 
-    # Primary y-axis (leaching)
+    # Primary y-axis (leaching), extended to accommodate precipitation
     scale_y_continuous(
       name = expression("Daily N Loss (kg N ha"^-1*" day"^-1*")"),
-      sec.axis = sec_axis(~ -. / precip_scale_factor,
+      limits = c(0, plot_top),
+      sec.axis = sec_axis(~ (plot_top - .) / precip_scale_factor,
                           name = "Daily Precipitation (mm)")
     ) +
 
@@ -2061,7 +2124,7 @@ Bars show mean annual N₂O and leaching losses (kg N ha⁻¹) by treatment and 
 =
 0.05
 α=0.05).
-
+## Statistical summaries for annual losses
 ```{r}
 annual_leaching %>% count(year, treatment)
 plot_cumulative_n2o %>% count(year, treatment)
@@ -2078,9 +2141,7 @@ letters_leach
 letters_n2o
 letters_leach %>% filter(treatment == "Corn")
 letters_n2o   %>% filter(treatment == "Corn")
-```
 
-```{r}
 annual_leaching %>%
   group_by(year, treatment) %>%
   summarise(mean = mean(annual_cumulative_leaching), sd = sd(annual_cumulative_leaching),
@@ -2100,23 +2161,15 @@ split(plot_cumulative_n2o, plot_cumulative_n2o$year) |>
   lapply(\(d) pairwise.t.test(d$annual_cumulative_n2o, d$treatment, p.adjust.method = "none"))
 ```
 
-```{r}
-# install.packages("effectsize")
-library(effectsize)
+# Biomass and grain yeild
+```{r biomass-yield}
+#| label: biomass-yield
+#| fig-cap: "Sorghum crop biomass and soy and corn grain yield"  
 
-effectsize::cohens_d(annual_cumulative_leaching ~ treatment,
-                     data = subset(annual_leaching, year == 2023))
-effectsize::cohens_d(annual_cumulative_leaching ~ treatment,
-                     data = subset(annual_leaching, year == 2024))
 
-effectsize::cohens_d(annual_cumulative_n2o ~ treatment,
-                     data = subset(plot_cumulative_n2o, year == 2023))
-effectsize::cohens_d(annual_cumulative_n2o ~ treatment,
-                     data = subset(plot_cumulative_n2o, year == 2024))
+
 ```
-
-# Nitrogen removal bt cereal rye
-
+We are waiting on C:N data from the lab to complete this section.
 
 # Summary
 
