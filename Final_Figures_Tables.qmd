@@ -471,14 +471,14 @@ leaching_summary <- annual_leaching %>%
   ) %>%
   mutate(leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))
 
-# Calculate 2-year totals
-n2o_two_year <- plot_cumulative_n2o %>%
-  group_by(plot, rowvs_interrow, treatment) %>%
-  summarise(total_n2o = sum(annual_cumulative_n2o, na.rm = TRUE), .groups = "drop") %>%
+# Calculate 2-year totals (as sum of 2023 and 2024 per treatment)
+# Mean = mean_2023 + mean_2024; SD via quadrature: sqrt(sd_2023^2 + sd_2024^2)
+n2o_two_year <- n2o_summary %>%
+  filter(year %in% c(2023, 2024)) %>%
   group_by(treatment) %>%
   summarise(
-    mean_n2o = mean(total_n2o, na.rm = TRUE),
-    sd_n2o = sd(total_n2o, na.rm = TRUE),
+    mean_n2o = sum(mean_n2o, na.rm = TRUE),
+    sd_n2o = sqrt(sum(sd_n2o^2, na.rm = TRUE)),
     .groups = "drop"
   ) %>%
   mutate(
@@ -486,13 +486,12 @@ n2o_two_year <- plot_cumulative_n2o %>%
     n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o)
   )
 
-leaching_two_year <- annual_leaching %>%
-  group_by(plot, treatment) %>%
-  summarise(total_leaching = sum(annual_cumulative_leaching, na.rm = TRUE), .groups = "drop") %>%
+leaching_two_year <- leaching_summary %>%
+  filter(year %in% c(2023, 2024)) %>%
   group_by(treatment) %>%
   summarise(
-    mean_leaching = mean(total_leaching, na.rm = TRUE),
-    sd_leaching = sd(total_leaching, na.rm = TRUE),
+    mean_leaching = sum(mean_leaching, na.rm = TRUE),
+    sd_leaching = sqrt(sum(sd_leaching^2, na.rm = TRUE)),
     .groups = "drop"
   ) %>%
   mutate(
@@ -634,6 +633,55 @@ gtsave(table3_gt, "tables/table3_nitrogen_losses.rtf")
 # Save as .png for manuscript
 gtsave(table3_gt, "tables/table3_nitrogen_losses.png")
 table3_gt
+```
+
+```{r diagnostics-fig4-table3-consistency}
+# Verify Figure 4 means match Table 3 means for 2023 and 2024
+fig4_means <- combined_loss %>%
+  select(year, treatment, mean_leach, mean_n2o) %>% distinct()
+
+tbl3_means <- bind_rows(
+  leaching_summary %>% transmute(year, treatment, mean_leach = mean_leaching),
+  n2o_summary %>% transmute(year, treatment, mean_n2o)
+) %>%
+  group_by(year, treatment) %>% summarise(
+    mean_leach = max(mean_leach, na.rm = TRUE),
+    mean_n2o = max(mean_n2o, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+consistency_check <- fig4_means %>%
+  full_join(tbl3_means, by = c("year", "treatment"), suffix = c("_fig4", "_tbl3")) %>%
+  mutate(
+    match_leach = isTRUE(all.equal(mean_leach_fig4, mean_leach_tbl3, tolerance = 1e-8)),
+    match_n2o = isTRUE(all.equal(mean_n2o_fig4, mean_n2o_tbl3, tolerance = 1e-8))
+  )
+print("Figure 4 vs Table 3 mean comparison (TRUE means match):")
+print(consistency_check %>% select(year, treatment, match_leach, match_n2o))
+```
+
+```{r diagnostics-per-year-significance}
+# Check per-year treatment differences (2023 and 2024 separately)
+check_year_sig <- function(df, value_col, year_val) {
+  d <- df %>% filter(year == year_val)
+  fml <- as.formula(paste(value_col, "~ treatment"))
+  fit <- aov(fml, data = d)
+  p <- summary(fit)[[1]][["Pr(>F)"]][1]
+  list(p_value = p)
+}
+
+res <- tibble(
+  component = c("N2O", "N2O", "Leaching", "Leaching"),
+  year = c(2023, 2024, 2023, 2024),
+  p_value = c(
+    check_year_sig(plot_cumulative_n2o, "annual_cumulative_n2o", 2023)$p_value,
+    check_year_sig(plot_cumulative_n2o, "annual_cumulative_n2o", 2024)$p_value,
+    check_year_sig(annual_leaching, "annual_cumulative_leaching", 2023)$p_value,
+    check_year_sig(annual_leaching, "annual_cumulative_leaching", 2024)$p_value
+  )
+)
+print("Per-year treatment ANOVA p-values (expect > 0.05 to indicate no significant differences):")
+print(res)
 ```
 
 **Table 3. Annual nitrogen losses by treatment.** Values are mean ± standard deviation. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ($\alpha=0.05$). Source of variation p-values are from ANOVA
@@ -991,8 +1039,7 @@ gdd_plot_v2 <- ggplot() +
   ) +
   theme_publication() +
   theme(
-    axis.text.x = element_blank(),  # Remove x-axis text since it aligns with bottom plots
-    axis.ticks.x = element_blank(),  # Remove x-axis ticks
+  # Remove x-axis ticks
     legend.position = "top"
   )
 
@@ -1144,8 +1191,7 @@ rain_plot_v2 <- ggplot() +
   ) +
   theme_publication() +
   theme(
-    axis.text.x = element_blank(),  # Remove x-axis text since it aligns with bottom plots
-    axis.ticks.x = element_blank(),  # Remove x-axis ticks
+     # Remove x-axis ticks
     legend.position = "top"
   )
 
@@ -1210,7 +1256,23 @@ get_date_pvals <- function(df, value_col) {
 pvals_moist <- get_date_pvals(raw_soil, "swc_2_mean")
 pvals_temp  <- get_date_pvals(raw_soil, "ts_2_mean")
 
-# Star positions (5% headroom above that date's max mean)
+# Split data by year
+moist_temp_2023 <- filter(moist_temp, year == 2023)
+moist_temp_2024 <- filter(moist_temp, year == 2024)
+
+# Calculate global y-axis limits for consistent scaling within each row
+global_moisture_limits <- range(moist_temp$mean_soil_moisture, na.rm = TRUE)
+global_temp_limits <- range(moist_temp$mean_soil_temp, na.rm = TRUE)
+
+# Add some padding for the star positioning
+global_moisture_limits[2] <- global_moisture_limits[2] * 1.12  # 12% headroom for stars
+global_temp_limits[2] <- global_temp_limits[2] * 1.12
+
+# Calculate nice breaks for consistent tick marks
+moisture_breaks <- pretty(global_moisture_limits, n = 5)
+temp_breaks <- pretty(global_temp_limits, n = 5)
+
+# Star positions - use per-date positioning but within global limits
 moisture_stars <- moist_temp %>%
   group_by(year, date) %>%
   summarise(y_star = max(mean_soil_moisture, na.rm = TRUE) * 1.05, .groups = "drop") %>%
@@ -1223,68 +1285,63 @@ temp_stars <- moist_temp %>%
   inner_join(pvals_temp, by = c("year", "date")) %>%
   filter(is.finite(y_star))
 
-# Split data by year
-moist_temp_2023 <- filter(moist_temp, year == 2023)
-moist_temp_2024 <- filter(moist_temp, year == 2024)
-
-# 2023 Soil Moisture (top left)
+# 2023 Soil Moisture (bottom left)
 p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Treatment, shape = Treatment)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +  # circle and square
-  scale_x_date(date_breaks = "1 month", date_labels = "%b", 
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
                limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
-  scale_y_continuous(expand = expansion(mult = c(0.02, 0.12))) +
+  scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks, expand = expansion(mult = c(0.02, 0.02))) +
   labs(
-    x = "",  # No x-axis label for top plots
-    y = "2023 Soil Moisture (m³/m³)"
+    x = "2023",
+    y = "Soil Moisture (m³/m³)"
   ) +
   geom_text(data = moisture_stars %>% filter(year == 2023),
-            aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0, inherit.aes = FALSE) +
+            aes(x = date, y = y_star), label = "*", color = "black", size = 8, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
   theme(
-    axis.text.x = element_blank(),  # Remove x-axis text for top plots
-    axis.ticks.x = element_blank(),
     legend.position = "none"
   )
 
-# 2024 Soil Moisture (bottom left)  
+# 2024 Soil Moisture (bottom right)
 p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Treatment, shape = Treatment)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b", 
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
                limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
-  scale_y_continuous(expand = expansion(mult = c(0.02, 0.12))) +
+  scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks, expand = expansion(mult = c(0.02, 0.02))) +
   labs(
-    x = "Month",
-    y = "2024 Soil Moisture (m³/m³)"
+    x = "2024",
+    y = ""
   ) +
   geom_text(data = moisture_stars %>% filter(year == 2024),
-            aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0, inherit.aes = FALSE) +
+            aes(x = date, y = y_star), label = "*", color = "black", size = 8, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
   theme(
-    legend.position = "bottom"
-  ) +
-  labs(color = "Treatment", shape = "Treatment")
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.position = "none"
+  )
 
-# 2023 Soil Temperature (top right)
+# 2023 Soil Temperature (top left)
 p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatment, shape = Treatment)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b", 
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
                limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
-  scale_y_continuous(expand = expansion(mult = c(0.02, 0.12))) +
+  scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks, expand = expansion(mult = c(0.02, 0.02))) +
   labs(
     x = "",
-    y = "2023 Soil Temperature (°C)"
+    y = "Soil Temperature (°C)"
   ) +
   geom_text(data = temp_stars %>% filter(year == 2023),
-            aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0, inherit.aes = FALSE) +
+            aes(x = date, y = y_star), label = "*", color = "black", size = 8, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
   theme(
     axis.text.x = element_blank(),
@@ -1292,27 +1349,31 @@ p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatmen
     legend.position = "none"
   )
 
-# 2024 Soil Temperature (bottom right)
+# 2024 Soil Temperature (top right)
 p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatment, shape = Treatment)) +
   geom_line(linewidth = 1) +
   geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b", 
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
                limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
-  scale_y_continuous(expand = expansion(mult = c(0.02, 0.12))) +
+  scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks, expand = expansion(mult = c(0.02, 0.02))) +
   labs(
-    x = "Month",
-    y = "2024 Soil Temperature (°C)",
-    color = "Treatment",
-    shape = "Treatment"
+    x = "",
+    y = ""
   ) +
   geom_text(data = temp_stars %>% filter(year == 2024),
-            aes(x = date, y = y_star), label = "*", color = "black", size = 4, vjust = 0, inherit.aes = FALSE) +
+            aes(x = date, y = y_star), label = "*", color = "black", size = 8, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
-  theme(legend.position = "none")
-# Modify soil_4panel to also have centered top legend
-soil_4panel <- (p1 | p3) / (p2 | p4) 
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.position = "none"
+  )
+# Arrange panels: temperature 2023/2024 on top, moisture 2023/2024 on bottom
+soil_4panel <- (p3 | p4) / (p1 | p2) 
 
 six_panel_plot <-
   (pdplot / soil_4panel) +
@@ -1325,7 +1386,7 @@ six_panel_plot <-
     legend.margin        = margin(b = 4)
   )
 
-ggsave("figures/figure1_six_panel_weather_soil.png", six_panel_plot, width = 10, height = 12, dpi = 300)
+ggsave("figures/figure1_six_panel_weather_soil.png", six_panel_plot, width = 6.5, height = 8, dpi = 300, bg = "white")
 six_panel_plot
 ```
 
@@ -1600,6 +1661,7 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
 
     # Scales and styling
     scale_color_treatments() +
+    guides(color = "none") +
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
                  limits = c(date_range$min_date, date_range$max_date)) +
 
@@ -1650,7 +1712,7 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     labs(x = "Month") +
     theme_publication() +
     theme(
-      legend.position = if (is_right_panel) "bottom" else "none",
+      legend.position = "none",
       # Remove y-axis elements for right panel
       axis.text.y = if (is_right_panel) element_blank() else element_text(),
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
@@ -1669,14 +1731,17 @@ plot_2023 <- create_dual_axis_plot(2023, is_right_panel = FALSE)
 plot_2024 <- create_dual_axis_plot(2024, is_right_panel = TRUE)
 
 # Combine plots side by side
-figure2_dual_axis <- (plot_2023 | plot_2024) / guide_area() +
-  theme(legend.position = "bottom", legend.justification = "center")
+figure2_dual_axis <- (plot_2023 | plot_2024) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom", 
+        legend.justification = "center",
+        legend.box.just = "center")
 
 figure2_dual_axis
 
 # Save the dual-axis version
 ggsave("figures/figure2_dual_axis_flux_precip_cumulative_2023_2024.png",
-       figure2_dual_axis, width = 12, height = 8, dpi = 300, bg = "white")
+       figure2_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
 ```
 
 Figure 2 Alternative. Daily and cumulative N₂O flux with precipitation on dual axes by year.
@@ -1835,7 +1900,7 @@ figure3 <- (monthly_plot / cumulative_leaching_plot) +
 
 figure3
 
-ggsave("figures/figure3_leaching_four_panel.png", figure3, width = 10, height = 9, dpi = 300, bg = "white")
+ggsave("figures/figure3_leaching_four_panel.png", figure3, width = 6.5, height = 9, dpi = 300, bg = "white")
 ```
 
 Figure 3. Monthly and cumulative nitrogen leaching by year.
@@ -1900,40 +1965,66 @@ leaching_star_data <- daily_leaching_significance %>%
   filter(star_label == "*") %>%
   mutate(star_y = max_loss * 1.1)  # Position stars 10% above the highest error bar
 
-# Filter precipitation to match leaching measurement periods
+# CRITICAL FIX: Get actual measurement date ranges from RAW leaching data
+# This finds the first and last dates where we actually have leaching measurements
+actual_leaching_date_ranges <- leaching_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(year = lubridate::year(date)) %>%
+  filter(year %in% c(2023, 2024), !is.na(total_n_loss_mg)) %>%
+  group_by(year) %>%
+  summarise(
+    min_date = min(date, na.rm = TRUE),
+    max_date = max(date, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("Actual leaching measurement date ranges:\n")
+print(actual_leaching_date_ranges)
+
+# Filter precipitation to match ACTUAL leaching measurement periods
 daily_precip_leaching <- rain %>%
   transmute(date, year, precipmm) %>%
   filter(year %in% c(2023, 2024)) %>%
-  left_join(leaching_date_ranges, by = "year") %>%
+  left_join(actual_leaching_date_ranges, by = "year") %>%
   filter(date >= min_date, date <= max_date) %>%
   select(date, year, precipmm)
 
+# CRITICAL FIX: Subset cumulative data to match actual measurement date range
+cum_leaching_trimmed <- cum_leaching_combined %>%
+  left_join(actual_leaching_date_ranges, by = "year") %>%
+  filter(date >= min_date, date <= max_date) %>%
+  select(-min_date, -max_date)
+
+# Also trim observed points to match
+obs_points_trimmed <- obs_points %>%
+  left_join(actual_leaching_date_ranges, by = "year") %>%
+  filter(date >= min_date, date <= max_date) %>%
+  select(-min_date, -max_date)
+
 # Create dual-axis plots for each year (leaching version)
-create_leaching_dual_axis_plot <- function(year_val) {
+# First calculate global maxima for consistent y-axes
+global_max_loss <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
+global_max_precip_leaching <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
+
+# Scale precipitation to fit on loss scale, positioned from top down
+global_precip_scale_factor_leaching <- global_max_loss * 0.4 / global_max_precip_leaching
+global_plot_top_leaching <- global_max_loss * 1.1
+
+create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
   # Filter data for the specific year
   leaching_year <- daily_leaching_summary %>% filter(year == year_val)
   precip_year <- daily_precip_leaching %>% filter(year == year_val)
   star_year <- leaching_star_data %>% filter(year == year_val)
 
-  # Get date range for this year
-  date_range <- leaching_date_ranges %>% filter(year == year_val)
-
-  # Calculate scaling factors for dual axis
-  max_loss <- max(leaching_year$mean_loss + leaching_year$se_loss, na.rm = TRUE)
-  max_precip <- max(precip_year$precipmm, na.rm = TRUE)
-
-  # Scale precipitation to fit on leaching scale, positioned from top down
-  precip_scale_factor <- max_loss * 0.4 / max_precip  # Use 40% of leaching range for precip
-  
-  # Calculate the top position (110% of max loss for some headroom)
-  plot_top <- max_loss * 1.1
+  # Get date range for this year - use ACTUAL measurement range
+  date_range <- actual_leaching_date_ranges %>% filter(year == year_val)
 
   # Create the plot
   p <- ggplot() +
     # Precipitation bars (from top down, above the data)
     geom_rect(data = precip_year,
               aes(xmin = date - 0.5, xmax = date + 0.5,
-                  ymin = plot_top - precipmm * precip_scale_factor, ymax = plot_top),
+                  ymin = global_plot_top_leaching - precipmm * global_precip_scale_factor_leaching, ymax = global_plot_top_leaching),
               fill = "#377EB8", alpha = 0.7) +
 
     # Daily leaching lines and points
@@ -1950,33 +2041,41 @@ create_leaching_dual_axis_plot <- function(year_val) {
     # Significance stars
     geom_text(data = star_year,
               aes(x = date, y = star_y, label = star_label),
-              color = "black", size = 5) +
+              color = "black", size = 8) +
 
     # Scales and styling
     scale_color_treatments() +
+    guides(color = "none") +
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
                  limits = c(date_range$min_date, date_range$max_date)) +
 
-    # Primary y-axis (leaching), extended to accommodate precipitation
+    # Primary y-axis (leaching), using global limits for consistency
     scale_y_continuous(
-      name = expression("Daily N Loss (kg N ha"^-1*" day"^-1*")"),
-      limits = c(0, plot_top),
-      sec.axis = sec_axis(~ (plot_top - .) / precip_scale_factor,
-                          name = "Daily Precipitation (mm)")
+      name = if (!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" day"^-1*")") else "",
+      limits = c(0, global_plot_top_leaching),
+      sec.axis = sec_axis(~ (global_plot_top_leaching - .) / global_precip_scale_factor_leaching,
+                          name = if (is_right_panel) "Daily Precipitation (mm)" else "")
     ) +
 
     # Theme and labels
     theme_publication() +
     theme(
-      legend.position = "bottom",
-      legend.title = element_text(size = 10),
-      axis.title.y.right = element_text(color = "lightblue"),
-      axis.text.y.right = element_text(color = "lightblue")
+      legend.position = "none",
+      # Remove x-axis elements for top panel (like Figure 2)
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      # Remove y-axis elements for right panel
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      # Remove secondary y-axis elements for left panel
+      axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
+      axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank()
     ) +
     labs(
-      title = paste("Year", year_val),
-      x = "Month",
-      color = "Treatment"
+      title = paste("", year_val),
+      x = ""  # Remove x label for top panel
     ) +
 
     # Add horizontal line at y=0 for reference
@@ -1986,48 +2085,49 @@ create_leaching_dual_axis_plot <- function(year_val) {
 }
 
 # Create daily leaching plots for both years
-daily_plot_2023 <- create_leaching_dual_axis_plot(2023)
-daily_plot_2024 <- create_leaching_dual_axis_plot(2024)
+daily_plot_2023 <- create_leaching_dual_axis_plot(2023, is_right_panel = FALSE)
+daily_plot_2024 <- create_leaching_dual_axis_plot(2024, is_right_panel = TRUE)
 
 # Combine daily plots side by side
 daily_leaching_dual_axis <- (daily_plot_2023 | daily_plot_2024) +
   plot_layout(guides = "collect") &
-  theme(legend.position = "none")
+  theme(legend.position = "bottom", 
+        legend.justification = "center",
+        legend.box.just = "center")
 
-# Modify cumulative plot to match Figure 2 structure (no strip text, bottom legend)
-cumulative_leaching_plot_clean <- ggplot(cum_leaching_combined, aes(x = date, y = cum_loss, color = treatment, fill = treatment)) +
+# CRITICAL FIX: Modify cumulative plot to use trimmed data and matching x-axis limits
+cumulative_leaching_plot_clean <- ggplot(cum_leaching_trimmed, aes(x = date, y = cum_loss, color = treatment, fill = treatment)) +
   geom_ribbon(aes(ymin = pmax(cum_loss - cum_se, 0), ymax = cum_loss + cum_se),
               alpha = 0.2, linewidth = 0) +
   geom_line(linewidth = 1.1) +
-  # Show observed points for visibility when data are sparse
-  geom_point(data = obs_points, inherit.aes = FALSE,
+  # Show observed points for visibility when data are sparse - use trimmed data
+  geom_point(data = obs_points_trimmed, inherit.aes = FALSE,
              aes(x = date, y = cum_obs, color = treatment),
              alpha = 0.5, shape = 16, size = 1.2) +
   scale_color_treatments() +
   scale_fill_treatments() +
+  # Use SAME x-axis settings as daily plots for perfect alignment
   scale_x_date(date_breaks = "1 month", date_labels = "%b") +
   labs(x = "Month",
-       y = expression("Cumulative N Loss (kg N ha"^-1*")"),
-       color = "Treatment", fill = "Treatment") +
+       y = expression("Cumulative N Loss (kg N ha"^-1*")")) +
   facet_wrap(~year, nrow = 1, scales = "free_x") +
   theme_publication() +
   theme(
     strip.text = element_blank(),  # Hide strip text for consistency with Figure 2
-    legend.position = "bottom",
-    legend.direction = "horizontal",
+    legend.position = "none",  # Hide legend since it's collected above
     strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
     panel.spacing = unit(2, "lines")
   )
 
 # Assemble final figure: daily dual-axis on top, cumulative below (like Figure 2)
 figure3_dual_axis <- (daily_leaching_dual_axis / cumulative_leaching_plot_clean) +
-  patchwork::plot_layout(heights = c(1, 1.2))
+  patchwork::plot_layout(heights = c(1.2, 1))
 
 figure3_dual_axis
 
 # Save the dual-axis version
 ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024.png",
-       figure3_dual_axis, width = 10, height = 8, dpi = 300, bg = "white")
+       figure3_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
 ```
 
 Figure 3 Alternative. Daily nitrogen leaching and precipitation on dual axes with cumulative leaching by year.
@@ -2039,63 +2139,29 @@ Top panels: Daily nitrogen leaching with precipitation bars "raining down" from 
 #| fig-width: 10
 #| fig-height: 6
 
-# Summaries for annual leaching and N2O
-leach_summary <- annual_leaching %>%
-  group_by(treatment, year) %>%
-  summarise(
-    mean_leach = mean(annual_cumulative_leaching, na.rm = TRUE),
-    se_leach = sd(annual_cumulative_leaching, na.rm = TRUE) / sqrt(sum(!is.na(annual_cumulative_leaching))),
-    .groups = "drop"
-  )
+# Summaries for annual leaching and N2O (reuse Table 3 summaries for consistency)
+leach_summary_fig4 <- leaching_summary %>%
+  transmute(treatment, year, mean_leach = mean_leaching,
+            se_leach = sd_leaching / sqrt(n_plots))
 
-n2o_summary <- plot_cumulative_n2o %>%
-  group_by(treatment, year) %>%
-  summarise(
-    mean_n2o = mean(annual_cumulative_n2o, na.rm = TRUE),
-    se_n2o = sd(annual_cumulative_n2o, na.rm = TRUE) / sqrt(sum(!is.na(annual_cumulative_n2o))),
-    .groups = "drop"
-  )
+n2o_summary_fig4 <- n2o_summary %>%
+  transmute(treatment, year, mean_n2o,
+            se_n2o = sd_n2o / sqrt(n_plots))
 
-# Significance letters for each component (consistent Tukey-adjusted via emmeans)
-get_letters <- function(df, value_col) {
-  d <- df %>% filter(!is.na(.data[[value_col]]))
-  trts <- sort(unique(d$treatment))
-  if (length(trts) < 2) {
-    return(tibble(treatment = trts, letter = "a"))
-  }
-  # Fit simple model within year for compact letter display
-  fml <- as.formula(paste(value_col, "~ treatment"))
-  fit <- lm(fml, data = d)
-  emm <- emmeans::emmeans(fit, ~ treatment)
-  cld_tbl <- emmeans::cld(emm, adjust = "tukey") %>%
-    as_tibble() %>%
-    transmute(treatment, letter = gsub(" ", "", .group))
-  cld_tbl
-}
-
-letters_leach <- annual_leaching %>%
-  group_by(year) %>%
-  group_modify(~ get_letters(.x, "annual_cumulative_leaching"))
-
-letters_n2o <- plot_cumulative_n2o %>%
-  group_by(year) %>%
-  group_modify(~ get_letters(.x, "annual_cumulative_n2o"))
+# Note: significance letters removed from Figure 4; we omit their computation here.
 
 # Combine summaries and letters
-combined_loss <- full_join(leach_summary, n2o_summary, by = c("treatment", "year")) %>%
-  left_join(letters_leach %>% rename(letter_leach = letter), by = c("treatment", "year")) %>%
-  left_join(letters_n2o %>% rename(letter_n2o = letter), by = c("treatment", "year"))
+combined_loss <- full_join(leach_summary_fig4, n2o_summary_fig4, by = c("treatment", "year"))
 
 loss_long <- combined_loss %>%
   pivot_longer(cols = c(mean_leach, mean_n2o), names_to = "component", values_to = "value") %>%
   mutate(
     se = if_else(component == "mean_leach", se_leach, se_n2o),
     component = recode(component, mean_leach = "Leached N", mean_n2o = "Nitrous Oxide"),
-    letter = if_else(component == "Leached N", letter_leach, letter_n2o),
     treatment = factor(treatment, levels = c("Corn", "Soy", "Sorghum", "Sorghum + Rye"))
   )
 
-loss_colors <- c("Leached N" = "#95C36EFF", "Nitrous Oxide" = "#0A2E57FF")
+loss_colors <- c("Leached N" = "#0A2E57FF", "Nitrous Oxide" = "#95C36EFF")
 
 max_total <- loss_long %>%
   group_by(year, treatment) %>%
@@ -2105,7 +2171,6 @@ max_total <- loss_long %>%
 
 figure4 <- ggplot(loss_long, aes(x = treatment, y = value, fill = component)) +
   geom_col(width = 0.7) +
-  geom_text(aes(label = letter), position = position_stack(vjust = 1.02), color = "black", size = 3) +
   facet_wrap(~year, nrow = 1) +
   scale_fill_manual(values = loss_colors, name = "Loss Type") +
   scale_y_continuous(limits = c(0, max_total * 1.05), expand = expansion(mult = c(0, 0.05))) +
