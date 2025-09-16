@@ -1519,6 +1519,111 @@ ggsave("figures/figure2_daily_flux_precip_cumulative_2023_2024.png",
 Figure 2. Daily and cumulative N₂O fluxes and precipitation by year.
 Top panels: Daily N₂O flux and precipitation, trimmed to measurement windows. Middle panels: Daily N₂O flux with asterisks (*) indicating dates where flux differs significantly between treatments (p < 0.05). Bottom panels: Cumulative N₂O flux. Faceted by year. Colors indicate treatment. Axes are aligned for direct comparison.
 
+## Figure 2 Alternative: Dual-Axis Version
+
+```{r figure-2-dual-axis}
+#| label: fig-n2o-flux-dual-axis
+#| fig-cap: "Daily N2O flux and precipitation on dual axes"
+#| fig-width: 10
+#| fig-height: 6
+
+# Create dual-axis plots for each year
+create_dual_axis_plot <- function(year_data, year_val) {
+  # Filter data for the specific year
+  flux_year <- daily_flux %>% filter(year == year_val)
+  precip_year <- daily_precip_trimmed %>% filter(year == year_val)
+  star_year <- star_data %>% filter(year == year_val)
+  fert_year <- fert_events %>% filter(year == year_val)
+
+  # Get date range for this year
+  date_range <- flux_date_ranges %>% filter(year == year_val)
+
+  # Calculate scaling factors for dual axis
+  max_flux <- max(flux_year$mean_flux + flux_year$se_flux, na.rm = TRUE)
+  max_precip <- max(precip_year$precipmm, na.rm = TRUE)
+
+  # Scale precipitation to fit on flux scale (inverted from top)
+  precip_scale_factor <- max_flux * 0.6 / max_precip  # Use 60% of flux range for precip
+
+  # Create the plot
+  p <- ggplot() +
+    # Precipitation bars (inverted from top)
+    geom_col(data = precip_year,
+             aes(x = date, y = -precipmm * precip_scale_factor),
+             fill = "lightblue", alpha = 0.7, width = 1) +
+
+    # Daily flux lines and points
+    geom_line(data = flux_year,
+              aes(x = date, y = mean_flux, color = Treatment),
+              linewidth = 1.1, alpha = 0.85) +
+    geom_point(data = flux_year,
+               aes(x = date, y = mean_flux, color = Treatment),
+               size = 2) +
+    geom_errorbar(data = flux_year,
+                  aes(x = date, ymin = mean_flux - se_flux, ymax = mean_flux + se_flux, color = Treatment),
+                  width = 0.2, alpha = 0.5) +
+
+    # Fertilizer events
+    geom_vline(data = fert_year,
+               aes(xintercept = as.numeric(fertilizer_date)),
+               linetype = "dashed", color = "red", alpha = 0.7) +
+
+    # Significance stars
+    geom_text(data = star_year,
+              aes(x = date, y = star_y, label = star_label),
+              color = "black", size = 5) +
+
+    # Scales and styling
+    scale_color_treatments() +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(date_range$min_date, date_range$max_date)) +
+
+    # Primary y-axis (flux)
+    scale_y_continuous(
+      name = expression("Daily N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
+      sec.axis = sec_axis(~ -. / precip_scale_factor,
+                          name = "Daily Precipitation (mm)")
+    ) +
+
+    # Theme and labels
+    theme_publication() +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(size = 10),
+      axis.title.y.right = element_text(color = "lightblue"),
+      axis.text.y.right = element_text(color = "lightblue")
+    ) +
+    labs(
+      title = paste("Year", year_val),
+      x = "Month",
+      color = "Treatment"
+    ) +
+
+    # Add horizontal line at y=0 for reference
+    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
+
+  return(p)
+}
+
+# Create plots for both years
+plot_2023 <- create_dual_axis_plot(daily_flux, 2023)
+plot_2024 <- create_dual_axis_plot(daily_flux, 2024)
+
+# Combine plots side by side
+figure2_dual_axis <- (plot_2023 | plot_2024) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+figure2_dual_axis
+
+# Save the dual-axis version
+ggsave("figures/figure2_dual_axis_flux_precip_2023_2024.png",
+       figure2_dual_axis, width = 12, height = 6, dpi = 300, bg = "white")
+```
+
+Figure 2 Alternative. Daily N₂O flux and precipitation on dual axes by year.
+Precipitation bars "rain down" from the top (light blue, right y-axis) while daily N₂O flux is plotted along the bottom axis (colored lines, left y-axis). Asterisks (*) indicate dates where flux differs significantly between treatments (p < 0.05). Red dashed lines show fertilizer application dates.
+
 # Figure 3: Nitrogen Leaching
 
 ```{r figure-leaching}
@@ -1681,6 +1786,189 @@ Top panels: Monthly leaching losses (kg N ha⁻¹) by treatment. Bottom panels: 
 =
 0.05
 α=0.05).
+
+## Figure 3 Alternative: Dual-Axis Version
+
+```{r figure-3-dual-axis}
+#| label: fig-leaching-dual-axis
+#| fig-cap: "Daily nitrogen leaching and precipitation on dual axes with cumulative leaching"
+#| fig-width: 10
+#| fig-height: 8
+
+# Calculate daily significance tests for leaching between treatments
+daily_leaching_significance <- leaching_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(
+    year = lubridate::year(date),
+    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+  ) %>%
+  filter(year %in% c(2023, 2024)) %>%
+  group_by(year, date) %>%
+  summarise(
+    p_value = {
+      # Get leaching values for each treatment
+      sorghum_loss <- daily_n_loss_kgha[treatment == "Sorghum"]
+      sorghum_rye_loss <- daily_n_loss_kgha[treatment == "Sorghum + Rye"]
+
+      # Remove NA values
+      sorghum_loss <- sorghum_loss[!is.na(sorghum_loss)]
+      sorghum_rye_loss <- sorghum_rye_loss[!is.na(sorghum_rye_loss)]
+
+      # Perform t-test if we have enough data
+      if (length(sorghum_loss) >= 2 && length(sorghum_rye_loss) >= 2) {
+        tryCatch({
+          t_result <- t.test(sorghum_loss, sorghum_rye_loss)
+          t_result$p.value
+        }, error = function(e) NA_real_)
+      } else {
+        NA_real_
+      }
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    significant = p_value < 0.05,
+    star_label = ifelse(significant & !is.na(p_value), "*", "")
+  )
+
+# Get max leaching values for star positioning
+max_leaching_by_date <- daily_leaching_summary %>%
+  group_by(year, date) %>%
+  summarise(max_loss = max(mean_loss + se_loss, na.rm = TRUE), .groups = "drop")
+
+# Combine significance data with position data for leaching
+leaching_star_data <- daily_leaching_significance %>%
+  left_join(max_leaching_by_date, by = c("year", "date")) %>%
+  filter(star_label == "*") %>%
+  mutate(star_y = max_loss * 1.1)  # Position stars 10% above the highest error bar
+
+# Filter precipitation to match leaching measurement periods
+daily_precip_leaching <- rain %>%
+  transmute(date, year, precipmm) %>%
+  filter(year %in% c(2023, 2024)) %>%
+  left_join(leaching_date_ranges, by = "year") %>%
+  filter(date >= min_date, date <= max_date) %>%
+  select(date, year, precipmm)
+
+# Create dual-axis plots for each year (leaching version)
+create_leaching_dual_axis_plot <- function(year_val) {
+  # Filter data for the specific year
+  leaching_year <- daily_leaching_summary %>% filter(year == year_val)
+  precip_year <- daily_precip_leaching %>% filter(year == year_val)
+  star_year <- leaching_star_data %>% filter(year == year_val)
+
+  # Get date range for this year
+  date_range <- leaching_date_ranges %>% filter(year == year_val)
+
+  # Calculate scaling factors for dual axis
+  max_loss <- max(leaching_year$mean_loss + leaching_year$se_loss, na.rm = TRUE)
+  max_precip <- max(precip_year$precipmm, na.rm = TRUE)
+
+  # Scale precipitation to fit on leaching scale (inverted from top)
+  precip_scale_factor <- max_loss * 0.6 / max_precip  # Use 60% of leaching range for precip
+
+  # Create the plot
+  p <- ggplot() +
+    # Precipitation bars (inverted from top)
+    geom_col(data = precip_year,
+             aes(x = date, y = -precipmm * precip_scale_factor),
+             fill = "lightblue", alpha = 0.7, width = 1) +
+
+    # Daily leaching lines and points
+    geom_line(data = leaching_year,
+              aes(x = date, y = mean_loss, color = treatment),
+              linewidth = 1.1, alpha = 0.85) +
+    geom_point(data = leaching_year,
+               aes(x = date, y = mean_loss, color = treatment),
+               size = 2) +
+    geom_errorbar(data = leaching_year,
+                  aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = treatment),
+                  width = 0.2, alpha = 0.5) +
+
+    # Significance stars
+    geom_text(data = star_year,
+              aes(x = date, y = star_y, label = star_label),
+              color = "black", size = 5) +
+
+    # Scales and styling
+    scale_color_treatments() +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(date_range$min_date, date_range$max_date)) +
+
+    # Primary y-axis (leaching)
+    scale_y_continuous(
+      name = expression("Daily N Loss (kg N ha"^-1*" day"^-1*")"),
+      sec.axis = sec_axis(~ -. / precip_scale_factor,
+                          name = "Daily Precipitation (mm)")
+    ) +
+
+    # Theme and labels
+    theme_publication() +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(size = 10),
+      axis.title.y.right = element_text(color = "lightblue"),
+      axis.text.y.right = element_text(color = "lightblue")
+    ) +
+    labs(
+      title = paste("Year", year_val),
+      x = "Month",
+      color = "Treatment"
+    ) +
+
+    # Add horizontal line at y=0 for reference
+    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
+
+  return(p)
+}
+
+# Create daily leaching plots for both years
+daily_plot_2023 <- create_leaching_dual_axis_plot(2023)
+daily_plot_2024 <- create_leaching_dual_axis_plot(2024)
+
+# Combine daily plots side by side
+daily_leaching_dual_axis <- (daily_plot_2023 | daily_plot_2024) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "none")
+
+# Modify cumulative plot to match Figure 2 structure (no strip text, bottom legend)
+cumulative_leaching_plot_clean <- ggplot(cum_leaching_combined, aes(x = date, y = cum_loss, color = treatment, fill = treatment)) +
+  geom_ribbon(aes(ymin = pmax(cum_loss - cum_se, 0), ymax = cum_loss + cum_se),
+              alpha = 0.2, linewidth = 0) +
+  geom_line(linewidth = 1.1) +
+  # Show observed points for visibility when data are sparse
+  geom_point(data = obs_points, inherit.aes = FALSE,
+             aes(x = date, y = cum_obs, color = treatment),
+             alpha = 0.5, shape = 16, size = 1.2) +
+  scale_color_treatments() +
+  scale_fill_treatments() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "Month",
+       y = expression("Cumulative N Loss (kg N ha"^-1*")"),
+       color = "Treatment", fill = "Treatment") +
+  facet_wrap(~year, nrow = 1, scales = "free_x") +
+  theme_publication() +
+  theme(
+    strip.text = element_blank(),  # Hide strip text for consistency with Figure 2
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+    panel.spacing = unit(2, "lines")
+  )
+
+# Assemble final figure: daily dual-axis on top, cumulative below (like Figure 2)
+figure3_dual_axis <- (daily_leaching_dual_axis / cumulative_leaching_plot_clean) +
+  patchwork::plot_layout(heights = c(1, 1.2))
+
+figure3_dual_axis
+
+# Save the dual-axis version
+ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024.png",
+       figure3_dual_axis, width = 10, height = 8, dpi = 300, bg = "white")
+```
+
+Figure 3 Alternative. Daily nitrogen leaching and precipitation on dual axes with cumulative leaching by year.
+Top panels: Daily nitrogen leaching with precipitation bars "raining down" from the top (light blue, right y-axis) and daily nitrogen loss plotted along the bottom axis (colored lines, left y-axis). Asterisks (*) indicate dates where leaching differs significantly between treatments (p < 0.05). Bottom panels: Cumulative nitrogen leaching. Faceted by year with consistent styling to Figure 2.
 
 # Figure 4: Annual Nitrogen Losses
 ```{r figure-annual-loss}
