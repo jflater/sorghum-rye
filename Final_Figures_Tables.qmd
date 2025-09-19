@@ -195,6 +195,7 @@ create_source_table <- function(model_results) {
     )
 }
 ```
+
 # Table 1: Soil Properties
 
 ```{r}
@@ -205,6 +206,7 @@ rows <- c("Soil Series", "Texture", "pH", "Soil Organic Matter (%)")
 
 
 ```
+
 # Table 2: Salt-extractable Inorganic Nitrogen
 
 ```{r table-2}
@@ -747,6 +749,7 @@ print(res)
 ```
 
 **Table 3. Annual nitrogen losses by treatment.** Values are mean ± standard deviation. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ($\alpha=0.05$). Source of variation p-values are from ANOVA
+
 ```{r table-3}
 #| label: tbl-nitrogen-losses
 #| tbl-width: 10
@@ -944,7 +947,7 @@ flow_n_plot
 ggsave("figures/figuresupp1_flow_nitrogen_relationship.png", width = 10, height = 6, dpi = 300)
 ```
 
-# Figure 1: Precipitation and Temperature 
+# Figure 1: Precipitation and Temperature
 
 ```{r figure-weather}
 #| label: fig-weather
@@ -1270,6 +1273,7 @@ pdplot
 ```
 
 # Figure 1: Soil Moisture and Temperature (with per-date significance)
+
 ```{r}
 #| label: fig-soil-moisture-temp
 #| fig-cap: "Daily soil moisture and temperature over the study period (asterisks indicate p < 0.05 between treatments for that date)"
@@ -1452,9 +1456,7 @@ ggsave("figures/figure1_six_panel_weather_soil.png", six_panel_plot, width = 6.5
 six_panel_plot
 ```
 
-Figure 1. Daily precipitation, temperature, and soil moisture over the study period.
-Panels show daily rainfall, air temperature, and soil moisture for each year. Shaded regions indicate historical ranges. Data are faceted by year.
-
+Figure 1. Daily precipitation, temperature, and soil moisture over the study period. Panels show daily rainfall, air temperature, and soil moisture for each year. Shaded regions indicate historical ranges. Data are faceted by year.
 
 # Figure 2
 
@@ -1659,8 +1661,7 @@ ggsave("figures/figure2_daily_flux_precip_cumulative_2023_2024.png",
        figure2, width = 10, height = 9, dpi = 300, bg = "white")
 ```
 
-Figure 2. Daily and cumulative N₂O fluxes and precipitation by year.
-Top panels: Daily N₂O flux and precipitation, trimmed to measurement windows. Middle panels: Daily N₂O flux with asterisks (*) indicating dates where flux differs significantly between treatments (p < 0.05). Bottom panels: Cumulative N₂O flux. Faceted by year. Colors indicate treatment. Axes are aligned for direct comparison.
+Figure 2. Daily and cumulative N₂O fluxes and precipitation by year. Top panels: Daily N₂O flux and precipitation, trimmed to measurement windows. Middle panels: Daily N₂O flux with asterisks (\*) indicating dates where flux differs significantly between treatments (p \< 0.05). Bottom panels: Cumulative N₂O flux. Faceted by year. Colors indicate treatment. Axes are aligned for direct comparison.
 
 ## Figure 2 Alternative: Dual-Axis Version
 
@@ -1806,8 +1807,7 @@ ggsave("figures/figure2_dual_axis_flux_precip_cumulative_2023_2024.png",
        figure2_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
 ```
 
-Figure 2 Alternative. Daily and cumulative N₂O flux with precipitation on dual axes by year.
-Top panels: Daily N₂O flux with precipitation bars "raining down" from the top (blue, right y-axis) and daily N₂O flux plotted along the bottom axis (colored lines, left y-axis). Asterisks (*) indicate dates where flux differs significantly between treatments (p < 0.05). Red dashed lines show fertilizer application dates. Bottom panels: Cumulative N₂O flux. X-axes are aligned between daily and cumulative panels for direct comparison.
+Figure 2 Alternative. Daily and cumulative N₂O flux with precipitation on dual axes by year. Top panels: Daily N₂O flux with precipitation bars "raining down" from the top (blue, right y-axis) and daily N₂O flux plotted along the bottom axis (colored lines, left y-axis). Asterisks (\*) indicate dates where flux differs significantly between treatments (p \< 0.05). Red dashed lines show fertilizer application dates. Bottom panels: Cumulative N₂O flux. X-axes are aligned between daily and cumulative panels for direct comparison.
 
 # Figure 3: Nitrogen Leaching
 
@@ -1965,12 +1965,7 @@ figure3
 ggsave("figures/figure3_leaching_four_panel.png", figure3, width = 6.5, height = 9, dpi = 300, bg = "white")
 ```
 
-Figure 3. Monthly and cumulative nitrogen leaching by year.
-Top panels: Monthly leaching losses (kg N ha⁻¹) by treatment. Bottom panels: Cumulative leaching losses. Faceted by year. Axes are aligned for direct comparison. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different (
-𝛼
-=
-0.05
-α=0.05).
+Figure 3. Monthly and cumulative nitrogen leaching by year. Top panels: Monthly leaching losses (kg N ha⁻¹) by treatment. Bottom panels: Cumulative leaching losses. Faceted by year. Axes are aligned for direct comparison. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ( 𝛼 = 0.05 α=0.05).
 
 ## Figure 3 Alternative: Dual-Axis Version
 
@@ -2192,10 +2187,10 @@ ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024.png",
        figure3_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
 ```
 
-Figure 3 Alternative. Daily nitrogen leaching and precipitation on dual axes with cumulative leaching by year.
-Top panels: Daily nitrogen leaching with precipitation bars "raining down" from the top (light blue, right y-axis) and daily nitrogen loss plotted along the bottom axis (colored lines, left y-axis). Asterisks (*) indicate dates where leaching differs significantly between treatments (p < 0.05). Bottom panels: Cumulative nitrogen leaching. Faceted by year with consistent styling to Figure 2.
+Figure 3 Alternative. Daily nitrogen leaching and precipitation on dual axes with cumulative leaching by year. Top panels: Daily nitrogen leaching with precipitation bars "raining down" from the top (light blue, right y-axis) and daily nitrogen loss plotted along the bottom axis (colored lines, left y-axis). Asterisks (\*) indicate dates where leaching differs significantly between treatments (p \< 0.05). Bottom panels: Cumulative nitrogen leaching. Faceted by year with consistent styling to Figure 2.
 
 # Figure 4: Annual Nitrogen Losses
+
 ```{r figure-annual-loss}
 #| label: fig-annual-loss
 #| fig-width: 10
@@ -2259,13 +2254,8 @@ figure4
 ggsave("figures/figure4_stacked_n_loss.png", figure4, width = 10, height = 6, dpi = 300, bg = "white")
 ```
 
-Figure 4. Stacked annual nitrogen losses by treatment.
-Bars show mean annual N₂O and leaching losses (kg N ha⁻¹) by treatment and year. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different (
-𝛼
-=
-0.05
-α=0.05).
-## Statistical summaries for annual losses
+Figure 4. Stacked annual nitrogen losses by treatment. Bars show mean annual N₂O and leaching losses (kg N ha⁻¹) by treatment and year. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ( 𝛼 = 0.05 α=0.05). \## Statistical summaries for annual losses
+
 ```{r}
 annual_leaching %>% count(year, treatment)
 plot_cumulative_n2o %>% count(year, treatment)
@@ -2303,6 +2293,7 @@ split(plot_cumulative_n2o, plot_cumulative_n2o$year) |>
 ```
 
 # Biomass and grain yeild
+
 ```{r biomass-yield}
 #| label: biomass-yield
 #| fig-cap: "Sorghum crop biomass and soy and corn grain yield"  
@@ -2310,6 +2301,7 @@ split(plot_cumulative_n2o, plot_cumulative_n2o$year) |>
 
 
 ```
+
 We are waiting on C:N data from the lab to complete this section.
 
 # Summary
