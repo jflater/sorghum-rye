@@ -1,0 +1,67 @@
+project:
+  type: website
+  output-dir: docs
+  render:
+    - index.qmd
+    - Final_Figures_Tables.qmd
+    - notebooks/plot_flux.qmd
+    - scripts/figures_walk_through.qmd
+    - Old_Final_Figures.qmd
+website:
+  title: "Sorghum & Rye Project"
+  description: "Integrated GitHub Pages site assembling Quarto reports, analyses, and notebooks."
+  site-url: https://jflater.github.io/sorghum-rye
+  repo-url: https://github.com/jflater/sorghum-rye
+  navbar:
+    left:
+      - href: index.qmd
+        text: Overview
+      - href: Final_Figures_Tables.qmd
+        text: Final Figures & Tables
+      - href: notebooks/plot_flux.qmd
+        text: Flux Notebook
+      - href: scripts/figures_walk_through.qmd
+        text: Figures Walkthrough
+      - href: Old_Final_Figures.qmd
+        text: Legacy Report
+    right:
+      - icon: github
+        href: https://github.com/jflater/sorghum-rye
+  sidebar:
+    style: floating
+    search: true
+    contents:
+      - section: "Core Reports"
+        contents:
+          - text: Overview
+            href: index.qmd
+          - text: Final Figures & Tables
+            href: Final_Figures_Tables.qmd
+      - section: "Supporting Analyses"
+        contents:
+          - text: Flux Notebook
+            href: notebooks/plot_flux.qmd
+          - text: Figures Walkthrough
+            href: scripts/figures_walk_through.qmd
+          - text: Legacy Report
+            href: Old_Final_Figures.qmd
+  page-footer:
+    left: "(c) {year} Sorghum & Rye Project"
+    right:
+      - icon: github
+        href: https://github.com/jflater/sorghum-rye
+        text: "View source"
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: superhero
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: show
+    smooth-scroll: true
+    link-external-icon: true
+    link-external-newwindow: true
+    page-layout: article
+editor: visual
