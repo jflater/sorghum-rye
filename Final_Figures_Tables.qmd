@@ -1607,6 +1607,7 @@ cum_flux_combined <- daily_flux %>%
   select(-start_date, -end_date) %>%
   # Join with observed data
   left_join(daily_flux, by = c("Treatment", "year", "date")) %>%
+  mutate(has_sample = !is.na(mean_flux)) %>%
   group_by(Treatment, year) %>%
   # Interpolate within observed ranges only (rule = 1)
   mutate(
@@ -1689,6 +1690,7 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
   star_year <- star_data %>% filter(year == year_val)
   fert_year <- fert_events %>% filter(year == year_val)
   cum_flux_year <- cum_flux_combined %>% filter(year == year_val)
+  cum_flux_points <- cum_flux_year %>% filter(has_sample)
 
   # Get date range for this year
   date_range <- flux_date_ranges %>% filter(year == year_val)
@@ -1702,9 +1704,9 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
               fill = "#377EB8", alpha = 0.7) +
 
     # Daily flux lines and points
-    geom_line(data = flux_year,
-              aes(x = date, y = mean_flux, color = Treatment),
-              linewidth = 1.1, alpha = 0.85) +
+    #geom_line(data = flux_year,
+     #         aes(x = date, y = mean_flux, color = Treatment),
+      #        linewidth = 1.1, alpha = 0.85) +
     geom_point(data = flux_year,
                aes(x = date, y = mean_flux, color = Treatment),
                size = 2) +
@@ -1764,6 +1766,7 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     geom_ribbon(aes(ymin = pmax(cum_flux - cum_se, 0), ymax = cum_flux + cum_se, fill = Treatment),
                 alpha = 0.2, linewidth = 0) +
     geom_line(linewidth = 1.1) +
+    geom_point(data = cum_flux_points, aes(x = date, y = cum_flux, color = Treatment), size = 1.8) +
     scale_color_treatments() +
     scale_fill_treatments() +
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
@@ -1803,7 +1806,7 @@ figure2_dual_axis <- (plot_2023 | plot_2024) +
 figure2_dual_axis
 
 # Save the dual-axis version
-ggsave("figures/figure2_dual_axis_flux_precip_cumulative_2023_2024.png",
+ggsave("figures/figure2_dual_axis_flux_precip_cumulative_2023_2024v2.png",
        figure2_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
 ```
 
@@ -2244,14 +2247,14 @@ figure4 <- ggplot(loss_long, aes(x = treatment, y = value, fill = component)) +
             inherit.aes = FALSE, size = 5) +
   facet_wrap(~year, nrow = 1) +
   scale_fill_manual(values = loss_colors, name = "Loss Type") +
-  scale_y_continuous(limits = c(0, max_total * 1.08), expand = expansion(mult = c(0, 0.05))) +
+ # scale_y_continuous(limits = c(0, max_total * 1.08), expand = expansion(mult = c(0, 0.05))) +
   labs(x = "Treatment", y = expression("Annual N loss (kg N ha"^{-1}*")")) +
   theme_publication() +
   theme(legend.position = "top")
 
 figure4
 
-ggsave("figures/figure4_stacked_n_loss.png", figure4, width = 10, height = 6, dpi = 300, bg = "white")
+ggsave("figures/figure4_stacked_n_loss.png", figure4, width = 8.5, height = 6, dpi = 300, bg = "white")
 ```
 
 Figure 4. Stacked annual nitrogen losses by treatment. Bars show mean annual N₂O and leaching losses (kg N ha⁻¹) by treatment and year. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ( 𝛼 = 0.05 α=0.05). \## Statistical summaries for annual losses
