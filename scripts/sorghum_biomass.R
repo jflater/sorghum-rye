@@ -287,3 +287,23 @@ biomass_faceted <- ggplot2::ggplot(
 
 print(biomass_faceted)
 ggplot2::ggsave("figures/sorghum_biomass_faceted_by_year_corrected.png", biomass_faceted, width = 10, height = 6, dpi = 300)
+
+mean(biomass_faceted$data$mean_biomass)
+# Now create a boxplot instead of a bar plot
+biomass_boxplot <- ggplot2::ggplot(
+  combined_biomass, # Use the individual data points instead of summary
+  ggplot2::aes(x = treatment, y = biomass_mg_ha, fill = treatment)
+) +
+  ggplot2::geom_boxplot(width = 0.7, color = "black", outlier.shape = 16) +
+  # Add individual data points with jitter for better visualization
+  ggplot2::geom_jitter(width = 0.2, alpha = 0.5, size = 2) +
+  ggplot2::facet_wrap(~year, nrow = 1) +
+  ggplot2::labs(x = "Treatment", y = expression("Moisture-corrected Biomass (Mg ha"^-1 * ")")) +
+  ggplot2::scale_fill_manual(values = treatment_colors) +
+  theme_publication() +
+  scale_fill_treatments() +
+  labs(fill = "Treatment") +
+  theme(legend.position = "none")
+
+print(biomass_boxplot)
+ggplot2::ggsave("figures/sorghum_biomass_boxplot_by_year.png", biomass_boxplot, width = 10, height = 6, dpi = 300)
