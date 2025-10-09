@@ -21,793 +21,45 @@ execute:
 
 # Setup and Data Loading
 
-```{r setup}
-#| message: false
-#| warning: false
-
-# Load required packages
-library(tidyverse)
-library(lubridate)
-library(gt)
-library(janitor)
-library(broom)
-library(readxl)
-library(patchwork)
-library(multcompView)
-library(emmeans)
-
-# Re-establish dplyr preferences after loading packages
-if (requireNamespace("conflicted", quietly = TRUE)) {
-  library(conflicted)
-  conflicts_prefer(dplyr::select)
-  conflicts_prefer(dplyr::filter)
-  conflicts_prefer(dplyr::summarise)
-}
-
-# Custom theme for consistency
-theme_publication <- function(base_size = 12) {
-  theme_minimal(base_size = base_size) +
-    theme(
-      panel.background = element_rect(fill = "#ffffffff", color = NA),
-      plot.background = element_rect(fill = "#ffffffff", color = NA),
-      panel.grid.major = element_line(color = alpha("#B7B5B3", 0.2)),
-      panel.grid.minor = element_blank(),
-      text = element_text(color = "#000000ff"),
-      axis.text = element_text(color = "#000000ff"),
-      strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      panel.spacing = unit(2, "lines")
-    )
-}
-
-# Treatment colors
-treatment_colors <- c(
-  "Sorghum" = "#D8D97AFF",
-  "Sorghum + Rye" = "#95C36EFF", 
-  "Corn" = "#74C8C3FF",
-  "Soy" = "#0A2E57FF"
-)
-
-scale_color_treatments <- function() scale_color_manual(values = treatment_colors)
-scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
-```
-
-# Data Import and Processing
-
-```{r data-import}
-#| message: false
-
-# Import soil nitrogen data
-# Nitrate and ammonia in ppm, not sure if moisture corrected
-soil_data <- read_csv("data/soils/cleaned_soil_data.csv") %>%
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
-  mutate(
-    date = as.Date(date),
-    total_inorganic_n = ammonia_ppm + nitrate_ppm
-  ) 
-
-# Import flux data 
-# N2O flux in g N ha-1 day-1 
-flux_data <- read_csv("data/cleaned_flux_data.csv") %>%
-  mutate(date = as.Date(date)) 
-
-# Import nitrogen leaching data
-# Cumulative N loss in mg per day, same for nitrate and ammonium
-leaching_data <- read_csv("data/clean_leaching.csv") %>%
-  clean_names() %>%
-  mutate(
-    date = as.Date(date),
-    year = year(date)
-  ) %>%
-  filter(year %in% c(2023, 2024)) %>%  # Filter out bad years
-  filter(!is.na(year))
-
-# Import historical rain and gdd data
-gdd <- read_xlsx("data/rain/historical_rain.xlsx")
-
-gdd <- gdd %>%
-  select(day, doy, gdd_50_86) %>%
-  mutate(
-    date = as.Date(day),
-    year = year(date),
-  ) %>%
-  group_by(year) %>%
-  arrange(date) %>%
-  mutate(cumulative_gdd = cumsum(gdd_50_86))
-
-gdd <- gdd %>%
-  mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
-
-rain <- read_xlsx("data/rain/historical_rain.xlsx")
-
-rain <- rain %>%
-  select(day, doy, precipmm) %>%
-  mutate(
-    date = as.Date(day),
-    year = year(date),
-  ) %>%
-  group_by(year) %>%
-  arrange(date) %>%
-  mutate(cumulative_precip = cumsum(precipmm))
-
-rain <- rain %>%
-  mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
-```
-
-# Helper Functions
-
-```{r helper-functions}
-# Function for pairwise t-tests within groups
-#| label: get-pvals
-get_pairwise_pvals <- function(data, variable, group_vars) {
-  data %>%
-    group_by(across(all_of(group_vars))) %>%
-    group_modify(~ {
-      treatments <- unique(.x$treatment)
-      if (length(treatments) < 2) {
-        return(tibble(p_value = NA_real_))
-      }
-      
-      if (length(treatments) == 2) {
-        t_result <- t.test(.x[[variable]][.x$treatment == treatments[1]], 
-                          .x[[variable]][.x$treatment == treatments[2]])
-        return(tibble(p_value = t_result$p.value))
-      } else {
-        pairwise_result <- pairwise.t.test(.x[[variable]], .x$treatment, 
-                                          p.adjust.method = "none")
-        return(tibble(p_value = min(pairwise_result$p.value, na.rm = TRUE)))
-      }
-    }) %>%
-    ungroup()
-}
-
-# Function to add significance letters
-add_significance_letters <- function(data, p_col) {
-  data %>%
-    mutate(
-      significance_letter = case_when(
-        is.na({{ p_col }}) ~ "",
-        {{ p_col }} < 0.001 ~ "a",
-        {{ p_col }} < 0.01 ~ "b", 
-        {{ p_col }} < 0.05 ~ "c",
-        TRUE ~ ""
-      ),
-      result_with_sig = if_else(
-        significance_letter == "", 
-        result,
-        paste0(result, " ", significance_letter)
-      )
-    )
-}
-
-# Function to create ANOVA source tables
-create_source_table <- function(model_results) {
-  tibble(
-    source = c("Date", "Treatment", "Date × Treatment"),
-    p_value = summary(model_results)[[1]][c(2, 3, 6), "Pr(>F)"]
-  ) %>%
-    mutate(
-      formatted_p = case_when(
-        p_value < 0.001 ~ "< 0.001",
-        p_value < 0.01 ~ sprintf("%.3f", p_value),
-        TRUE ~ sprintf("%.2f", p_value)
-      )
-    )
-}
-```
-
-# Table 1: Soil Properties
-
-```{r}
-# Table 1: Soil Properties
-# column names Soil Property, Sorghum, Sorghum + Rye
-colnames <- c("Soil Property", "Sorghum", "Sorghum + Rye")
-rows <- c("Soil Series", "Texture", "pH", "Soil Organic Matter (%)")
-
-
-```
-
-# Table 2: Salt-extractable Inorganic Nitrogen
-
-```{r table-2}
-#| label: tbl-soil-nitrogen
-#| tbl-cap: "Salt-extractable inorganic nitrogen"
-
-# Calculate summary statistics
-soil_summary <- soil_data %>%
-  group_by(year, date, treatment) %>%
-  summarise(
-    across(c(ammonia_ppm, nitrate_ppm, total_inorganic_n), 
-           list(mean = ~ mean(.x, na.rm = TRUE),
-                se = ~ sd(.x, na.rm = TRUE) / sqrt(sum(!is.na(.x))))),
-    .groups = "drop"
-  ) 
-
-# Get p-values for pairwise comparisons
-pvals_ammonium <- get_pairwise_pvals(soil_data, "ammonia_ppm", c("year", "date"))
-pvals_nitrate <- get_pairwise_pvals(soil_data, "nitrate_ppm", c("year", "date"))  
-pvals_total_n <- get_pairwise_pvals(soil_data, "total_inorganic_n", c("year", "date"))
-
-# Combine with p-values and format
-soil_table_data <- soil_summary %>%
-  left_join(pvals_ammonium %>% rename(ammonia_p = p_value), by = c("year", "date")) %>%
-  left_join(pvals_nitrate %>% rename(nitrate_p = p_value), by = c("year", "date")) %>%
-  left_join(pvals_total_n %>% rename(total_n_p = p_value), by = c("year", "date")) %>%
-  pivot_longer(
-    cols = c(ammonia_ppm_mean, ammonia_ppm_se, nitrate_ppm_mean, nitrate_ppm_se, 
-             total_inorganic_n_mean, total_inorganic_n_se),
-    names_to = c("variable", "stat"),
-    names_pattern = "(.*)_(mean|se)",
-    values_to = "value"
-  ) %>%
-  pivot_wider(names_from = stat, values_from = value) %>%
-  mutate(
-    result = sprintf("%.2f ± %.2f", mean, se),
-    p_val = case_when(
-      variable == "ammonia_ppm" ~ ammonia_p,
-      variable == "nitrate_ppm" ~ nitrate_p,
-      variable == "total_inorganic_n" ~ total_n_p
-    ),
-    variable = case_when(
-      variable == "ammonia_ppm" ~ "ammonium",
-      variable == "nitrate_ppm" ~ "nitrate", 
-      variable == "total_inorganic_n" ~ "total_n"
-    )
-  ) %>%
-  add_significance_letters(p_val) %>%
-  select(year, date, treatment, variable, result_with_sig) %>%
-  pivot_wider(names_from = variable, values_from = result_with_sig)
-
-# Format dates and years for display
-soil_table_formatted <- soil_table_data %>%
-  mutate(
-    year = as.character(year),
-    date = format(as.Date(date), "%B %d")
-  ) %>%
-  arrange(year, as.Date(paste(year, date), format = "%Y %B %d"), treatment) %>%
-  group_by(year) %>%
-  mutate(
-    year_display = if_else(row_number() == 1, year, ""),
-    is_new_date = date != lag(date, default = "")
-  ) %>%
-  ungroup()
-
-# Create ANOVA source of variation
-aov_ammonium <- aov(ammonia_ppm ~ year * date * treatment, data = soil_data)
-aov_nitrate <- aov(nitrate_ppm ~ year * date * treatment, data = soil_data)
-aov_total_n <- aov(total_inorganic_n ~ year * date * treatment, data = soil_data)
-
-source_variation <- tibble(
-  source = c("Date", "Treatment", "Date × Treatment"),
-  ammonium = summary(aov_ammonium)[[1]][c(2, 3, 6), "Pr(>F)"],
-  nitrate = summary(aov_nitrate)[[1]][c(2, 3, 6), "Pr(>F)"],
-  total_n = summary(aov_total_n)[[1]][c(2, 3, 6), "Pr(>F)"]
-) %>%
-  mutate(across(c(ammonium, nitrate, total_n), ~ case_when(
-    .x < 0.001 ~ "< 0.001",
-    .x < 0.01 ~ sprintf("%.3f", .x),
-    TRUE ~ sprintf("%.2f", .x)
-  ))) %>%
-  mutate(
-    year_display = "",
-    date = "",
-    treatment = source,
-    .before = 1
-  ) %>%
-  select(-source)
-
-# Combine data with source of variation
-separator_row <- tibble(
-  year_display = "Source of Variation", date = "", treatment = "",
-  ammonium = "", nitrate = "", total_n = "", is_new_date = FALSE
-)
-
-table2_complete <- bind_rows(
-  soil_table_formatted,
-  separator_row,
-  source_variation %>% mutate(is_new_date = FALSE)
-)
-
-# Create gt table
-table2_gt <- table2_complete %>%
-  select(-year) %>%
-  select(year_display, date, treatment, ammonium, nitrate, total_n, is_new_date) %>%
-  gt() %>%
-  tab_header(title = md("**Table 2. Salt-extractable inorganic nitrogen**")) %>%
-  cols_label(
-    year_display = "Year",
-    date = "Date", 
-    treatment = "Treatment",
-    ammonium = md("Ammonium<br>(mg kg<sup>-1</sup>)"),
-    nitrate = md("Nitrate<br>(mg kg<sup>-1</sup>)"),
-    total_n = md("Total Inorganic N<br>(mg kg<sup>-1</sup>)")
-  ) %>%
-  tab_style(
-    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
-    locations = cells_body(rows = is_new_date == TRUE)
-  ) %>%
-  tab_style(
-    style = cell_borders(sides = "top", weight = px(2)),
-    locations = cells_body(rows = year_display == "Source of Variation")
-  ) %>%
-  tab_style(
-    style = cell_text(weight = "bold"),
-    locations = cells_body(rows = year_display == "Source of Variation")
-  ) %>%
-  tab_style(
-    style = cell_text(align = "center", weight = "bold"),
-    locations = cells_body(columns = year_display, rows = year_display == "Source of Variation")
-  ) %>%
-  cols_hide(columns = is_new_date) %>%
-  tab_footnote(
-    footnote = "Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
-    locations = cells_title()
-  )
-
-# Save table
-gtsave(table2_gt, "tables/table2_soil_nitrogen.rtf")
-# Save as .png for manuscript
-gtsave(table2_gt, "tables/table2_soil_nitrogen.png")
-table2_gt
-```
-
-# N2O Data Processing and Analysis
-
-```{r n2o-processing}
-# Process daily flux data with interpolation
-daily_flux_summary <- flux_data %>%
-  group_by(plot, rowvs_interrow, treatment, year, date) %>%
-  summarise(mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), .groups = "drop") %>%
-  arrange(plot, rowvs_interrow, treatment, year, date)
-
-# Interpolation function
-interpolate_daily_flux <- function(data) {
-  # Get unique plot combinations
-  plot_combinations <- data %>%
-    distinct(plot, rowvs_interrow, treatment, year)
-  
-  # Interpolate for each combination
-  map_dfr(seq_len(nrow(plot_combinations)), function(i) {
-    combo <- plot_combinations[i, ]
-    
-    subset_data <- data %>%
-      filter(
-        plot == combo$plot,
-        rowvs_interrow == combo$rowvs_interrow,
-        treatment == combo$treatment,
-        year == combo$year
-      ) %>%
-      arrange(date)
-    
-    # Create full year sequence
-    start_date <- as.Date(paste0(combo$year, "-01-01"))
-    end_date <- as.Date(paste0(combo$year, "-12-31"))
-    all_days <- seq(start_date, end_date, by = "day")
-    
-    # Interpolate if we have sufficient data
-    if (nrow(subset_data) >= 2 && !all(is.na(subset_data$mean_flux))) {
-      valid_data <- subset_data[!is.na(subset_data$mean_flux), ]
-      
-      if (nrow(valid_data) >= 2) {
-        interpolated_flux <- approx(
-          x = as.numeric(valid_data$date),
-          y = valid_data$mean_flux,
-          xout = as.numeric(all_days),
-          rule = 1
-        )$y
-      } else {
-        interpolated_flux <- rep(NA_real_, length(all_days))
-      }
-    } else {
-      interpolated_flux <- rep(NA_real_, length(all_days))
-    }
-    
-    tibble(
-      plot = combo$plot,
-      rowvs_interrow = combo$rowvs_interrow,
-      treatment = combo$treatment,
-      year = combo$year,
-      date = all_days,
-      interpolated_flux = interpolated_flux
-    )
-  })
-}
-
-# Apply interpolation
-interpolated_flux_data <- interpolate_daily_flux(daily_flux_summary)
-
-# Calculate cumulative N2O per plot
-plot_cumulative_n2o <- interpolated_flux_data %>%
-  group_by(plot, rowvs_interrow, treatment, year) %>%
-  summarise(
-    annual_cumulative_n2o = sum(interpolated_flux, na.rm = TRUE) / 1000, # Convert g to kg
-    .groups = "drop"
-  ) %>%
-  filter(is.finite(annual_cumulative_n2o))
-
-cat("✓ N2O interpolation and cumulative calculations complete\n")
-cat("Plot-level cumulative N2O data:", nrow(plot_cumulative_n2o), "observations\n")
-```
-
-# Nitrogen Leaching Data Processing
-
-```{r leaching-processing}
-# Calculate annual cumulative nitrogen leaching per plot
-# Convert mg per plot to kg N ha-1
-plot_area_ft2 <- 120*160  # in ft^2
-plot_area_ha <- plot_area_ft2 / 107639.1041671  # Convert ft^2 to ha
-annual_leaching <- leaching_data %>%
-  group_by(plot, treatment, year) %>%
-  summarise(
-    annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1000000) / plot_area_ha, # mg to kg to kg/ha
-    .groups = "drop"
-  ) %>%
-  filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
-
-cat("✓ Nitrogen leaching calculations complete\n")
-cat("Plot-level leaching data:", nrow(annual_leaching), "observations\n")
-```
-
-# Table 3: Annual Nitrogen Losses
-
-```{r}
-# Summarize N2O data by treatment and year
-n2o_summary <- plot_cumulative_n2o %>%
-  group_by(treatment, year) %>%
-  summarise(
-    n_plots = n(),
-    mean_n2o = mean(annual_cumulative_n2o, na.rm = TRUE),
-    sd_n2o = sd(annual_cumulative_n2o, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  mutate(n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))
-
-# Summarize leaching data by treatment and year
-leaching_summary <- annual_leaching %>%
-  group_by(treatment, year) %>%
-  summarise(
-    n_plots = n(),
-    mean_leaching = mean(annual_cumulative_leaching, na.rm = TRUE),
-    sd_leaching = sd(annual_cumulative_leaching, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  mutate(leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))
-
-# Add per-year Tukey letters (within-year) for Leaching (and optionally N2O)
-compute_letters_by_year <- function(df, value_col) {
-  d <- df %>% filter(!is.na(.data[[value_col]]))
-  trts <- sort(unique(d$treatment))
-  if (length(trts) < 2) return(tibble(treatment = trts, letter = "a"))
-  fml <- as.formula(paste(value_col, "~ treatment"))
-  fit <- lm(fml, data = d)
-  emm <- emmeans::emmeans(fit, ~ treatment)
-  if (requireNamespace("multcomp", quietly = TRUE)) {
-    out <- multcomp::cld(emm, adjust = "tukey", Letters = letters) %>%
-      as_tibble() %>%
-      transmute(treatment, letter = gsub("\\s+", "", .group)) %>%
-      mutate(
-        # If numbers slipped through, map 1->a, 2->b, etc., and combine (e.g., 12->ab)
-        letter = ifelse(grepl("[0-9]", letter), chartr("123456789", "abcdefghi", letter), letter),
-        letter = ifelse(letter == "" | is.na(letter), "a", letter)
-      )
-  } else {
-    # Fallback: if Tukey letters cannot be computed, return all 'a'
-    out <- tibble(treatment = trts, letter = rep("a", length(trts)))
-  }
-  out
-}
-
-leach_letters <- annual_leaching %>%
-  group_by(year) %>%
-  group_modify(~ compute_letters_by_year(.x, "annual_cumulative_leaching"))
-
-# Optionally compute for N2O (will likely be all 'a' given ns per-year tests)
-n2o_letters <- plot_cumulative_n2o %>%
-  group_by(year) %>%
-  group_modify(~ compute_letters_by_year(.x, "annual_cumulative_n2o"))
-
-# Attach letters to per-year rows only (exclude 2023–2024 totals later)
-leaching_summary <- leaching_summary %>%
-  left_join(leach_letters, by = c("treatment", "year")) %>%
-  mutate(leaching_result = if_else(year %in% c(2023, 2024) & !is.na(letter),
-                                   sprintf("%.3f ± %.3f (%s)", mean_leaching, sd_leaching, letter),
-                                   sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))) %>%
-  select(-letter)
-
-n2o_summary <- n2o_summary %>%
-  left_join(n2o_letters, by = c("treatment", "year")) %>%
-  mutate(n2o_result = if_else(year %in% c(2023, 2024) & !is.na(letter),
-                              sprintf("%.3f ± %.3f (%s)", mean_n2o, sd_n2o, letter),
-                              sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))) %>%
-  select(-letter)
-
-# Calculate 2-year totals (as sum of 2023 and 2024 per treatment)
-# Mean = mean_2023 + mean_2024; SD via quadrature: sqrt(sd_2023^2 + sd_2024^2)
-n2o_two_year <- n2o_summary %>%
-  filter(year %in% c(2023, 2024)) %>%
-  group_by(treatment) %>%
-  summarise(
-    mean_n2o = sum(mean_n2o, na.rm = TRUE),
-    sd_n2o = sqrt(sum(sd_n2o^2, na.rm = TRUE)),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    year = "2023-2024",
-    n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o)
-  )
-
-leaching_two_year <- leaching_summary %>%
-  filter(year %in% c(2023, 2024)) %>%
-  group_by(treatment) %>%
-  summarise(
-    mean_leaching = sum(mean_leaching, na.rm = TRUE),
-    sd_leaching = sqrt(sum(sd_leaching^2, na.rm = TRUE)),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    year = "2023-2024", 
-    leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching)
-  )
-compare_df_cols(n2o_two_year, leaching_two_year, n2o_summary, leaching_summary)
-
-# Extract mean values for environmental cost calculation
-n2o_means <- bind_rows(
-  n2o_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, mean_n2o),
-  n2o_two_year %>% select(year, treatment, mean_n2o)
-)
-
-leaching_means <- bind_rows(
-  leaching_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, mean_leaching),
-  leaching_two_year %>% select(year, treatment, mean_leaching)
-)
-
-# Combine annual and 2-year data
-combined_nitrogen_data <- bind_rows(
-  n2o_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, n2o_result),
-  n2o_two_year %>% select(year, treatment, n2o_result)
-) %>%
-  full_join(
-    bind_rows(
-      leaching_summary %>% mutate(year = as.character(year)) %>% select(year, treatment, leaching_result),
-      leaching_two_year %>% select(year, treatment, leaching_result)
-    ),
-    by = c("year", "treatment")
-  ) %>%
-  # Join with mean values for cost calculation
-  left_join(n2o_means, by = c("year", "treatment")) %>%
-  left_join(leaching_means, by = c("year", "treatment")) %>%
-  mutate(
-    year_order = case_when(
-      year == "2023" ~ 1,
-      year == "2024" ~ 2,
-      year == "2023-2024" ~ 3
-    ),
-    # Calculate total environmental cost: $16/kg N₂O + $20/kg N leached
-    environmental_cost_dollars = (mean_n2o * 16) + (mean_leaching * 20),
-    total_environmental_cost = sprintf("$%.2f", environmental_cost_dollars)
-  ) %>%
-  arrange(year_order, treatment)
-
-# Source of variation analysis
-# N2O ANOVA
-combined_n2o_data <- plot_cumulative_n2o %>% mutate(year_factor = as.factor(year))
-aov_n2o <- aov(annual_cumulative_n2o ~ year_factor * treatment, data = combined_n2o_data)
-
-# Leaching ANOVA  
-combined_leaching_data <- annual_leaching %>% mutate(year_factor = as.factor(year))
-aov_leaching <- aov(annual_cumulative_leaching ~ year_factor * treatment, data = combined_leaching_data)
-
-# Source of variation table
-source_variation_n <- tibble(
-  source = c("Year", "Treatment", "Year × Treatment"),
-  n2o_p = summary(aov_n2o)[[1]][1:3, "Pr(>F)"],
-  leaching_p = summary(aov_leaching)[[1]][1:3, "Pr(>F)"]
-) %>%
-  mutate(
-    across(c(n2o_p, leaching_p), ~ case_when(
-      .x < 0.001 ~ "< 0.001",
-      .x < 0.01 ~ sprintf("%.3f", .x),
-      TRUE ~ sprintf("%.2f", .x)
-    )),
-    year = "",
-    year_order = 4,
-    treatment = source,
-    n2o_result = n2o_p,
-    leaching_result = leaching_p,
-    total_environmental_cost = "",  # No p-value for calculated cost
-    mean_n2o = NA_real_,  # Add for consistency
-    mean_leaching = NA_real_,  # Add for consistency
-    environmental_cost_dollars = NA_real_  # Add for consistency
-  ) %>%
-  select(-source, -n2o_p, -leaching_p)
-
-# Create complete table
-separator_n <- tibble(
-  year = "Source of Variation", year_order = 3.5, treatment = "",
-  n2o_result = "", leaching_result = "", total_environmental_cost = "",
-  mean_n2o = NA_real_, mean_leaching = NA_real_, environmental_cost_dollars = NA_real_
-)
-
-table3_complete <- bind_rows(
-  combined_nitrogen_data,
-  separator_n,
-  source_variation_n
-) %>%
-  arrange(year_order, treatment) %>%
-  mutate(
-    year_display = case_when(
-      year == "Source of Variation" ~ year,
-      year != lag(year, default = "") ~ as.character(year),
-      TRUE ~ ""
-    ),
-    is_new_section = year != lag(year, default = "") & year != "Source of Variation"
-  )
-
-# Create gt table
-table3_gt <- table3_complete %>%
-  select(
-    Year = year_display,
-    Treatment = treatment,
-    `N2O Loss` = n2o_result,
-    `N Leaching` = leaching_result, 
-    `Total Environmental Cost` = total_environmental_cost,
-    is_new_section
-  ) %>%
-  gt() %>%
-  tab_header(title = md("**Table 3. Annual nitrogen losses**")) %>%
-  cols_label(
-    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
-    `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
-    `Total Environmental Cost` = md("Total Environmental Cost<br>(USD ha<sup>-1</sup>)")
-  ) %>%
-  tab_style(
-    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
-    locations = cells_body(rows = is_new_section == TRUE)
-  ) %>%
-  # Fix the gap by setting explicit column widths
-  cols_width(
-    Year ~ px(90),
-    Treatment ~ px(150),
-    `N2O Loss` ~ px(160),
-    `N Leaching` ~ px(160),
-    `Total Environmental Cost` ~ px(160)
-  ) %>%
-  # Optional: tighten padding and fix total table width
-  tab_options(
-    table.width = px(740),
-    column_labels.padding = px(6),
-    data_row.padding = px(6)
-  ) %>%
-  tab_style(
-    style = cell_borders(sides = "top", weight = px(2)),
-    locations = cells_body(rows = Year == "Source of Variation")
-  ) %>%
-  tab_style(
-    style = cell_text(weight = "bold"),
-    locations = cells_body(rows = Year == "Source of Variation")  
-  ) %>%
-  cols_hide(columns = is_new_section) %>%
-  tab_footnote(
-    footnote = "Values are mean ± standard deviation. Letters (in parentheses) indicate Tukey-adjusted groups within year (α = 0.05). Two-year totals (2023–2024) report sums; letters are not shown for totals. Environmental cost: $16/kg N₂O + $20/kg N leached.",
-    locations = cells_title()
-  )
-
-# Save table
-gtsave(table3_gt, "tables/table3_nitrogen_losses.rtf")
-# Save as .png for manuscript
-gtsave(table3_gt, "tables/table3_nitrogen_losses.png")
-table3_gt
-```
-
-```{r diagnostics-fig4-table3-consistency}
-# Verify Figure 4 means match Table 3 means for 2023 and 2024
-fig4_means <- combined_loss %>%
-  select(year, treatment, mean_leach, mean_n2o) %>% distinct()
-
-tbl3_means <- bind_rows(
-  leaching_summary %>% transmute(year, treatment, mean_leach = mean_leaching),
-  n2o_summary %>% transmute(year, treatment, mean_n2o)
-) %>%
-  group_by(year, treatment) %>% summarise(
-    mean_leach = max(mean_leach, na.rm = TRUE),
-    mean_n2o = max(mean_n2o, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-consistency_check <- fig4_means %>%
-  full_join(tbl3_means, by = c("year", "treatment"), suffix = c("_fig4", "_tbl3")) %>%
-  mutate(
-    match_leach = isTRUE(all.equal(mean_leach_fig4, mean_leach_tbl3, tolerance = 1e-8)),
-    match_n2o = isTRUE(all.equal(mean_n2o_fig4, mean_n2o_tbl3, tolerance = 1e-8))
-  )
-print("Figure 4 vs Table 3 mean comparison (TRUE means match):")
-print(consistency_check %>% select(year, treatment, match_leach, match_n2o))
-```
-
-```{r diagnostics-per-year-significance}
-# Check per-year treatment differences (2023 and 2024 separately)
-check_year_sig <- function(df, value_col, year_val) {
-  d <- df %>% filter(year == year_val)
-  fml <- as.formula(paste(value_col, "~ treatment"))
-  fit <- aov(fml, data = d)
-  p <- summary(fit)[[1]][["Pr(>F)"]][1]
-  list(p_value = p)
-}
-
-res <- tibble(
-  component = c("N2O", "N2O", "Leaching", "Leaching"),
-  year = c(2023, 2024, 2023, 2024),
-  p_value = c(
-    check_year_sig(plot_cumulative_n2o, "annual_cumulative_n2o", 2023)$p_value,
-    check_year_sig(plot_cumulative_n2o, "annual_cumulative_n2o", 2024)$p_value,
-    check_year_sig(annual_leaching, "annual_cumulative_leaching", 2023)$p_value,
-    check_year_sig(annual_leaching, "annual_cumulative_leaching", 2024)$p_value
-  )
-)
-print("Per-year treatment ANOVA p-values (expect > 0.05 to indicate no significant differences):")
-print(res)
-```
-
-**Table 3. Annual nitrogen losses by treatment.** Values are mean ± standard deviation. Letters indicate Tukey-adjusted significance groups; treatments sharing a letter are not significantly different ($\alpha=0.05$). Source of variation p-values are from ANOVA
-
-```{r table-3}
+```{r table-3, message=FALSE, warning=FALSE}
 #| label: tbl-nitrogen-losses
-#| tbl-width: 10
-#| tbl-height: 6
-# ...existing code for combined_nitrogen_data and table rendering...
-table3_complete <- bind_rows(
-  combined_nitrogen_data,
-  separator_n,
-  source_variation_n
-) %>%
+#| tbl-cap: "Annual nitrogen loss components and totals (rounded to 3 significant figures)."
+
+library(dplyr)
+library(gt)
+
+# Expect combined_nitrogen_data with at least:
+#   year, year_order, treatment, N2O_total_gNha, Leach_total_gNha, Total_reported_gNha
+sf <- 3
+fmt_sig <- function(x, sig = sf) signif(x, sig)
+
+table3_inputs <- combined_nitrogen_data %>%
+  mutate(
+    N2O_total_gNha   = as.numeric(N2O_total_gNha),
+    Leach_total_gNha = as.numeric(Leach_total_gNha),
+    Sum_components   = rowSums(across(c(N2O_total_gNha, Leach_total_gNha)), na.rm = TRUE)
+  ) %>%
   arrange(year_order, treatment) %>%
   mutate(
-    year_display = case_when(
-      year == "Source of Variation" ~ year,
-      year != lag(year, default = "") ~ as.character(year),
-      TRUE ~ ""
-    ),
-    is_new_section = year != lag(year, default = "") & year != "Source of Variation"
+    across(c(N2O_total_gNha, Leach_total_gNha, Sum_components, Total_reported_gNha),
+           ~ fmt_sig(.x, sf))
   )
 
-# Create gt table
-table3_gt <- table3_complete %>%
-  select(
-    Year = year_display,
-    Treatment = treatment,
-    `N2O Loss` = n2o_result,
-    `N Leaching` = leaching_result, 
-    `Total Environmental Cost` = total_environmental_cost,
-    is_new_section
-  ) %>%
-  gt() %>%
-  tab_header(title = md("**Table 3. Annual nitrogen losses**")) %>%
+table3_gt <- table3_inputs %>%
+  gt(groupname_col = "year") %>%
   cols_label(
-    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
-    `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
-    `Total Environmental Cost` = md("Total Environmental Cost<br>(USD ha<sup>-1</sup>)")
+    treatment = "Treatment",
+    N2O_total_gNha = html("N<sub>2</sub>O (g N ha<sup>−1</sup>)"),
+    Leach_total_gNha = html("Leached NO<sub>3</sub> (g N ha<sup>−1</sup>)"),
+    Sum_components = "Sum (check)",
+    Total_reported_gNha = "Reported total"
   ) %>%
-  tab_style(
-    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
-    locations = cells_body(rows = is_new_section == TRUE)
-  ) %>%
-  tab_style(
-    style = cell_borders(sides = "top", weight = px(2)),
-    locations = cells_body(rows = Year == "Source of Variation")
-  ) %>%
-  tab_style(
-    style = cell_text(weight = "bold"),
-    locations = cells_body(rows = Year == "Source of Variation")  
-  ) %>%
-  cols_hide(columns = is_new_section) %>%
-  tab_footnote(
-    footnote = "Values are mean ± standard deviation. Letters indicate significance levels: a = p < 0.001, b = p < 0.01, c = p < 0.05",
-    locations = cells_title()
-  )
+  tab_spanner(label = "Components (g N ha−1)", columns = c(N2O_total_gNha, Leach_total_gNha)) %>%
+  fmt_number(columns = c(N2O_total_gNha, Leach_total_gNha, Sum_components, Total_reported_gNha),
+             decimals = NA, drop_trailing_zeros = TRUE) %>%
+  tab_source_note("All values rounded to 3 significant figures. 'Sum (check)' is the arithmetic sum of listed components.")
 
-# Save table
-gtsave(table3_gt, "tables/table3_nitrogen_losses.rtf")
-
+gtsave(table3_gt, "tables/table3_components_clean.rtf")
 table3_gt
 ```
 
@@ -1345,40 +597,16 @@ moisture_stars <- moist_temp %>%
   inner_join(pvals_moist, by = c("year", "date")) %>%
   filter(is.finite(y_star))
 
-moisture_segments <- moisture_stars %>%
-  distinct(year, date) %>%
-  left_join(moist_temp, by = c("year", "date")) %>%
-  group_by(year, date) %>%
-  slice_max(order_by = mean_soil_moisture, n = 1, with_ties = FALSE) %>%
-  mutate(
-    x = date - 0.5,
-    xend = date + 0.5,
-    y = 0.5
-  ) %>%
-  ungroup()
-
 temp_stars <- moist_temp %>%
   group_by(year, date) %>%
   summarise(y_star = max(mean_soil_temp, na.rm = TRUE) * 1.05, .groups = "drop") %>%
   inner_join(pvals_temp, by = c("year", "date")) %>%
   filter(is.finite(y_star))
 
-temp_segments <- temp_stars %>%
-  distinct(year, date) %>%
-  left_join(moist_temp, by = c("year", "date")) %>%
-  group_by(year, date) %>%
-  slice_max(order_by = mean_soil_temp, n = 1, with_ties = FALSE) %>%
-  mutate(
-    x = date - 0.5,
-    xend = date + 0.5,
-    y = 35 
-  ) %>%
-  ungroup()
-
 # 2023 Soil Moisture (bottom left)
 p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Treatment, shape = Treatment)) +
-  geom_line(linewidth = .5) +
-  geom_point(size = 1.5) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +  # circle and square
   scale_x_date(date_breaks = "1 month", date_labels = "%b",
@@ -1388,22 +616,17 @@ p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Trea
     x = "2023",
     y = "Soil Moisture (m³/m³)"
   ) +
-  geom_hline(yintercept = 0.5, color = "grey75", linewidth = 7) +
-  geom_segment(
-    data = moisture_segments %>% filter(year == 2023),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7,
-    inherit.aes = FALSE, show.legend = FALSE
-  ) +
+  geom_text(data = moisture_stars %>% filter(year == 2023),
+            aes(x = date, y = y_star), label = "*", color = "black", size = 8, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
   theme(
     legend.position = "none"
   )
-p1
+
 # 2024 Soil Moisture (bottom right)
 p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Treatment, shape = Treatment)) +
-  geom_line(linewidth = .5) +
-  geom_point(size = 1.5) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b",
@@ -1413,24 +636,19 @@ p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Trea
     x = "2024",
     y = ""
   ) +
-  geom_hline(yintercept = 0.5, color = "grey75", linewidth = 7) +
-  geom_segment(
-    data = moisture_segments %>% filter(year == 2024),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7,
-    inherit.aes = FALSE, show.legend = FALSE
-  ) +
+  geom_text(data = moisture_stars %>% filter(year == 2024),
+            aes(x = date, y = y_star), label = "*", color = "black", size = 8, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
   theme(
     axis.text.y = element_blank(),
     axis.ticks.y = element_blank(),
     legend.position = "none"
   )
-p2
+
 # 2023 Soil Temperature (top left)
 p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatment, shape = Treatment)) +
-  geom_line(linewidth = .5) +
-  geom_point(size = 1.5) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b",
@@ -1440,25 +658,19 @@ p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatmen
     x = "",
     y = "Soil Temperature (°C)"
   ) +
-  geom_hline(yintercept = 35, color = "grey75", linewidth = 7) +
-  geom_segment(
-    data = temp_segments %>% filter(year == 2023),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7,
-    inherit.aes = FALSE, show.legend = FALSE
-  ) +
+  geom_text(data = temp_stars %>% filter(year == 2023),
+            aes(x = date, y = y_star), label = "*", color = "black", size = 8, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
   theme(
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
     legend.position = "none"
   )
-p3
 
 # 2024 Soil Temperature (top right)
 p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatment, shape = Treatment)) +
-  geom_line(linewidth = .5) +
-  geom_point(size = 1.5) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
   scale_color_treatments() +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b",
@@ -1468,13 +680,8 @@ p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatmen
     x = "",
     y = ""
   ) +
-  geom_hline(yintercept = 35, color = "grey75", linewidth = 7) +
-  geom_segment(
-    data = temp_segments %>% filter(year == 2024),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7,
-    inherit.aes = FALSE, show.legend = FALSE
-  ) +
+  geom_text(data = temp_stars %>% filter(year == 2024),
+            aes(x = date, y = y_star), label = "*", color = "black", size = 8, vjust = 0, inherit.aes = FALSE) +
   theme_publication() +
   theme(
     axis.text.x = element_blank(),
@@ -1483,23 +690,11 @@ p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatmen
     axis.ticks.y = element_blank(),
     legend.position = "none"
   )
-
-p4
 # Arrange panels: temperature 2023/2024 on top, moisture 2023/2024 on bottom
-soil_4panel <- (p3 | p4) / (p1 | p2) +
-  patchwork::plot_layout(guides = "collect", heights = c(1, 1)) &
-  theme(
-    legend.position      = "top",
-    legend.justification = "center",
-    legend.direction     = "horizontal",
-    legend.box           = "horizontal",   # keeps multiple guides in one row when possible
-    legend.margin        = margin(b = 4)
-  )
-soil_4panel
-ggsave("figures/figure2_soil_moisture_temperature.png", soil_4panel, width = 6.5, height = 8, dpi = 300, bg = "white")
+soil_4panel <- (p3 | p4) / (p1 | p2) 
 
 six_panel_plot <-
-  (pdplot) +
+  (pdplot / soil_4panel) +
   patchwork::plot_layout(guides = "collect", heights = c(1, 1)) &
   theme(
     legend.position      = "top",
@@ -1509,47 +704,11 @@ six_panel_plot <-
     legend.margin        = margin(b = 4)
   )
 
-ggsave("figures/figure1_weather.png", six_panel_plot, width = 6.5, height = 8, dpi = 300, bg = "white")
+ggsave("figures/figure1_six_panel_weather_soil.png", six_panel_plot, width = 6.5, height = 8, dpi = 300, bg = "white")
 six_panel_plot
-
 ```
 
-```{r}
-
-# Moisture difference by date (S+R - S), faceted by year
-soil_moisture_diff <- moist_temp %>%
-  select(year, date, Treatment, mean_soil_moisture) %>%
-  pivot_wider(names_from = Treatment, values_from = mean_soil_moisture) %>%
-  mutate(diff = `Sorghum + Rye` - Sorghum) %>%
-  filter(!is.na(diff))
-
-p_moist_diff <- ggplot(soil_moisture_diff, aes(x = date, y = diff)) +
-  geom_col(fill = "#377EB8", alpha = 0.7, width = 1) +
-  geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  labs(title = "Soil Moisture Difference (S+R - S)", x = "Date", y = "Δ Soil Moisture") +
-  facet_wrap(~year, nrow = 2, scales = "free_x") +
-  theme_publication() +
-  theme(legend.position = "none")
-
-ggsave("figures/soil_moisture_difference.png", p_moist_diff, width = 8, height = 6, dpi = 300)
-
-# Temperature difference by date (S+R - S), faceted by year
-soil_temp_diff <- moist_temp %>%
-  select(year, date, Treatment, mean_soil_temp) %>%
-  pivot_wider(names_from = Treatment, values_from = mean_soil_temp) %>%
-  mutate(diff = `Sorghum + Rye` - Sorghum) %>%
-  filter(!is.na(diff))
-
-p_temp_diff <- ggplot(soil_temp_diff, aes(x = date, y = diff)) +
-  geom_col(fill = "#e23737ff", alpha = 0.7, width = 1) +
-  geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
-  labs(title = "Soil Temperature Difference (S+R - S)", x = "Date", y = "Δ Soil Temp (°C)") +
-  facet_wrap(~year, nrow = 2, scales = "free_x") +
-  theme_publication() +
-  theme(legend.position = "none")
-
-ggsave("figures/soil_temperature_difference.png", p_temp_diff, width = 8, height = 6, dpi = 300)
-```
+Figure 1. Daily precipitation, temperature, and soil moisture over the study period. Panels show daily rainfall, air temperature, and soil moisture for each year. Shaded regions indicate historical ranges. Data are faceted by year.
 
 # Figure 2
 
@@ -1785,9 +944,8 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
   cum_flux_year <- cum_flux_combined %>% filter(year == year_val)
   cum_flux_points <- cum_flux_year %>% filter(has_sample)
 
-    # Full-year limits (force Jan 1 → Dec 31 even if data are sparse)
-  year_start <- as.Date(sprintf("%d-01-01", year_val))
-  year_end   <- as.Date(sprintf("%d-12-31", year_val))
+  # Get date range for this year
+  date_range <- flux_date_ranges %>% filter(year == year_val)
 
   # Daily flux plot with precipitation
   daily_plot <- ggplot() +
@@ -1822,7 +980,7 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     scale_color_treatments() +
     guides(color = "none") +
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
-                 limits = c(year_start, year_end)) +
+                 limits = c(date_range$min_date, date_range$max_date)) +
 
     # Primary y-axis (flux), using global limits for consistency
     scale_y_continuous(
@@ -1864,7 +1022,7 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     scale_color_treatments() +
     scale_fill_treatments() +
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
-                 limits = c(year_start, year_end)) +
+                 limits = c(date_range$min_date, date_range$max_date)) +
     scale_y_continuous(
       name = if (!is_right_panel) expression("Cumulative N"[2]*"O Flux (kg N ha"^-1*")") else "",
       limits = c(0, global_max_cum_flux)
@@ -2172,8 +1330,7 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
 
   # Get date range for this year - use ACTUAL measurement range
   date_range <- actual_leaching_date_ranges %>% filter(year == year_val)
-  year_start <- as.Date(sprintf("%d-01-01", year_val))
-  year_end   <- as.Date(sprintf("%d-12-31", year_val))
+
   # Create the plot
   p <- ggplot() +
     # Precipitation bars (from top down, above the data)
@@ -2183,9 +1340,9 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
               fill = "#377EB8", alpha = 0.7) +
 
     # Daily leaching lines and points
-   # geom_line(data = leaching_year,
-   #           aes(x = date, y = mean_loss, color = treatment),
-   #           linewidth = 1.1, alpha = 0.85) +
+    geom_line(data = leaching_year,
+              aes(x = date, y = mean_loss, color = treatment),
+              linewidth = 1.1, alpha = 0.85) +
     geom_point(data = leaching_year,
                aes(x = date, y = mean_loss, color = treatment),
                size = 2) +
@@ -2202,7 +1359,7 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     scale_color_treatments() +
     guides(color = "none") +
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
-                 limits = c(year_start, year_end)) +
+                 limits = c(date_range$min_date, date_range$max_date)) +
 
     # Primary y-axis (leaching), using global limits for consistency
     scale_y_continuous(
@@ -2251,7 +1408,7 @@ daily_leaching_dual_axis <- (daily_plot_2023 | daily_plot_2024) +
         legend.box.just = "center")
 
 # CRITICAL FIX: Modify cumulative plot to use trimmed data and matching x-axis limits
-cumulative_leaching_plot_clean <- ggplot(cum_leaching_combined, aes(x = date, y = cum_loss, color = treatment, fill = treatment)) +
+cumulative_leaching_plot_clean <- ggplot(cum_leaching_trimmed, aes(x = date, y = cum_loss, color = treatment, fill = treatment)) +
   geom_ribbon(aes(ymin = pmax(cum_loss - cum_se, 0), ymax = cum_loss + cum_se),
               alpha = 0.2, linewidth = 0) +
   geom_line(linewidth = 1.1) +
@@ -2287,127 +1444,6 @@ ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024.png",
 
 Figure 3 Alternative. Daily nitrogen leaching and precipitation on dual axes with cumulative leaching by year. Top panels: Daily nitrogen leaching with precipitation bars "raining down" from the top (light blue, right y-axis) and daily nitrogen loss plotted along the bottom axis (colored lines, left y-axis). Asterisks (\*) indicate dates where leaching differs significantly between treatments (p \< 0.05). Bottom panels: Cumulative nitrogen leaching. Faceted by year with consistent styling to Figure 2.
 
-```{r}
-# --- global limits and scaling (same as before) ---
-global_max_loss <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
-global_max_precip_leaching <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
-global_max_cum_loss <- max(cum_leaching_trimmed$cum_loss + cum_leaching_trimmed$cum_se, na.rm = TRUE)
-
-global_precip_scale_factor_leaching <- global_max_loss * 0.4 / global_max_precip_leaching
-global_plot_top_leaching <- global_max_loss * 1.1
-
-# --- updated dual-axis function (matches Figure 2 structure) ---
-create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
-  leaching_year <- daily_leaching_summary %>% filter(year == year_val)
-  precip_year   <- daily_precip_leaching  %>% filter(year == year_val)
-  star_year     <- leaching_star_data     %>% filter(year == year_val)
-  cum_year      <- cum_leaching_trimmed   %>% filter(year == year_val)
-  obs_year      <- obs_points_trimmed     %>% filter(year == year_val)
-
-  # full-year axis limits (Jan 1–Dec 31)
-  year_start <- as.Date(sprintf("%d-01-01", year_val))
-  year_end   <- as.Date(sprintf("%d-12-31", year_val))
-
-  # ---- DAILY PANEL ----
-  daily_plot <- ggplot() +
-    geom_rect(
-      data = precip_year,
-      aes(xmin = date - 0.5, xmax = date + 0.5,
-          ymin = global_plot_top_leaching - precipmm * global_precip_scale_factor_leaching,
-          ymax = global_plot_top_leaching),
-      fill = "#377EB8", alpha = 0.7
-    ) +
-    geom_point(
-      data = leaching_year,
-      aes(x = date, y = mean_loss, color = treatment),
-      size = 2
-    ) +
-    geom_errorbar(
-      data = leaching_year,
-      aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = treatment),
-      width = 0.2, alpha = 0.5
-    ) +
-    geom_text(
-      data = star_year,
-      aes(x = date, y = star_y, label = star_label),
-      color = "black", size = 8
-    ) +
-    scale_color_treatments() +
-    guides(color = "none") +
-    scale_x_date(date_breaks = "1 month", date_labels = "%b",
-                 limits = c(year_start, year_end)) +
-    scale_y_continuous(
-      name = if (!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" day"^-1*")") else "",
-      limits = c(0, global_plot_top_leaching),
-      sec.axis = sec_axis(~ (global_plot_top_leaching - .) / global_precip_scale_factor_leaching,
-                          name = if (is_right_panel) "Daily Precipitation (mm)" else "")
-    ) +
-    theme_publication() +
-    theme(
-      legend.position = "none",
-      axis.text.x = element_blank(),
-      axis.ticks.x = element_blank(),
-      axis.text.y = if (is_right_panel) element_blank() else element_text(),
-      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
-      axis.title.y = if (is_right_panel) element_blank() else element_text(),
-      axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
-      axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
-      axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank()
-    ) +
-    labs(title = paste("", year_val), x = "") +
-    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
-
-  # ---- CUMULATIVE PANEL (now identical to Figure 2) ----
-  cumulative_plot <- ggplot(cum_year, aes(x = date, y = cum_loss, color = treatment)) +
-    geom_ribbon(
-      aes(ymin = pmax(cum_loss - cum_se, 0), ymax = cum_loss + cum_se, fill = treatment),
-      alpha = 0.2, linewidth = 0
-    ) +
-    geom_line(linewidth = 1.1) +
-    geom_point(
-      data = obs_year,
-      aes(x = date, y = cum_obs, color = treatment),
-      size = 1.8
-    ) +
-    scale_color_treatments() +
-    scale_fill_treatments() +
-    scale_x_date(
-      date_breaks = "1 month", date_labels = "%b",
-      limits = c(year_start, year_end)
-    ) +
-    scale_y_continuous(
-      name = if (!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1*")") else "",
-      limits = c(0, global_max_cum_loss)
-    ) +
-    labs(x = "Month") +
-    theme_publication() +
-    theme(
-      legend.position = "none",
-      axis.text.y = if (is_right_panel) element_blank() else element_text(),
-      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
-      axis.title.y = if (is_right_panel) element_blank() else element_text()
-    )
-
-  # ---- Combine top + bottom panels ----
-  (daily_plot / cumulative_plot) +
-    patchwork::plot_layout(heights = c(1.2, 1))
-}
-
-# --- Build panels and assemble full figure ---
-leach_2023 <- create_leaching_dual_axis_plot(2023, is_right_panel = FALSE)
-leach_2024 <- create_leaching_dual_axis_plot(2024, is_right_panel = TRUE)
-
-figure3_dual_axis <- (leach_2023 | leach_2024) +
-  patchwork::plot_layout(guides = "collect") &
-  theme(legend.position = "bottom",
-        legend.justification = "center",
-        legend.box.just = "center")
-
-figure3_dual_axis
-ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2.png",
-       figure3_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
-
-```
 # Figure 4: Annual Nitrogen Losses
 
 ```{r figure-annual-loss}
@@ -2441,7 +1477,7 @@ loss_long <- combined_loss %>%
     treatment = factor(treatment, levels = c("Corn", "Soy", "Sorghum", "Sorghum + Rye"))
   )
 
-loss_colors <- c("Leached N" = "#0A2E57FF", "Nitrous Oxide" = "#d11c16ff")
+loss_colors <- c("Leached N" = "#0A2E57FF", "Nitrous Oxide" = "#95C36EFF")
 
 # Top-of-bar positions for letter placement
 max_total <- loss_long %>%
@@ -2534,3 +1570,192 @@ This document provides clean, efficient analysis following tidyverse principles:
 -   **Professional styling** consistent across all outputs
 
 Each table and figure is generated in its own chunk for modularity and clarity.
+
+## Patched Figures (2025-09-16 meeting actions)
+
+```{r figure1-soil-moisture-sigbar, message=FALSE, warning=FALSE}
+#| label: fig-soil-moisture
+#| fig-cap: "Soil moisture by treatment with top-of-panel significance segments (colored where treatments differ, α = 0.05)."
+#| fig-width: 10
+#| fig-height: 5.5
+
+MOISTURE_COL <- if (exists("MOISTURE_COL")) MOISTURE_COL else "vwc"
+
+library(lme4); library(emmeans); library(dplyr); library(ggplot2); library(scales)
+
+soil_sig <- soil_data %>%
+  dplyr::filter(treatment %in% c("Sorghum","Sorghum + Rye"),
+         !is.na(.data[[MOISTURE_COL]])) %>%
+  group_by(date) %>%
+  summarize(
+    p_value = {
+      ok <- FALSE; p <- NA_real_; est <- NA_real_
+      try({
+        m <- lmer(as.formula(paste(MOISTURE_COL, "~ treatment + (1|block/plot)")), data = cur_data())
+        em <- emmeans(m, "treatment")
+        ct <- contrast(em, "pairwise") %>% summary(infer=TRUE)
+        p <- ct$p.value[1]; est <- ct$estimate[1]; ok <- TRUE
+      }, silent=TRUE)
+      if (!ok) {
+        tt <- try(t.test(
+          cur_data() |> filter(treatment == "Sorghum") |> pull(.data[[MOISTURE_COL]]),
+          cur_data() |> filter(treatment == "Sorghum + Rye") |> pull(.data[[MOISTURE_COL]])
+        ), silent=TRUE)
+        if (!inherits(tt,"try-error")) {
+          p <- tt$p.value; est <- unname(diff(rev(tt$estimate)))
+        }
+      }
+      p
+    },
+    estimate = if (exists("est")) est else NA_real_,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    sig = !is.na(p_value) & p_value < 0.05,
+    who_higher = case_when(!sig ~ "ns", estimate > 0 ~ "Sorghum higher",
+                           estimate < 0 ~ "Sorghum+Rye higher", TRUE ~ "ns")
+  ) %>% arrange(date) %>% mutate(run = rleid(who_higher))
+
+soil_sig_runs <- soil_sig %>% filter(who_higher != "ns") %>%
+  group_by(who_higher, run) %>% summarise(xmin = min(date), xmax = max(date), .groups = "drop")
+
+base_moisture_plot <- ggplot(soil_data %>% filter(treatment %in% c("Sorghum","Sorghum + Rye")),
+                             aes(date, .data[[MOISTURE_COL]], color = treatment)) +
+  geom_line(alpha = 0.8) + theme_publication() +
+  labs(y = "Volumetric water content (m³ m⁻³)", x = NULL, color = "Treatment")
+
+moisture_plot_sigbar <- base_moisture_plot +
+  coord_cartesian(clip = "off") +
+  annotate("segment", x = min(soil_data$date, na.rm=TRUE), xend = max(soil_data$date, na.rm=TRUE),
+           y = Inf, yend = Inf, colour = "grey70", linewidth = 2) +
+  geom_segment(data = soil_sig_runs,
+               aes(x = xmin, xend = xmax, y = Inf, yend = Inf, colour = who_higher),
+               linewidth = 3, inherit.aes = FALSE) +
+  scale_colour_manual(values = c("Sorghum" = "#D55E00","Sorghum + Rye"="#0072B2",
+                                 "Sorghum higher"="#D55E00","Sorghum+Rye higher"="#0072B2")) +
+  theme(plot.margin = margin(10, 20, 10, 10), legend.position = "bottom")
+
+moisture_plot_sigbar
+```
+
+```{r supp-moisture-delta-bars, message=FALSE, warning=FALSE}
+#| label: fig-supp-moisture-delta
+#| fig-cap: "Supplemental: Δ soil moisture (Sorghum+Rye − Sorghum); separate weather panel and delta bars."
+#| fig-width: 10
+#| fig-height: 6
+
+library(patchwork)
+MOISTURE_COL <- if (exists("MOISTURE_COL")) MOISTURE_COL else "vwc"
+
+supp_delta <- soil_data %>%
+  filter(treatment %in% c("Sorghum","Sorghum + Rye")) %>%
+  group_by(date) %>%
+  summarise(
+    vwc_S   = mean(.data[[MOISTURE_COL]][treatment == "Sorghum"], na.rm = TRUE),
+    vwc_SR  = mean(.data[[MOISTURE_COL]][treatment == "Sorghum + Rye"], na.rm = TRUE),
+    delta   = vwc_SR - vwc_S, .groups = "drop"
+  )
+
+p_delta <- ggplot(supp_delta, aes(date, delta)) +
+  geom_col(width = 0.9) + geom_hline(yintercept = 0, colour = "grey60") +
+  theme_publication() + labs(y = "Δ VWC (S+R − S)", x = NULL) +
+  scale_x_date(expand = expansion(mult = c(0.01, 0.01))) +
+  scale_y_continuous(breaks = pretty_breaks_int(6))
+
+# If you have an existing weather_daily object with precip/temp, reuse.
+p_weather <- ggplot(weather_daily, aes(date, precip_mm)) +
+  geom_col() + theme_publication() + labs(y = "Precipitation (mm·d⁻¹)", x = NULL) +
+  scale_y_continuous(breaks = pretty_breaks_int(6))
+
+p_weather / p_delta + plot_layout(heights = c(2, 3))
+```
+
+```{r figs-2-3-sampling-points, message=FALSE, warning=FALSE}
+#| label: fig-sampling-overlay
+#| fig-cap: "Sampling days highlighted: points on daily panels and markers on cumulative curves."
+#| fig-width: 10
+#| fig-height: 8
+
+# Detect sampling dates from flux_data by default
+sampling_dates <- flux_data %>% distinct(date) %>% arrange(date) %>% pull(date)
+
+p_flux_daily <- ggplot(daily_flux, aes(date, mean, colour = Treatment)) +
+  geom_line() + geom_point(size = 1.6) +
+  geom_ribbon(aes(ymin = mean - se, ymax = mean + se, fill = Treatment),
+              alpha = 0.15, colour = NA) +
+  theme_publication() +
+  labs(y = expression(N[2]*O~(g~N~ha^-1~d^-1)), x = NULL, colour = "Treatment", fill = "Treatment") +
+  scale_x_date(breaks = sampling_dates, labels = scales::label_date("%b %d"))
+
+p_flux_cum <- ggplot(cum_flux, aes(date, cumulative, colour = Treatment)) +
+  geom_line(linewidth = 1) +
+  geom_point(data = daily_flux %>% filter(date %in% sampling_dates),
+             aes(date, cumsum(mean)), size = 1.6, inherit.aes = FALSE) +
+  theme_publication() +
+  labs(y = expression(Cumulative~N[2]*O~(g~N~ha^-1)), x = NULL, colour = "Treatment") +
+  scale_x_date(breaks = sampling_dates, labels = scales::label_date("%b %d"))
+
+p_flux_daily / p_flux_cum
+```
+
+```{r delta-diagnostics, message=FALSE, warning=FALSE}
+#| label: fig-delta-diagnostics
+#| fig-cap: "ΔN₂O flux vs Δsoil moisture and temperature diagnostics."
+#| fig-width: 10
+#| fig-height: 5
+
+daily_moist <- soil_data %>%
+  filter(treatment %in% c("Sorghum","Sorghum + Rye")) %>%
+  group_by(date, treatment) %>%
+  summarise(vwc = mean(.data[[if (exists("MOISTURE_COL")) MOISTURE_COL else "vwc"]], na.rm = TRUE),
+            .groups = "drop") %>%
+  tidyr::pivot_wider(names_from = treatment, values_from = vwc) %>%
+  mutate(delta_vwc = `Sorghum + Rye` - Sorghum)
+
+daily_temp <- weather_daily %>% group_by(date) %>%
+  summarise(tavg = mean(tavg_c, na.rm = TRUE), .groups = "drop")
+
+daily_flux_wide <- daily_flux %>%
+  select(date, Treatment, mean) %>%
+  tidyr::pivot_wider(names_from = Treatment, values_from = mean) %>%
+  mutate(delta_flux = `Sorghum + Rye` - Sorghum)
+
+diag_df <- daily_flux_wide %>% left_join(daily_moist, by = "date") %>% left_join(daily_temp, by = "date")
+
+p1 <- ggplot(diag_df, aes(delta_vwc, delta_flux)) +
+  geom_hline(yintercept = 0, colour = "grey70") +
+  geom_vline(xintercept = 0, colour = "grey70") +
+  geom_point() + geom_smooth(method = "lm", se = TRUE) +
+  theme_publication() +
+  labs(x = "Δ VWC (S+R − S)", y = expression(Δ~N[2]*O~flux~(g~N~ha^-1~d^-1)))
+
+p2 <- ggplot(diag_df, aes(tavg, delta_flux)) +
+  geom_point() + geom_smooth(method = "lm", se = TRUE) +
+  theme_publication() +
+  labs(x = "Mean air temperature (°C)", y = expression(Δ~N[2]*O~flux))
+
+p1 + p2
+```
+
+```{r flow-duration, message=FALSE, warning=FALSE}
+#| label: fig-flow-duration
+#| fig-cap: "Flow-duration curve by treatment (exceedance probability vs daily flow)."
+#| fig-width: 9
+#| fig-height: 5
+
+fd <- leaching_data %>%
+  filter(!is.na(flow_l)) %>%
+  group_by(year, treatment) %>%
+  arrange(desc(flow_l), .by_group = TRUE) %>%
+  mutate(rank = row_number(),
+         n = n(),
+         prob_exceed = (rank - 0.5) / n) %>%
+  ungroup()
+
+ggplot(fd, aes(prob_exceed, flow_l, colour = treatment)) +
+  geom_line() +
+  scale_x_reverse(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::label_number(scale = 0.001, suffix = "k L")) +
+  theme_publication() +
+  labs(x = "Exceedance probability", y = "Daily tile flow (L)", colour = "Treatment")
+```
