@@ -1902,6 +1902,8 @@ figure2_dual_axis
 # Save the dual-axis version
 ggsave("figures/figure2_dual_axis_flux_precip_cumulative_2023_2024v2.png",
        figure2_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
+ggsave("figures/figure2_dual_axis_flux_precip_cumulative_2023_2024v2BIG.png",
+       figure2_dual_axis, width = 13.3, height = 7.5, dpi = 300, bg = "white")
 ```
 
 Figure 2 Alternative. Daily and cumulative N₂O flux with precipitation on dual axes by year. Top panels: Daily N₂O flux with precipitation bars "raining down" from the top (blue, right y-axis) and daily N₂O flux plotted along the bottom axis (colored lines, left y-axis). Asterisks (\*) indicate dates where flux differs significantly between treatments (p \< 0.05). Red dashed lines show fertilizer application dates. Bottom panels: Cumulative N₂O flux. X-axes are aligned between daily and cumulative panels for direct comparison.
@@ -2406,7 +2408,8 @@ figure3_dual_axis <- (leach_2023 | leach_2024) +
 figure3_dual_axis
 ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2.png",
        figure3_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
-
+ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2BIG.png",
+       figure3_dual_axis, width = 13.3, height = 7.5, dpi = 300, bg = "white")
 ```
 # Figure 4: Annual Nitrogen Losses
 
