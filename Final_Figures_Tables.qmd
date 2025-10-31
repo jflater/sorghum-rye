@@ -583,11 +583,11 @@ combined_nitrogen_data <- bind_rows(
       year == "2023-2024" ~ 3
     ),
     # Calculate total environmental cost: $16/kg N₂O + $20/kg N leached
-    environmental_cost_dollars = (mean_n2o * 16) + (mean_leaching * 20),
+    environmental_cost_dollars = (mean_n2o * 16.18) + (mean_leaching * 18.54), # Not run, Preza-Fontes values
     total_environmental_cost = sprintf("$%.2f", environmental_cost_dollars)
   ) %>%
   arrange(year_order, treatment)
-
+# Only use nitrate for leaching? 
 # Source of variation analysis
 # N2O ANOVA
 combined_n2o_data <- plot_cumulative_n2o %>% mutate(year_factor = as.factor(year))
@@ -2411,6 +2411,7 @@ ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2.png",
 ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2BIG.png",
        figure3_dual_axis, width = 13.3, height = 7.5, dpi = 300, bg = "white")
 ```
+
 # Figure 4: Annual Nitrogen Losses
 
 ```{r figure-annual-loss}
