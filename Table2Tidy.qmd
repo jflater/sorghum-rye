@@ -1,0 +1,246 @@
+---
+title: "Soil Inorganic Nitrogen Analysis"
+author: "Jared Flater"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+  docx:
+    reference-doc: default
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Soil Inorganic Nitrogen Analysis Script
+# Approach: Adaptive Transformation based on Residual Normality
+# Author: Jared Flater
+# Soil Inorganic Nitrogen Analysis Script
+# Approach: Adaptive Transformation based on Residual Normality
+# Author: Agricultural Data Expert
+
+# 1. Setup ----------------------------------------------------------------
+```{r setup, message=FALSE, warning=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  tidyverse,  # Data manipulation
+  rstatix,    # Tidy statistics
+  emmeans,    # Estimated marginal means
+  multcomp,   # CLD generation
+  gt,         # Tables
+  glue,       # String formatting
+  patchwork   # For combining plots
+)
+
+```
+# 2. Load and Preprocess --------------------------------------------------
+# Ensure the file is in the working directory
+```{r}
+data <- read_csv("cleaned_soil_data.csv", show_col_types = FALSE)
+
+clean_data <- data %>%
+  mutate(total_n_ppm = ammonia_ppm + nitrate_ppm) %>%
+  pivot_longer(
+    cols = c(ammonia_ppm, nitrate_ppm, total_n_ppm),
+    names_to = "analyte",
+    values_to = "ppm"
+  ) %>%
+  mutate(
+    analyte = case_when(
+      analyte == "ammonia_ppm" ~ "Ammonium (NH4-N)",
+      analyte == "nitrate_ppm" ~ "Nitrate (NO3-N)",
+      analyte == "total_n_ppm" ~ "Total Inorganic N",
+      TRUE ~ analyte
+    ),
+    treatment = as.factor(treatment)
+  )
+```
+
+# 3. Statistical Analysis Function (Adaptive with Plotting) ---------------
+
+# Initialize PDF device for diagnostic plots
+```{r}
+pdf("transformation_diagnostics.pdf", width = 10, height = 5)
+
+run_stats <- function(df, date_val, analyte_val) {
+  
+  # Step 1: Fit Raw Model
+  # We assume equal variance for standard ANOVA
+  model_raw <- lm(ppm ~ treatment, data = df)
+  
+  # Step 2: Check Normality of RESIDUALS
+  model_resid <- residuals(model_raw)
+  
+  # Run Shapiro-Wilk on residuals
+  shapiro_p <- tryCatch(
+    shapiro.test(model_resid)$p.value,
+    error = function(e) 1.0 
+  )
+  
+  # Step 3: Decide on Transformation
+  use_log <- !is.na(shapiro_p) & shapiro_p < 0.05
+  
+  # --- DIAGNOSTIC PLOTTING SECTION ---
+  if (use_log) {
+    # If we are transforming, generate a before/after plot
+    p1 <- ggplot(df, aes(x = ppm)) +
+      geom_histogram(bins = 10, fill = "#FF9999", color = "black", alpha = 0.7) +
+      labs(
+        title = glue("Raw Data: {date_val}"),
+        subtitle = glue("{analyte_val} (Skewed)"),
+        x = "Concentration (ppm)",
+        y = "Count"
+      ) +
+      theme_minimal()
+    
+    p2 <- ggplot(df, aes(x = log(ppm + 0.1))) +
+      geom_histogram(bins = 10, fill = "#99CCFF", color = "black", alpha = 0.7) +
+      labs(
+        title = "Transformed",
+        subtitle = "Log(x + 0.1)",
+        x = "Log Concentration",
+        y = "Count"
+      ) +
+      theme_minimal()
+    
+    # Combine plots side-by-side using patchwork and print to active PDF device
+    print(p1 + p2)
+  }
+  # -----------------------------------
+  
+  if (use_log) {
+    # Fit Log Model (Offset +0.1 for zeros)
+    model_final <- lm(log(ppm + 0.1) ~ treatment, data = df)
+    trans_note <- "Log-Transformed"
+  } else {
+    # Keep Raw Model
+    model_final <- model_raw
+    trans_note <- "Raw Data"
+  }
+  
+  # Step 4: Run ANOVA on the chosen model
+  anova_res <- anova(model_final)
+  p_val <- anova_res$`Pr(>F)`[1]
+  
+  # Step 5: Post-Hoc (Emmeans)
+  if (!is.na(p_val) && p_val < 0.05) {
+    emm <- emmeans(model_final, ~ treatment)
+    
+    cld_res <- cld(emm, Letters = letters, adjust = "tukey", reversed = TRUE) %>%
+      as_tibble() %>%
+      select(treatment, .group) %>%
+      rename(letter = .group) %>%
+      mutate(letter = trimws(letter))
+  } else {
+    cld_res <- tibble(
+      treatment = unique(df$treatment),
+      letter = "" 
+    )
+  }
+  
+  # Step 6: Get Means 
+  stats_summary <- df %>%
+    group_by(treatment) %>%
+    get_summary_stats(ppm, type = "mean_se") %>%
+    left_join(cld_res, by = "treatment") %>%
+    mutate(
+      shapiro_resid_p = shapiro_p,
+      anova_p = p_val,
+      transformation = trans_note
+    )
+  
+  return(stats_summary)
+}
+
+```
+# 4. Execute Analysis -----------------------------------------------------
+```{r}
+# We use pmap to pass the data AND the labels (date, analyte) to the function
+results <- clean_data %>%
+  group_by(date, analyte) %>%
+  nest() %>%
+  mutate(stats = pmap(list(data, date, analyte), run_stats)) %>%
+  unnest(stats) %>%
+  select(-data)
+
+# Close the PDF device
+dev.off()
+print("Diagnostic plots saved to 'transformation_diagnostics.pdf'")
+
+```
+# 5. Format for Publication -----------------------------------------------
+```{r}
+# Part A: The Means Rows
+means_table <- results %>%
+  mutate(
+    display_value = glue("{sprintf('%.2f', mean)} ± {sprintf('%.2f', se)} {letter}"),
+    display_value = str_trim(display_value)
+  ) %>%
+  select(date, treatment, analyte, display_value) %>%
+  pivot_wider(
+    names_from = analyte,
+    values_from = display_value
+  )
+
+# Part B: The Source of Variation (ANOVA P-values) Rows
+p_values_table <- results %>%
+  distinct(date, analyte, anova_p) %>%
+  mutate(
+    display_value = case_when(
+      anova_p < 0.001 ~ "< 0.001",
+      TRUE ~ sprintf("%.3f", anova_p)
+    ),
+    treatment = "Treatment (Prob > F)" 
+  ) %>%
+  select(date, treatment, analyte, display_value) %>%
+  pivot_wider(
+    names_from = analyte,
+    values_from = display_value
+  )
+
+# Part C: Combine and Order
+final_table_data <- bind_rows(means_table, p_values_table) %>%
+  mutate(sort_order = ifelse(treatment == "Treatment (Prob > F)", 2, 1)) %>%
+  arrange(date, sort_order, treatment) %>%
+  select(-sort_order)
+
+```
+# 6. Generate RTF ---------------------------------------------------------
+
+```{r}
+gt_tbl <- final_table_data %>%
+  group_by(date) %>%
+  gt() %>%
+  cols_label(treatment = "Source / Treatment") %>%
+  tab_header(
+    title = "Soil Inorganic Nitrogen Response",
+    subtitle = "Mean ± SE (ppm). Logic: Residuals tested -> Log-transformed if p < 0.05."
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold", style = "italic"),
+    locations = cells_body(
+      columns = treatment,
+      rows = treatment == "Treatment (Prob > F)"
+    )
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "top", color = "black", weight = px(1)),
+    locations = cells_body(
+      rows = treatment == "Treatment (Prob > F)"
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_options(
+    row_group.background.color = "#E0E0E0",
+    table.font.names = "Times New Roman"
+  )
+
+gtsave(gt_tbl, "soil_nitrogen_adaptive.rtf")
+write_csv(results, "soil_nitrogen_full_stats.csv")
+
+print("Analysis Complete. Added Source of Variation (ANOVA P-values) to the table.")
+```

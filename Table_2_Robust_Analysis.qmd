@@ -76,9 +76,9 @@ soil_data %>%
 
 This function performs a snapshot analysis for each date:
 
-1. Calculates Mean and SE for each treatment within each date
-2. Fits a linear model for each date to compare treatments
-3. Uses `emmeans` and `cld` to generate Tukey's HSD significance letters (alpha = 0.05)
+1.  Calculates Mean and SE for each treatment within each date
+2.  Fits a linear model for each date to compare treatments
+3.  Uses `emmeans` and `cld` to generate Tukey's HSD significance letters (alpha = 0.05)
 
 ```{r statistical-function}
 #| label: statistical-function
@@ -222,7 +222,7 @@ soil_table_data <- soil_with_letters %>%
     nitrate = format_result(nitrate_ppm_mean, nitrate_ppm_se, letter_nitrate),
     total_n = format_result(total_inorganic_n_mean, total_inorganic_n_se, letter_total_n)
   ) %>%
-  select(year, date, treatment, ammonium, nitrate, total_n)
+  dplyr::select(year, date, treatment, ammonium, nitrate, total_n)
 
 # Format dates and years for display
 soil_table_formatted <- soil_table_data %>%
@@ -301,7 +301,7 @@ source_variation <- tibble(
     date_display = "",
     treatment = source
   ) %>%
-  select(year_display, date_display, treatment, ammonium, nitrate, total_n)
+  dplyr::select(year_display, date_display, treatment, ammonium, nitrate, total_n)
 
 cat("Source of variation p-values:\n")
 print(source_variation)
@@ -326,7 +326,7 @@ separator_row <- tibble(
 
 table2_complete <- bind_rows(
   soil_table_formatted %>% 
-    select(year_display, date_display, treatment, ammonium, nitrate, total_n, is_new_date),
+    dplyr::select(year_display, date_display, treatment, ammonium, nitrate, total_n, is_new_date),
   separator_row,
   source_variation %>% mutate(is_new_date = FALSE)
 )
@@ -420,11 +420,11 @@ cat("Table saved to tables/table2_soil_nitrogen_robust.rtf and .png\n")
 
 This analysis provides a more robust approach to significance testing for Table 2:
 
-- **Method**: Uses `emmeans` and `multcomp::cld()` to compute Compact Letter Displays based on Tukey's HSD
-- **Significance level**: α = 0.05
-- **Interpretation**: Treatments sharing the same letter within a date are not significantly different
-- **Advantages over manual p-value cutoffs**:
-  - Proper multiple comparison adjustment
-  - Letters directly indicate which treatments differ
-  - More interpretable for readers
-  - Standard practice in agricultural/biological research
+-   **Method**: Uses `emmeans` and `multcomp::cld()` to compute Compact Letter Displays based on Tukey's HSD
+-   **Significance level**: α = 0.05
+-   **Interpretation**: Treatments sharing the same letter within a date are not significantly different
+-   **Advantages over manual p-value cutoffs**:
+    -   Proper multiple comparison adjustment
+    -   Letters directly indicate which treatments differ
+    -   More interpretable for readers
+    -   Standard practice in agricultural/biological research
