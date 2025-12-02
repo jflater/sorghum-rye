@@ -1413,6 +1413,12 @@ global_temp_limits[2] <- global_temp_limits[2] * 1.12
 moisture_breaks <- pretty(global_moisture_limits, n = 5)
 temp_breaks <- pretty(global_temp_limits, n = 5)
 
+# Star positions - use per-date positioning but within global limits
+moisture_stars <- moist_temp %>%
+  group_by(year, date) %>%
+  summarise(y_star = max(mean_soil_moisture, na.rm = TRUE) * 1.05, .groups = "drop") %>%
+  inner_join(pvals_moist, by = c("year", "date")) %>%
+  filter(is.finite(y_star))
 
 moisture_segments <- moisture_stars %>%
   distinct(year, date) %>%
@@ -1426,6 +1432,11 @@ moisture_segments <- moisture_stars %>%
   ) %>%
   ungroup()
 
+temp_stars <- moist_temp %>%
+  group_by(year, date) %>%
+  summarise(y_star = max(mean_soil_temp, na.rm = TRUE) * 1.05, .groups = "drop") %>%
+  inner_join(pvals_temp, by = c("year", "date")) %>%
+  filter(is.finite(y_star))
 
 temp_segments <- temp_stars %>%
   distinct(year, date) %>%
