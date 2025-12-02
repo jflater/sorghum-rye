@@ -1413,12 +1413,6 @@ global_temp_limits[2] <- global_temp_limits[2] * 1.12
 moisture_breaks <- pretty(global_moisture_limits, n = 5)
 temp_breaks <- pretty(global_temp_limits, n = 5)
 
-# Star positions - use per-date positioning but within global limits
-moisture_stars <- moist_temp %>%
-  group_by(year, date) %>%
-  summarise(y_star = max(mean_soil_moisture, na.rm = TRUE) * 1.05, .groups = "drop") %>%
-  inner_join(pvals_moist, by = c("year", "date")) %>%
-  filter(is.finite(y_star))
 
 moisture_segments <- moisture_stars %>%
   distinct(year, date) %>%
@@ -1426,17 +1420,12 @@ moisture_segments <- moisture_stars %>%
   group_by(year, date) %>%
   slice_max(order_by = mean_soil_moisture, n = 1, with_ties = FALSE) %>%
   mutate(
-    x = date - 0.5,
-    xend = date + 0.5,
+    x = date - 2,
+    xend = date + 2,
     y = 0.5
   ) %>%
   ungroup()
 
-temp_stars <- moist_temp %>%
-  group_by(year, date) %>%
-  summarise(y_star = max(mean_soil_temp, na.rm = TRUE) * 1.05, .groups = "drop") %>%
-  inner_join(pvals_temp, by = c("year", "date")) %>%
-  filter(is.finite(y_star))
 
 temp_segments <- temp_stars %>%
   distinct(year, date) %>%
@@ -1444,8 +1433,8 @@ temp_segments <- temp_stars %>%
   group_by(year, date) %>%
   slice_max(order_by = mean_soil_temp, n = 1, with_ties = FALSE) %>%
   mutate(
-    x = date - 0.5,
-    xend = date + 0.5,
+    x = date - 2,
+    xend = date + 2,
     y = 35 
   ) %>%
   ungroup()
@@ -1463,7 +1452,7 @@ p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Trea
     x = "2023",
     y = "Soil Moisture (m³/m³)"
   ) +
-  geom_hline(yintercept = 0.5, color = "grey75", linewidth = 7) +
+  geom_hline(yintercept = 0.5, color = "grey90", linewidth = 7) +
   geom_segment(
     data = moisture_segments %>% filter(year == 2023),
     aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
@@ -1488,7 +1477,7 @@ p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Trea
     x = "2024",
     y = ""
   ) +
-  geom_hline(yintercept = 0.5, color = "grey75", linewidth = 7) +
+  geom_hline(yintercept = 0.5, color = "grey90", linewidth = 7) +
   geom_segment(
     data = moisture_segments %>% filter(year == 2024),
     aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
@@ -1515,7 +1504,7 @@ p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatmen
     x = "",
     y = "Soil Temperature (°C)"
   ) +
-  geom_hline(yintercept = 35, color = "grey75", linewidth = 7) +
+  geom_hline(yintercept = 35, color = "grey90", linewidth = 7) +
   geom_segment(
     data = temp_segments %>% filter(year == 2023),
     aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
@@ -1543,7 +1532,7 @@ p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatmen
     x = "",
     y = ""
   ) +
-  geom_hline(yintercept = 35, color = "grey75", linewidth = 7) +
+  geom_hline(yintercept = 35, color = "grey90", linewidth = 7) +
   geom_segment(
     data = temp_segments %>% filter(year == 2024),
     aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
@@ -1571,7 +1560,7 @@ soil_4panel <- (p3 | p4) / (p1 | p2) +
     legend.margin        = margin(b = 4)
   )
 soil_4panel
-ggsave("figures/figure2_soil_moisture_temperature.png", soil_4panel, width = 6.5, height = 8, dpi = 300, bg = "white")
+ggsave("figures/figure2_soil_moisture_temperature.png", soil_4panel, width = 174, height = 174, dpi = 600, bg = "white", units = "mm")
 
 six_panel_plot <-
   (pdplot) +
@@ -1584,7 +1573,7 @@ six_panel_plot <-
     legend.margin        = margin(b = 4)
   )
 
-ggsave("figures/figure1_weather.png", six_panel_plot, width = 6.5, height = 8, dpi = 300, bg = "white")
+ggsave("figures/figure1_weather.png", six_panel_plot, width = 174, height = 174, dpi = 600, bg = "white", units = "mm")
 six_panel_plot
 
 ```
