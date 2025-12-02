@@ -37,6 +37,7 @@ library(emmeans)
 library(multcomp)
 library(multcompView)
 library(janitor)
+library(broom)
 
 # Re-establish dplyr preferences after loading packages
 if (requireNamespace("conflicted", quietly = TRUE)) {
@@ -83,9 +84,8 @@ This function performs a snapshot analysis for each date:
 #| label: statistical-function
 
 compute_tukey_letters <- function(data, variable, group_vars) {
-  # This function computes Tukey HSD letters for a given variable
-
-  # within each combination of grouping variables (e.g., year, date)
+  # Computes Tukey HSD letters for a given variable within each combination
+  # of grouping variables (e.g., year, date)
   
   data %>%
     group_by(across(all_of(group_vars))) %>%
@@ -104,8 +104,8 @@ compute_tukey_letters <- function(data, variable, group_vars) {
         return(tibble(treatment = names(trt_counts), letter = "a"))
       }
       
-      # Fit linear model
-      fml <- as.formula(paste(variable, "~ treatment"))
+      # Fit linear model using reformulate for safer formula construction
+      fml <- reformulate("treatment", response = variable)
       fit <- tryCatch(
         lm(fml, data = df),
         error = function(e) NULL
@@ -134,7 +134,9 @@ compute_tukey_letters <- function(data, variable, group_vars) {
             letter = gsub("\\s+", "", .group)
           ) %>%
           mutate(
-            # If numbers slipped through, map them to letters
+            # Note: multcomp::cld() can sometimes return numeric group identifiers
+            # instead of letters depending on the version. This handles both cases
+            # by mapping numbers to letters (1->a, 2->b, etc.)
             letter = ifelse(grepl("[0-9]", letter), 
                            chartr("123456789", "abcdefghi", letter), 
                            letter),
@@ -250,32 +252,31 @@ Compute global ANOVA p-values for Date, Treatment, and Date × Treatment interac
 # Using date as factor for the interaction analysis
 aov_data <- soil_data %>%
   mutate(
-    date_factor = as.factor(date),
-    year_factor = as.factor(year)
+    date_factor = as.factor(date)
   )
 
 aov_ammonium <- aov(ammonia_ppm ~ date_factor * treatment, data = aov_data)
 aov_nitrate <- aov(nitrate_ppm ~ date_factor * treatment, data = aov_data)
 aov_total_n <- aov(total_inorganic_n ~ date_factor * treatment, data = aov_data)
 
-# Extract p-values from ANOVA summaries
+# Extract p-values from ANOVA summaries using broom::tidy for robustness
 extract_pvals <- function(aov_model) {
-  summary_aov <- summary(aov_model)[[1]]
-  # Get row names to find correct indices
-  row_names <- rownames(summary_aov)
+  # Use broom::tidy for safer extraction of ANOVA results
+  tidy_aov <- broom::tidy(aov_model)
   
-  # Find indices for date, treatment, and interaction
-  date_idx <- grep("date_factor", row_names)[1]
-  trt_idx <- grep("^treatment$", row_names)
-  int_idx <- grep(":", row_names)[1]
+  # Extract p-values by term name with fallback to NA if not found
+  get_pval <- function(term_pattern) {
+    row <- tidy_aov[grep(term_pattern, tidy_aov$term), ]
+    if (nrow(row) > 0) row$p.value[1] else NA_real_
+  }
   
   pvals <- c(
-    Date = summary_aov[date_idx, "Pr(>F)"],
-    Treatment = summary_aov[trt_idx, "Pr(>F)"],
-    `Date × Treatment` = summary_aov[int_idx, "Pr(>F)"]
+    Date = get_pval("date_factor"),
+    Treatment = get_pval("^treatment$"),
+    `Date × Treatment` = get_pval(":")
   )
   
-  return(pvals)
+  pvals
 }
 
 # Format p-values for display
