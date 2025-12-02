@@ -22,6 +22,7 @@ execute:
 # Setup and Data Loading
 
 ```{r setup}
+#| label: setup
 #| message: false
 #| warning: false
 
@@ -75,12 +76,12 @@ scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
 # Data Import and Processing
 
 ```{r data-import}
+#| label: data-import
 #| message: false
 
 # Import soil nitrogen data
 # Nitrate and ammonia in ppm, not sure if moisture corrected
 soil_data <- read_csv("data/soils/cleaned_soil_data.csv") %>%
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
   mutate(
     date = as.Date(date),
     total_inorganic_n = ammonia_ppm + nitrate_ppm
@@ -135,7 +136,70 @@ rain <- rain %>%
 ```
 
 # Helper Functions
+# Stats
+```{r}
+library(dplyr)
+library(rstatix)
 
+check_normality <- function(data, variable, group_vars) {
+  data %>%
+    group_by(across(all_of(group_vars))) %>%
+    group_modify(~ {
+      df <- .x %>% drop_na({{ variable }})
+      # Shapiro per treatment
+      by_trt <- df %>%
+        group_by(treatment) %>%
+        shapiro_test(as.formula(paste(variable, "~ 1"))) %>%
+        transmute(scope = "by_treatment", treatment, p = p, method = "Shapiro-Wilk")
+      # Shapiro on residuals from pooled model (tighter to testing assumption)
+      resid_test <- df %>%
+        lm(as.formula(paste(variable, "~ treatment"))) %>%
+        rstatix::augment() %>%
+        shapiro_test(.resid) %>%
+        transmute(scope = "residuals", treatment = NA_character_, p = p, method = "Shapiro-Wilk")
+      bind_rows(by_trt, resid_test)
+    }) %>%
+    ungroup()
+}
+
+compare_soil_inorgN <- function(data, variable, group_vars) {
+  data %>%
+    group_by(across(all_of(group_vars))) %>%
+    group_modify(~ {
+      df <- .x %>% drop_na({{ variable }})
+      trt <- sort(unique(df$treatment))
+      if (length(trt) < 2 || any(table(df$treatment) < 2)) {
+        return(tibble(test = "omnibus", trt1 = NA_character_, trt2 = NA_character_,
+                      p = NA_real_, p_raw = NA_real_, method = "insufficient reps"))
+      }
+
+      if (length(trt) == 2) {
+        pw <- df %>%
+          t_test(as.formula(paste(variable, "~ treatment")), var.equal = FALSE) %>%
+          adjust_pvalue(method = "holm") %>%
+          add_significance() %>%
+          transmute(test = "pairwise", trt1 = group1, trt2 = group2,
+                    p = p.adj, p_raw = p, method = "Welch t (Holm)")
+        return(pw)
+      } else {
+        omni <- df %>%
+          welch_anova_test(as.formula(paste(variable, "~ treatment"))) %>%
+          transmute(test = "omnibus", trt1 = NA_character_, trt2 = NA_character_,
+                    p = p, p_raw = p, method = "Welch ANOVA")
+
+        pw <- df %>%
+          pairwise_t_test(as.formula(paste(variable, "~ treatment")),
+                          p.adjust.method = "holm", pool.sd = FALSE) %>%
+          add_significance() %>%
+          transmute(test = "pairwise", trt1 = group1, trt2 = group2,
+                    p = p.adj, p_raw = p, method = "Welch t (Holm)")
+
+        return(bind_rows(omni, pw))
+      }
+    }) %>%
+    ungroup()
+}
+```
 ```{r helper-functions}
 # Function for pairwise t-tests within groups
 #| label: get-pvals
@@ -160,6 +224,9 @@ get_pairwise_pvals <- function(data, variable, group_vars) {
     }) %>%
     ungroup()
 }
+
+
+
 
 # Function to add significance letters
 add_significance_letters <- function(data, p_col) {
@@ -227,6 +294,14 @@ soil_summary <- soil_data %>%
 pvals_ammonium <- get_pairwise_pvals(soil_data, "ammonia_ppm", c("year", "date"))
 pvals_nitrate <- get_pairwise_pvals(soil_data, "nitrate_ppm", c("year", "date"))  
 pvals_total_n <- get_pairwise_pvals(soil_data, "total_inorganic_n", c("year", "date"))
+
+
+check_normality(soil_data, "nitrate_ppm", c("year", "date"))
+
+
+compare_soil_inorgN(soil_data, "nitrate_ppm", c("year", "date"))
+
+
 
 # Combine with p-values and format
 soil_table_data <- soil_summary %>%
