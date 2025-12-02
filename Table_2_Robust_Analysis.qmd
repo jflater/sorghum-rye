@@ -1,0 +1,429 @@
+---
+title: "Table 2: Salt-extractable Inorganic Nitrogen (Robust Analysis)"
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-overflow: wrap
+    fig-width: 10
+    fig-height: 6
+    embed-resources: true
+    theme: default
+execute:
+  echo: true
+  warning: false
+  message: false
+  error: false
+  cache: false
+---
+
+# Overview
+
+This document implements a robust statistical analysis for Table 2 (Salt-extractable inorganic nitrogen). Instead of using manual p-value cutoffs for significance letters, this analysis uses proper Tukey's HSD post-hoc comparisons via `emmeans` and `cld` (Compact Letter Display).
+
+# Setup and Libraries
+
+```{r setup}
+#| label: setup
+#| message: false
+#| warning: false
+
+# Load required packages
+library(tidyverse)
+library(lubridate)
+library(gt)
+library(emmeans)
+library(multcomp)
+library(multcompView)
+library(janitor)
+
+# Re-establish dplyr preferences after loading packages
+if (requireNamespace("conflicted", quietly = TRUE)) {
+  library(conflicted)
+  conflicts_prefer(dplyr::select)
+  conflicts_prefer(dplyr::filter)
+  conflicts_prefer(dplyr::summarise)
+}
+```
+
+# Data Loading
+
+```{r data-loading}
+#| label: data-loading
+
+# Load the soil data
+soil_data <- read_csv("data/soils/cleaned_soil_data.csv") %>%
+  mutate(
+    date = as.Date(date),
+    total_inorganic_n = ammonia_ppm + nitrate_ppm
+  )
+
+# Display data summary
+cat("Data loaded successfully.\n")
+cat("Number of observations:", nrow(soil_data), "\n")
+cat("Years:", paste(sort(unique(soil_data$year)), collapse = ", "), "\n")
+cat("Treatments:", paste(sort(unique(soil_data$treatment)), collapse = ", "), "\n")
+cat("Dates per year:\n")
+soil_data %>%
+  group_by(year) %>%
+  summarise(dates = paste(unique(date), collapse = ", "), .groups = "drop") %>%
+  print()
+```
+
+# Statistical Analysis Function
+
+This function performs a snapshot analysis for each date:
+
+1. Calculates Mean and SE for each treatment within each date
+2. Fits a linear model for each date to compare treatments
+3. Uses `emmeans` and `cld` to generate Tukey's HSD significance letters (alpha = 0.05)
+
+```{r statistical-function}
+#| label: statistical-function
+
+compute_tukey_letters <- function(data, variable, group_vars) {
+  # This function computes Tukey HSD letters for a given variable
+
+  # within each combination of grouping variables (e.g., year, date)
+  
+  data %>%
+    group_by(across(all_of(group_vars))) %>%
+    group_modify(~ {
+      df <- .x %>% drop_na({{ variable }})
+      treatments <- sort(unique(df$treatment))
+      
+      # Need at least 2 treatments and 2 reps per treatment for comparison
+      if (length(treatments) < 2) {
+        return(tibble(treatment = treatments, letter = "a"))
+      }
+      
+      # Check if we have sufficient replication
+      trt_counts <- table(df$treatment)
+      if (any(trt_counts < 2)) {
+        return(tibble(treatment = names(trt_counts), letter = "a"))
+      }
+      
+      # Fit linear model
+      fml <- as.formula(paste(variable, "~ treatment"))
+      fit <- tryCatch(
+        lm(fml, data = df),
+        error = function(e) NULL
+      )
+      
+      if (is.null(fit)) {
+        return(tibble(treatment = treatments, letter = "a"))
+      }
+      
+      # Get estimated marginal means
+      emm <- tryCatch(
+        emmeans::emmeans(fit, ~ treatment),
+        error = function(e) NULL
+      )
+      
+      if (is.null(emm)) {
+        return(tibble(treatment = treatments, letter = "a"))
+      }
+      
+      # Compute compact letter display using Tukey's HSD
+      cld_result <- tryCatch(
+        multcomp::cld(emm, adjust = "tukey", Letters = letters, alpha = 0.05) %>%
+          as_tibble() %>%
+          transmute(
+            treatment = treatment,
+            letter = gsub("\\s+", "", .group)
+          ) %>%
+          mutate(
+            # If numbers slipped through, map them to letters
+            letter = ifelse(grepl("[0-9]", letter), 
+                           chartr("123456789", "abcdefghi", letter), 
+                           letter),
+            letter = ifelse(letter == "" | is.na(letter), "a", letter)
+          ),
+        error = function(e) tibble(treatment = treatments, letter = "a")
+      )
+      
+      cld_result
+    }) %>%
+    ungroup()
+}
+
+# Function to calculate summary statistics
+calculate_summary_stats <- function(data, variables, group_vars) {
+  data %>%
+    group_by(across(all_of(c(group_vars, "treatment")))) %>%
+    summarise(
+      across(
+        all_of(variables),
+        list(
+          mean = ~ mean(.x, na.rm = TRUE),
+          se = ~ sd(.x, na.rm = TRUE) / sqrt(sum(!is.na(.x)))
+        ),
+        .names = "{.col}_{.fn}"
+      ),
+      .groups = "drop"
+    )
+}
+```
+
+# Calculate Summary Statistics and Tukey Letters
+
+```{r calculate-stats}
+#| label: calculate-stats
+
+# Variables to analyze
+variables <- c("ammonia_ppm", "nitrate_ppm", "total_inorganic_n")
+group_vars <- c("year", "date")
+
+# Calculate summary statistics
+soil_summary <- calculate_summary_stats(
+  soil_data, 
+  variables, 
+  group_vars
+)
+
+# Get Tukey letters for each variable
+letters_ammonia <- compute_tukey_letters(soil_data, "ammonia_ppm", group_vars) %>%
+  rename(letter_ammonia = letter)
+
+letters_nitrate <- compute_tukey_letters(soil_data, "nitrate_ppm", group_vars) %>%
+  rename(letter_nitrate = letter)
+  
+letters_total_n <- compute_tukey_letters(soil_data, "total_inorganic_n", group_vars) %>%
+  rename(letter_total_n = letter)
+
+# Join letters to summary statistics
+soil_with_letters <- soil_summary %>%
+  left_join(letters_ammonia, by = c("year", "date", "treatment")) %>%
+  left_join(letters_nitrate, by = c("year", "date", "treatment")) %>%
+  left_join(letters_total_n, by = c("year", "date", "treatment"))
+
+# Display intermediate result
+cat("Summary statistics with Tukey letters calculated.\n")
+print(head(soil_with_letters))
+```
+
+# Format Table Data
+
+```{r format-table}
+#| label: format-table
+
+# Format results as "Mean ± SE Letter"
+format_result <- function(mean_val, se_val, letter) {
+  sprintf("%.2f ± %.2f %s", mean_val, se_val, letter)
+}
+
+# Create formatted table data
+soil_table_data <- soil_with_letters %>%
+  mutate(
+    ammonium = format_result(ammonia_ppm_mean, ammonia_ppm_se, letter_ammonia),
+    nitrate = format_result(nitrate_ppm_mean, nitrate_ppm_se, letter_nitrate),
+    total_n = format_result(total_inorganic_n_mean, total_inorganic_n_se, letter_total_n)
+  ) %>%
+  select(year, date, treatment, ammonium, nitrate, total_n)
+
+# Format dates and years for display
+soil_table_formatted <- soil_table_data %>%
+  mutate(
+    year = as.character(year),
+    date_display = format(as.Date(date), "%B %d")
+  ) %>%
+  arrange(year, date, treatment) %>%
+  group_by(year) %>%
+  mutate(
+    year_display = if_else(row_number() == 1, year, ""),
+    is_new_date = date != lag(date, default = as.Date("1900-01-01"))
+  ) %>%
+  ungroup()
+
+cat("Table data formatted.\n")
+```
+
+# Source of Variation Analysis
+
+Compute global ANOVA p-values for Date, Treatment, and Date × Treatment interaction.
+
+```{r source-variation}
+#| label: source-variation
+
+# Fit ANOVA models for each variable
+# Using date as factor for the interaction analysis
+aov_data <- soil_data %>%
+  mutate(
+    date_factor = as.factor(date),
+    year_factor = as.factor(year)
+  )
+
+aov_ammonium <- aov(ammonia_ppm ~ date_factor * treatment, data = aov_data)
+aov_nitrate <- aov(nitrate_ppm ~ date_factor * treatment, data = aov_data)
+aov_total_n <- aov(total_inorganic_n ~ date_factor * treatment, data = aov_data)
+
+# Extract p-values from ANOVA summaries
+extract_pvals <- function(aov_model) {
+  summary_aov <- summary(aov_model)[[1]]
+  # Get row names to find correct indices
+  row_names <- rownames(summary_aov)
+  
+  # Find indices for date, treatment, and interaction
+  date_idx <- grep("date_factor", row_names)[1]
+  trt_idx <- grep("^treatment$", row_names)
+  int_idx <- grep(":", row_names)[1]
+  
+  pvals <- c(
+    Date = summary_aov[date_idx, "Pr(>F)"],
+    Treatment = summary_aov[trt_idx, "Pr(>F)"],
+    `Date × Treatment` = summary_aov[int_idx, "Pr(>F)"]
+  )
+  
+  return(pvals)
+}
+
+# Format p-values for display
+format_pval <- function(p) {
+  case_when(
+    is.na(p) ~ "NA",
+    p < 0.001 ~ "< 0.001",
+    p < 0.01 ~ sprintf("%.3f", p),
+    TRUE ~ sprintf("%.2f", p)
+  )
+}
+
+# Create source of variation table
+source_variation <- tibble(
+  source = c("Date", "Treatment", "Date × Treatment")
+) %>%
+  mutate(
+    ammonium = format_pval(extract_pvals(aov_ammonium)[source]),
+    nitrate = format_pval(extract_pvals(aov_nitrate)[source]),
+    total_n = format_pval(extract_pvals(aov_total_n)[source]),
+    year_display = "",
+    date_display = "",
+    treatment = source
+  ) %>%
+  select(year_display, date_display, treatment, ammonium, nitrate, total_n)
+
+cat("Source of variation p-values:\n")
+print(source_variation)
+```
+
+# Create Publication-Ready Table
+
+```{r create-table}
+#| label: tbl-soil-nitrogen-robust
+#| tbl-cap: "Salt-extractable inorganic nitrogen (Robust Analysis)"
+
+# Combine data with source of variation
+separator_row <- tibble(
+  year_display = "Source of Variation",
+  date_display = "",
+  treatment = "",
+  ammonium = "",
+  nitrate = "",
+  total_n = "",
+  is_new_date = FALSE
+)
+
+table2_complete <- bind_rows(
+  soil_table_formatted %>% 
+    select(year_display, date_display, treatment, ammonium, nitrate, total_n, is_new_date),
+  separator_row,
+  source_variation %>% mutate(is_new_date = FALSE)
+)
+
+# Create gt table
+table2_gt <- table2_complete %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table 2. Salt-extractable inorganic nitrogen**"),
+    subtitle = md("*Robust statistical analysis using Tukey's HSD*")
+  ) %>%
+  cols_label(
+    year_display = "Year",
+    date_display = "Date",
+    treatment = "Treatment",
+    ammonium = md("Ammonium<br>(mg kg<sup>-1</sup>)"),
+    nitrate = md("Nitrate<br>(mg kg<sup>-1</sup>)"),
+    total_n = md("Total Inorganic N<br>(mg kg<sup>-1</sup>)")
+  ) %>%
+  # Style for new date rows
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_date == TRUE)
+  ) %>%
+  # Style for Source of Variation separator
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = year_display == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = year_display == "Source of Variation")
+  ) %>%
+  tab_style(
+    style = cell_text(align = "center", weight = "bold"),
+    locations = cells_body(
+      columns = year_display, 
+      rows = year_display == "Source of Variation"
+    )
+  ) %>%
+  # Hide helper column
+  cols_hide(columns = is_new_date) %>%
+  # Add footnote explaining statistics
+  tab_footnote(
+    footnote = md("Values are Mean ± SE. Letters indicate Tukey's HSD significance groups (α = 0.05); treatments sharing a letter within a date are not significantly different. Source of variation shows ANOVA p-values."),
+    locations = cells_title()
+  ) %>%
+  # Column alignment
+  cols_align(
+    align = "center",
+    columns = c(ammonium, nitrate, total_n)
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = c(year_display, date_display, treatment)
+  ) %>%
+  # Table options
+  tab_options(
+    table.font.size = px(12),
+    heading.title.font.size = px(14),
+    heading.subtitle.font.size = px(11),
+    data_row.padding = px(4),
+    column_labels.padding = px(6)
+  )
+
+# Display table
+table2_gt
+```
+
+# Save Table Outputs
+
+```{r save-outputs}
+#| label: save-outputs
+#| eval: false
+
+# Create tables directory if it doesn't exist
+if (!dir.exists("tables")) {
+  dir.create("tables")
+}
+
+# Save as RTF
+gtsave(table2_gt, "tables/table2_soil_nitrogen_robust.rtf")
+
+# Save as PNG
+gtsave(table2_gt, "tables/table2_soil_nitrogen_robust.png")
+
+cat("Table saved to tables/table2_soil_nitrogen_robust.rtf and .png\n")
+```
+
+# Summary
+
+This analysis provides a more robust approach to significance testing for Table 2:
+
+- **Method**: Uses `emmeans` and `multcomp::cld()` to compute Compact Letter Displays based on Tukey's HSD
+- **Significance level**: α = 0.05
+- **Interpretation**: Treatments sharing the same letter within a date are not significantly different
+- **Advantages over manual p-value cutoffs**:
+  - Proper multiple comparison adjustment
+  - Letters directly indicate which treatments differ
+  - More interpretable for readers
+  - Standard practice in agricultural/biological research
