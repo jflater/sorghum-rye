@@ -3,30 +3,29 @@ library(tidyverse)
 library(janitor)
 # Read in the two soil data files
 # pH and GWC might be hidden in other sheets
-soil_2023 <- read_xlsx("data/soils/2023_SABR_MASTER_soil.xlsx")
-soil_2024 <- read_xlsx("data/soils/2024_SABR_MASTER_soil.xlsx")
+soil_2023 <- read_xlsx("data/soils/2023_SABR_MASTER_soil.xlsx") %>%
+  clean_names()
+soil_2024 <- read_xlsx("data/soils/2024_SABR_MASTER_soil.xlsx") %>%
+  clean_names()
 
 # 23 pH and GWC
 gwc <- read_xlsx("data/soils/2023_SABR_MASTER_soil.xlsx", sheet = "GWC") %>%
   clean_names()
 
+# Join gwc to soil_2023
+soil_2023 <- soil_2023 %>%
+  left_join(
+    gwc,
+    by = c("project_sampling", "plot_id")
+  )
+
 soil_2023 <- soil_2023 %>%
   select(-contains("...")) %>%
   filter(
-    str_detect(`Project/sampling`, str_c("12-2023|Spring 2023")) &
-      !str_detect(`Plot ID`, str_c("NE|SE|SW|NW"))
+    str_detect(project_sampling, str_c("12-2023|Spring 2023")) &
+      !str_detect(plot_id, str_c("NE|SE|SW|NW"))
   ) %>%
-  rename(
-    plot = `Plot ID`,
-    nitrate_ppm = `Nitrate-ppm`,
-    ammonia_ppm = `Ammonia-ppm`
-  ) %>%
-  mutate(plot = str_pad(plot, width = 2, side = "left", pad = "0")) %>%
-  left_join(
-    gwc %>%
-      select(plot = plot_id, ph, gwc_percent),
-    by = "plot"
-  )
+  mutate(plot = str_pad(plot_id, width = 2, side = "left", pad = "0"))
 
 soil_2024 <- soil_2024 %>%
   filter(
@@ -43,9 +42,11 @@ soil_2024 <- soil_2024 %>%
     plot = str_pad(plot, width = 2, side = "left", pad = "0"),
     date = lubridate::ymd(date), # Use mdy() for MM/DD/YYYY or similar formats
     ammonia_ppm = as.numeric(ammonia_ppm),
-    nitrate_ppm = as.numeric(nitrate_ppm)
+    nitrate_ppm = as.numeric(nitrate_ppm),
+    gwc_g_g = as.numeric(gwc_g_g),
+    extraction_wt_g = as.numeric(extraction_wght)
   ) %>%
-  select(date, plot, ammonia_ppm, nitrate_ppm)
+  select(date, plot, ammonia_ppm, nitrate_ppm, gwc_g_g, extraction_wt_g)
 
 # Soil collection dates
 # There is a September date that need processed
@@ -56,13 +57,15 @@ date_spring_2023 <- as.Date("2023-05-18")
 soil_2023 <- soil_2023 %>%
   mutate(
     date = case_when(
-      str_detect(`Project/sampling`, "12-2023") ~ date_12_2023,
-      str_detect(`Project/sampling`, "Spring 2023") ~ date_spring_2023
+      str_detect(project_sampling, "12-2023") ~ date_12_2023,
+      str_detect(project_sampling, "Spring 2023") ~ date_spring_2023
     ),
     ammonia_ppm = as.numeric(ammonia_ppm),
-    nitrate_ppm = as.numeric(nitrate_ppm)
+    nitrate_ppm = as.numeric(nitrate_ppm),
+    gwc_g_g = as.numeric(gwc_g_g),
+    extraction_wt_g = as.numeric(extraction_wt_g)
   ) %>%
-  select(date, plot, ammonia_ppm, nitrate_ppm)
+  select(date, plot, ammonia_ppm, nitrate_ppm, gwc_g_g, extraction_wt_g)
 
 # Compare df columns
 compare_df_cols(soil_2023, soil_2024)
@@ -96,5 +99,37 @@ df <- soil_combined %>%
   ) %>%
   left_join(trt_year, by = c("plot", "year"))
 
+df <- soil_combined %>%
+  mutate(
+    year = year(date),
+    gwc_g_g = as.numeric(gwc_g_g) # Add this line
+  ) %>%
+  left_join(trt_year, by = c("plot", "year"))
+
+# a function to calculate conc in mg/kg of dry soil
+df <- df %>%
+  mutate(
+    ammonia_mg_per_kg = (ammonia_ppm * .025) / ((extraction_wt_g - (extraction_wt_g * gwc_g_g)) / 1000),
+    nitrate_ppm_kg = (nitrate_ppm * .025) / ((extraction_wt_g - (extraction_wt_g * gwc_g_g)) / 1000)
+  )
+
 # Write cleaned soil data to CSV
 write_csv(df, "data/soils/cleaned_soil_data.csv")
+
+# A boxplot of gwc_g_g by plot (combining all dates)
+ggplot(df, aes(x = as.factor(plot), y = gwc_g_g)) +
+  geom_boxplot() +
+  labs(
+    x = "Plot",
+    y = "Gravimetric Water Content (g/g)"
+  ) +
+  theme_minimal()
+
+ggplot(df, aes(x = as.factor(plot), y = gwc_g_g)) +
+  geom_boxplot() +
+  labs(
+    x = "Plot",
+    y = "Gravimetric Water Content (g/g)"
+  ) +
+  theme_minimal() +
+  facet_wrap(~year)
