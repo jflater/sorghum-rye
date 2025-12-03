@@ -6,6 +6,10 @@ library(janitor)
 soil_2023 <- read_xlsx("data/soils/2023_SABR_MASTER_soil.xlsx")
 soil_2024 <- read_xlsx("data/soils/2024_SABR_MASTER_soil.xlsx")
 
+# 23 pH and GWC
+gwc <- read_xlsx("data/soils/2023_SABR_MASTER_soil.xlsx", sheet = "GWC") %>%
+  clean_names()
+
 soil_2023 <- soil_2023 %>%
   select(-contains("...")) %>%
   filter(
@@ -17,7 +21,12 @@ soil_2023 <- soil_2023 %>%
     nitrate_ppm = `Nitrate-ppm`,
     ammonia_ppm = `Ammonia-ppm`
   ) %>%
-  mutate(plot = str_pad(plot, width = 2, side = "left", pad = "0"))
+  mutate(plot = str_pad(plot, width = 2, side = "left", pad = "0")) %>%
+  left_join(
+    gwc %>%
+      select(plot = plot_id, ph, gwc_percent),
+    by = "plot"
+  )
 
 soil_2024 <- soil_2024 %>%
   filter(
