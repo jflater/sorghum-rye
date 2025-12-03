@@ -6,16 +6,16 @@
 # 1. Setup ----------------------------------------------------------------
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(
-  tidyverse,      # Data manipulation
-  rstatix,        # Tidy statistics (includes dunn_test)
-  multcompView,   # For generating letters from pairwise p-values
-  gt,             # Tables
-  glue            # String formatting
+  tidyverse, # Data manipulation
+  rstatix, # Tidy statistics (includes dunn_test)
+  multcompView, # For generating letters from pairwise p-values
+  gt, # Tables
+  glue # String formatting
 )
 
 # 2. Load and Preprocess --------------------------------------------------
-data <- read_csv("cleaned_soil_data.csv", show_col_types = FALSE)
-
+data <- read_csv("data/soils/cleaned_soil_data.csv", show_col_types = FALSE)
+colnames(data)
 clean_data <- data %>%
   mutate(total_n_ppm = ammonia_ppm + nitrate_ppm) %>%
   pivot_longer(
@@ -37,25 +37,24 @@ clean_data <- data %>%
 # 3. Statistical Analysis Function (Kruskal-Wallis) -----------------------
 
 run_stats_kw <- function(df) {
-  
   # A. Global Test: Kruskal-Wallis
   kw_res <- kruskal_test(df, ppm ~ treatment)
   p_val <- kw_res$p
-  
+
   # B. Post-Hoc: Dunn's Test
   letters_df <- tibble(treatment = unique(df$treatment), letter = "a")
-  
+
   if (!is.na(p_val) && p_val < 0.05) {
     dunn_res <- dunn_test(df, ppm ~ treatment, p.adjust.method = "holm")
-    
+
     dunn_res <- dunn_res %>%
       mutate(pair_name = paste(group1, group2, sep = "-"))
-    
+
     p_vec <- setNames(dunn_res$p.adj, dunn_res$pair_name)
-    
+
     # Generate letters (Compact Letter Display)
     letters_list <- multcompLetters(p_vec, threshold = 0.05)
-    
+
     letters_df <- tibble(
       treatment = names(letters_list$Letters),
       letter = letters_list$Letters
@@ -63,21 +62,21 @@ run_stats_kw <- function(df) {
   } else {
     letters_df <- tibble(
       treatment = unique(df$treatment),
-      letter = "" 
+      letter = ""
     )
   }
-  
+
   # D. Summary Stats (Mean, SE, Variance)
   # We use type="common" to get variance (var) along with mean/se
   stats_summary <- df %>%
     group_by(treatment) %>%
-    get_summary_stats(ppm, type = "common") %>% 
+    get_summary_stats(ppm, type = "common") %>%
     left_join(letters_df, by = "treatment") %>%
     mutate(
       kruskal_p = p_val,
       test_method = "Kruskal-Wallis"
     )
-  
+
   return(stats_summary)
 }
 
@@ -128,7 +127,7 @@ p_values_table <- results_combined %>%
       kruskal_p < 0.001 ~ "< 0.001",
       TRUE ~ sprintf("%.3f", kruskal_p)
     ),
-    treatment = "Source: Treatment (P-value)" 
+    treatment = "Source: Treatment (P-value)"
   ) %>%
   select(group_type, date, treatment, analyte, display_value) %>%
   pivot_wider(
