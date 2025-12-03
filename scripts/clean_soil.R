@@ -105,6 +105,19 @@ df <- soil_combined %>%
     gwc_g_g = as.numeric(gwc_g_g) # Add this line
   ) %>%
   left_join(trt_year, by = c("plot", "year"))
+glimpse(df)
+
+# replace missing gwc values with mean
+df <- df %>%
+  group_by(plot) %>%
+  mutate(
+    gwc_g_g = ifelse(
+      is.na(gwc_g_g),
+      mean(gwc_g_g, na.rm = TRUE),
+      gwc_g_g
+    )
+  ) %>%
+  ungroup()
 
 # a function to calculate conc in mg/kg of dry soil
 df <- df %>%
