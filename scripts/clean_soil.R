@@ -123,7 +123,7 @@ df <- df %>%
 df <- df %>%
   mutate(
     ammonia_mg_per_kg = (ammonia_ppm * .025) / ((extraction_wt_g - (extraction_wt_g * gwc_g_g)) / 1000),
-    nitrate_ppm_kg = (nitrate_ppm * .025) / ((extraction_wt_g - (extraction_wt_g * gwc_g_g)) / 1000)
+    nitrate_mg_per_kg = (nitrate_ppm * .025) / ((extraction_wt_g - (extraction_wt_g * gwc_g_g)) / 1000)
   )
 
 # Write cleaned soil data to CSV
