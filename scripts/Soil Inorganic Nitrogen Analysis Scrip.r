@@ -10,24 +10,25 @@ pacman::p_load(
   rstatix, # Tidy statistics (includes dunn_test)
   multcompView, # For generating letters from pairwise p-values
   gt, # Tables
-  glue # String formatting
+  glue, # String formatting
+  janitor # Data cleaning
 )
 
 # 2. Load and Preprocess --------------------------------------------------
 data <- read_csv("data/soils/cleaned_soil_data.csv", show_col_types = FALSE)
 colnames(data)
 clean_data <- data %>%
-  mutate(total_n_ppm = ammonia_ppm + nitrate_ppm) %>%
+  mutate(total_n_mg_per_kg = ammonia_mg_per_kg + nitrate_mg_per_kg) %>%
   pivot_longer(
-    cols = c(ammonia_ppm, nitrate_ppm, total_n_ppm),
+    cols = c(ammonia_mg_per_kg, nitrate_mg_per_kg, total_n_mg_per_kg),
     names_to = "analyte",
-    values_to = "ppm"
+    values_to = "ppm" # it's actually mg/kg
   ) %>%
   mutate(
     analyte = case_when(
-      analyte == "ammonia_ppm" ~ "Ammonium (NH4-N)",
-      analyte == "nitrate_ppm" ~ "Nitrate (NO3-N)",
-      analyte == "total_n_ppm" ~ "Total Inorganic N",
+      analyte == "ammonia_mg_per_kg" ~ "Ammonium (NH4-N)",
+      analyte == "nitrate_mg_per_kg" ~ "Nitrate (NO3-N)",
+      analyte == "total_n_mg_per_kg" ~ "Total Inorganic N",
       TRUE ~ analyte
     ),
     treatment = as.factor(treatment),
@@ -101,8 +102,10 @@ results_year <- clean_data %>%
   rename(date = year) %>% # Rename year to date column to stack them
   mutate(group_type = "By Year")
 
+compare_df_cols(results_date, results_year)
 # Combine results
 results_combined <- bind_rows(results_date, results_year)
+
 
 # 5. Format for Publication -----------------------------------------------
 
