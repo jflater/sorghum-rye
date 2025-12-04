@@ -81,18 +81,32 @@ daily_significance <- flux_data %>%
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
   mutate(year = year(date)) %>%
   filter(year %in% c(2023, 2024)) %>%
+  
+  # --- STEP 1: Aggregate to Plot Level (Fixes Pseudoreplication) ---
+  group_by(year, date, treatment, plot) %>%
+  summarise(plot_mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), 
+            .groups = "drop") %>%
+  
+  # --- STEP 2: Run Non-Parametric Test on Plot Means ---
   group_by(year, date) %>%
   summarise(
     p_value = {
-      sorghum_flux <- gnha_day_no_negative[treatment == "Sorghum"]
-      sorghum_rye_flux <- gnha_day_no_negative[treatment == "Sorghum + Rye"]
-
-      sorghum_flux <- sorghum_flux[!is.na(sorghum_flux)]
-      sorghum_rye_flux <- sorghum_rye_flux[!is.na(sorghum_rye_flux)]
-
-      if (length(sorghum_flux) >= 2 && length(sorghum_rye_flux) >= 2) {
-        tryCatch(t.test(sorghum_flux, sorghum_rye_flux)$p.value,
+      # Extract vectors for the two treatments
+      sorghum_vals <- plot_mean_flux[treatment == "Sorghum"]
+      rye_vals     <- plot_mean_flux[treatment == "Sorghum + Rye"]
+      
+      # Clean NAs
+      sorghum_vals <- sorghum_vals[!is.na(sorghum_vals)]
+      rye_vals     <- rye_vals[!is.na(rye_vals)]
+      
+      # Require at least 3 plots per treatment to run the test
+      if (length(sorghum_vals) >= 3 && length(rye_vals) >= 3) {
+        
+        # Use Wilcoxon Rank Sum test (Equivalent to Kruskal-Wallis for 2 groups)
+        # exact=FALSE prevents warnings about ties
+        tryCatch(wilcox.test(sorghum_vals, rye_vals, exact = FALSE)$p.value,
                  error = function(e) NA_real_)
+        
       } else {
         NA_real_
       }
@@ -104,11 +118,37 @@ daily_significance <- flux_data %>%
     star_label = ifelse(significant & !is.na(p_value), "*", "")
   )
 
+# ALTERNATIVE: Run a separate LME for each day (slower, but safer assumptions)
+daily_significance_lmer <- flux_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye"), 
+         year %in% c(2023, 2024)) %>%
+  group_by(year, date) %>%
+  nest() %>%
+  mutate(model_results = map(data, function(df) {
+    # Need enough data (e.g. >4 obs per treatment)
+    if(nrow(df) < 8) return(NA)
+    
+    tryCatch({
+      # Fit simple LME for just this day
+      # Uses Row/Interrow variance correctly
+      m <- lmer(log(gnha_day_no_negative + 0.01) ~ treatment + (1|plot), data = df)
+      coef(summary(m))["treatmentSorghum + Rye", "Pr(>|t|)"]
+    }, error = function(e) NA)
+  })) %>%
+  unnest(model_results) %>%
+  rename(p_value = model_results) %>%
+  mutate(star_label = ifelse(p_value < 0.05, "*", ""))
+
 max_flux_by_date <- daily_flux %>%
   group_by(year, date) %>%
   summarise(max_flux = max(mean_flux + se_flux, na.rm = TRUE), .groups = "drop")
 
 star_data <- daily_significance %>%
+  left_join(max_flux_by_date, by = c("year", "date")) %>%
+  filter(star_label == "*") %>%
+  mutate(star_y = max_flux * 1.1)
+
+star_data_lmer <- daily_significance_lmer %>%
   left_join(max_flux_by_date, by = c("year", "date")) %>%
   filter(star_label == "*") %>%
   mutate(star_y = max_flux * 1.1)
@@ -171,6 +211,29 @@ cum_flux_summary <- cum_flux_plot_level %>%
     cum_flux_ci   = t_crit * cum_flux_se,
     .groups = "drop"
   )
+
+# Better Cumulative Summary using Geometric Means
+cum_flux_summary_log <- cum_flux_plot_level %>%
+  group_by(Treatment, year, date) %>%
+  summarise(
+    # 1. Calculate Mean and SE in Log Space
+    # (Add small offset if you have true zeros, though cumulative is usually >0)
+    log_mean = mean(log(cum_flux), na.rm = TRUE),
+    log_se   = sd(log(cum_flux), na.rm = TRUE) / sqrt(n()),
+    n        = n(),
+    
+    # 2. Calculate CI in Log Space
+    t_crit       = qt(0.975, df = n - 1),
+    log_lower_ci = log_mean - (t_crit * log_se),
+    log_upper_ci = log_mean + (t_crit * log_se),
+    
+    # 3. Back-transform to Real Units (Geometric Mean & CI)
+    geo_mean  = exp(log_mean),
+    geo_lower = exp(log_lower_ci),
+    geo_upper = exp(log_upper_ci),
+    
+    .groups = "drop"
+  )
 ```
 
 ## Precipitation and Panel Plots
@@ -228,6 +291,31 @@ daily_flux_plot <- ggplot(daily_flux, aes(x = date, y = mean_flux, color = Treat
   ) +
   labs(x = "")
 
+# Daily flux panel_lmer
+daily_flux_plot_lmer <- ggplot(daily_flux, aes(x = date, y = mean_flux, color = Treatment)) +
+  geom_line(linewidth = 1.1, alpha = 0.85) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_flux - se_flux, ymax = mean_flux + se_flux),
+                width = 0.2, alpha = 0.5) +
+  geom_vline(data = fert_events,
+             aes(xintercept = as.numeric(fertilizer_date)),
+             linetype = "dashed", color = "red", alpha = 0.7, inherit.aes = FALSE) +
+  geom_text(data = star_data,
+            aes(x = date, y = star_y, label = star_label),
+            color = "black", size = 5, inherit.aes = FALSE) +
+  scale_color_treatments() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(y = expression("Daily N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
+       color = "Treatment") +
+  facet_wrap(~year, nrow = 1, scales = "free_x") +
+  theme_publication() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.text = element_blank(),
+    legend.position = "none"
+  ) +
+  labs(x = "")
 # New cumulative flux panel with plot-level CI
 cumulative_flux_plot <- ggplot(cum_flux_summary,
                                aes(x = date, y = cum_flux_mean,
@@ -256,6 +344,55 @@ figure2_plotlevel <- (precip_plot / daily_flux_plot / cumulative_flux_plot) +
   patchwork::plot_layout(heights = c(0.8, 1, 1.2))
 
 figure2_plotlevel
+
+# Better Cumulative Summary using Geometric Means
+cum_flux_summary_log <- cum_flux_plot_level %>%
+  group_by(Treatment, year, date) %>%
+  summarise(
+    # 1. Calculate Mean and SE in Log Space
+    # (Add small offset if you have true zeros, though cumulative is usually >0)
+    log_mean = mean(log(cum_flux), na.rm = TRUE),
+    log_se   = sd(log(cum_flux), na.rm = TRUE) / sqrt(n()),
+    n        = n(),
+    
+    # 2. Calculate CI in Log Space
+    t_crit       = qt(0.975, df = n - 1),
+    log_lower_ci = log_mean - (t_crit * log_se),
+    log_upper_ci = log_mean + (t_crit * log_se),
+    
+    # 3. Back-transform to Real Units (Geometric Mean & CI)
+    geo_mean  = exp(log_mean),
+    geo_lower = exp(log_lower_ci),
+    geo_upper = exp(log_upper_ci),
+    
+    .groups = "drop"
+  )
+
+# Plotting
+cummulative_flux_plot_log <- ggplot(cum_flux_summary_log, aes(x = date, y = geo_mean, fill = Treatment)) +
+  # The ribbon will now be asymmetric and naturally avoid 0
+  geom_ribbon(aes(ymin = geo_lower, ymax = geo_upper), alpha = 0.2) + 
+  geom_line(aes(color = Treatment), linewidth = 1.1) +
+  scale_color_treatments() +
+  scale_fill_treatments() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b") +
+  labs(x = "Month",
+       y = expression("Cumulative N"[2]*"O Flux (g N ha"^-1*")"),
+       color = "Treatment", fill = "Treatment") +
+  facet_wrap(~year, nrow = 1, scales = "free_x") +
+  theme_publication() +
+  theme(
+    strip.text = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+    panel.spacing = unit(2, "lines")
+  )
+
+figure2_plotlevel_log <- (precip_plot / daily_flux_plot / cummulative_flux_plot_log) +
+  patchwork::plot_layout(heights = c(0.8, 1, 1.2))
+
+figure2_plotlevel_log
 ```
 
 ## Export Figure
@@ -270,4 +407,16 @@ ggsave(
   dpi      = 600,
   bg       = "white"
 )
+
+ggsave(
+  filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI.png",
+  plot     = figure2_plotlevel_log,
+  width    = 174,
+  height   = 174,
+  units    = "mm",
+  dpi      = 600,
+  bg       = "white"
+)
 ```
+
+# Check Units!!!!

@@ -1,180 +1,188 @@
----
-title: "Soil Inorganic Nitrogen Analysis"
-author: "Agricultural Data Expert"
-format:
-  html:
-    toc: true
-    toc-depth: 2
-  docx:
-    reference-doc: default
-execute:
-  echo: true
-  warning: false
-  message: false
----
+# Soil Inorganic Nitrogen Analysis Script
+# Approach: Non-Parametric (Kruskal-Wallis + Dunn's Test)
+# Grouping: Date x Treatment AND Year x Treatment
+# Author: Agricultural Data Expert
 
-# Purpose
-
-Clean, analyze, and generate publication-ready tables for soil inorganic nitrogen (NH4-N, NO3-N, Total Inorganic N).
-
-## 1. Setup
-
-```{r}
-# Load packages (install pacman if needed)
+# 1. Setup ----------------------------------------------------------------
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(
-  tidyverse,  # Data manipulation
-  rstatix,    # Tidy statistics
-  emmeans,    # Estimated marginal means (for post-hoc)
-  multcomp,   # For CLD (Compact Letter Display)
-  gt,         # Publication-quality tables
-  glue        # String interpolation
+  tidyverse, # Data manipulation
+  rstatix, # Tidy statistics (includes dunn_test)
+  multcompView, # For generating letters from pairwise p-values
+  gt, # Tables
+  glue # String formatting
 )
-```
 
-## 2. Load and Preprocess
-
-```{r}
-# Read cleaned soil data
-data <- readr::read_csv("cleaned_soil_data.csv", show_col_types = FALSE)
-
-# Create Total N, pivot long, and clean labels
+# 2. Load and Preprocess --------------------------------------------------
+data <- read_csv("data/soils/cleaned_soil_data.csv", show_col_types = FALSE)
+colnames(data)
 clean_data <- data %>%
-  # Create Total N variable
-  dplyr::mutate(total_n_ppm = ammonia_ppm + nitrate_ppm) %>%
-  # Convert to long format for iteration
-  tidyr::pivot_longer(
-    cols = c(ammonia_ppm, nitrate_ppm, total_n_ppm),
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(total_n_mg_per_kg = ammonia_mg_per_kg + nitrate_mg_per_kg) %>%
+  pivot_longer(
+    cols = c(ammonia_mg_per_kg, nitrate_mg_per_kg, total_n_mg_per_kg),
     names_to = "analyte",
     values_to = "ppm"
   ) %>%
-  # Clean up analyte names for display and ensure treatment is a factor
-  dplyr::mutate(
-    analyte = dplyr::case_when(
-      analyte == "ammonia_ppm" ~ "Ammonium (NH4-N)",
-      analyte == "nitrate_ppm" ~ "Nitrate (NO3-N)",
-      analyte == "total_n_ppm" ~ "Total Inorganic N",
+  mutate(
+    analyte = case_when(
+      analyte == "ammonia_mg_per_kg" ~ "Ammonium (NH4-N)",
+      analyte == "nitrate_mg_per_kg" ~ "Nitrate (NO3-N)",
+      analyte == "total_n_mg_per_kg" ~ "Total Inorganic N",
       TRUE ~ analyte
     ),
-    treatment = as.factor(treatment)
-  )
-```
-
-## 3. Statistical Analysis Function
-
-We wrap the stats in a function to apply safely across groups.
-
-```{r}
-run_stats <- function(df) {
-  # A. Normality Check (Shapiro-Wilk)
-  # Note: If n < 3, shapiro.test fails; add error handling.
-  shapiro <- tryCatch(
-    stats::shapiro.test(df$ppm)$p.value,
-    error = function(e) NA_real_
+    treatment = as.factor(treatment),
+    year = as.character(year) # Ensure year is treated as a grouping category
   )
 
-  # B. ANOVA
-  # For this standard request, we stick to raw scale unless specified.
-  model <- stats::lm(ppm ~ treatment, data = df)
-  anova_res <- stats::anova(model)
-  p_val <- tryCatch(anova_res$`Pr(>F)`[1], error = function(e) NA_real_)
+# 3. Statistical Analysis Function (Kruskal-Wallis) -----------------------
+run_stats_kw <- function(df) {
+  # A. Global Test: Kruskal-Wallis
+  kw_res <- kruskal_test(df, ppm ~ treatment)
+  p_val <- kw_res$p
 
-  # C. Post-hoc (Tukey HSD with Letters)
-  # Only run if model is significant (p < 0.05); otherwise blank letters.
+  # B. Post-Hoc: Dunn's Test
+  letters_df <- tibble(treatment = unique(df$treatment), letter = "a")
+
   if (!is.na(p_val) && p_val < 0.05) {
-    emm <- emmeans::emmeans(model, ~ treatment)
-    cld_res <- multcomp::cld(
-      emm,
-      Letters = letters,
-      adjust = "tukey",
-      reversed = TRUE
-    ) %>%
-      tibble::as_tibble() %>%
-      dplyr::select(treatment, .group) %>%
-      dplyr::rename(letter = .group) %>%
-      dplyr::mutate(letter = stringr::str_trim(letter))
+    dunn_res <- dunn_test(df, ppm ~ treatment, p.adjust.method = "holm") |>
+      mutate(pair_name = paste(group1, group2, sep = "-"))
+
+    p_vec <- setNames(dunn_res$p.adj, dunn_res$pair_name)
+
+    # Generate letters (Compact Letter Display)
+    letters_list <- multcompLetters(p_vec, threshold = 0.05)
+
+    letters_df <- tibble(
+      treatment = names(letters_list$Letters),
+      letter = letters_list$Letters
+    )
   } else {
-    cld_res <- tibble::tibble(
+    letters_df <- tibble(
       treatment = unique(df$treatment),
-      letter = ""  # Leave blank if non-significant
+      letter = ""
     )
   }
-
-  # D. Summary Stats
+  # D. Summary Stats (Mean, SE, Variance)
+  # We use type="common" to get variance (var) along with mean/se
   stats_summary <- df %>%
-    dplyr::group_by(treatment) %>%
-    rstatix::get_summary_stats(ppm, type = "mean_se") %>%
-    dplyr::left_join(cld_res, by = "treatment") %>%
-    dplyr::mutate(
-      shapiro_p = shapiro,
-      anova_p = p_val
+    group_by(treatment) %>%
+    get_summary_stats(ppm, type = "common") %>%
+    left_join(letters_df, by = "treatment") %>%
+    mutate(
+      kruskal_p = p_val,
+      test_method = "Kruskal-Wallis"
     )
 
   return(stats_summary)
 }
-```
 
-## 4. Execute Analysis
+# 4. Execute Analysis (Date Level AND Year Level) -------------------------
 
-```{r}
-results <- clean_data %>%
-  dplyr::group_by(date, analyte) %>%
-  tidyr::nest() %>%
-  dplyr::mutate(stats = purrr::map(data, run_stats)) %>%
-  tidyr::unnest(stats) %>%
-  dplyr::select(-data)
+# Run 1: Group by Date x Analyte
+results_date <- clean_data %>%
+  group_by(date, analyte) %>%
+  nest() %>%
+  mutate(stats = map(data, run_stats_kw)) %>%
+  unnest(stats) %>%
+  select(-data) %>%
+  mutate(
+    group_type = "By Date",
+    date = as.character(date)
+  ) # Ensure date is character for stacking
 
-# Quick peek
-dplyr::glimpse(results)
-```
+# Run 2: Group by Year x Analyte
+results_year <- clean_data %>%
+  group_by(year, analyte) %>%
+  nest() %>%
+  mutate(stats = map(data, run_stats_kw)) %>%
+  unnest(stats) %>%
+  select(-data) %>%
+  rename(date = year) %>% # Rename year to date column to stack them
+  mutate(group_type = "By Year")
 
-## 5. Format for Publication
+# Combine results
+results_combined <- bind_rows(results_date, results_year)
 
-Create the display string: "Mean ± SE (Letter)".
+# 5. Format for Publication -----------------------------------------------
 
-```{r}
-formatted_table <- results %>%
-  dplyr::mutate(
-    display_value = glue::glue("{sprintf('%.2f', mean)} ± {sprintf('%.2f', se)} {letter}"),
-    display_value = stringr::str_trim(display_value)
+# Part A: The Means Rows
+means_table <- results_combined %>%
+  mutate(
+    # Create value string: Mean ± SE (Letter)
+    display_value = glue("{sprintf('%.2f', mean)} ± {sprintf('%.2f', se)} {letter}"),
+    display_value = str_trim(display_value)
   ) %>%
-  dplyr::select(date, treatment, analyte, display_value) %>%
-  tidyr::pivot_wider(
+  select(group_type, date, treatment, analyte, display_value) %>%
+  pivot_wider(
     names_from = analyte,
     values_from = display_value
   )
 
-# Preview
-formatted_table %>% dplyr::arrange(date, treatment) %>% head(10)
-```
-
-## 6. Generate Tables
-
-Generate an RTF table using gt and save a CSV for checking.
-
-```{r}
-gt_tbl <- formatted_table %>%
-  dplyr::group_by(date) %>%
-  gt::gt() %>%
-  gt::cols_label(
-    treatment = "Treatment"
+# Part B: The Source of Variation (Kruskal-Wallis P-values)
+p_values_table <- results_combined %>%
+  distinct(group_type, date, analyte, kruskal_p) %>%
+  mutate(
+    display_value = case_when(
+      kruskal_p < 0.001 ~ "< 0.001",
+      TRUE ~ sprintf("%.3f", kruskal_p)
+    ),
+    treatment = "Source: Treatment (P-value)"
   ) %>%
-  gt::tab_header(
-    title = "Soil Inorganic Nitrogen Response to Treatments",
-    subtitle = "Values represent Mean ± Standard Error (ppm). Letters indicate significant differences (p < 0.05, Tukey HSD)."
+  select(group_type, date, treatment, analyte, display_value) %>%
+  pivot_wider(
+    names_from = analyte,
+    values_from = display_value
+  )
+
+# Part C: Combine and Order
+final_table_data <- bind_rows(means_table, p_values_table) %>%
+  mutate(
+    # Sort order: Date groups first, then Year groups
+    # Within groups: Treatments first, then P-value row
+    type_rank = ifelse(group_type == "By Date", 1, 2),
+    row_rank = ifelse(treatment == "Source: Treatment (P-value)", 2, 1)
   ) %>%
-  gt::tab_style(
-    style = gt::cell_text(weight = "bold"),
-    locations = gt::cells_column_labels()
+  arrange(type_rank, date, row_rank, treatment) %>%
+  select(-type_rank, -row_rank, -group_type)
+
+# 6. Generate RTF ---------------------------------------------------------
+
+gt_tbl <- final_table_data %>%
+  group_by(date) %>%
+  gt() %>%
+  cols_label(treatment = "Treatment") %>%
+  tab_header(
+    title = "Soil Inorganic Nitrogen Response",
+    subtitle = "Analysis performed by Date and by Year. Values are Mean ± SE. Letters represent Dunn's Test (p < 0.05)."
   ) %>%
-  gt::tab_options(
+  # Style the P-value row
+  tab_style(
+    style = cell_text(weight = "bold", style = "italic"),
+    locations = cells_body(
+      columns = treatment,
+      rows = treatment == "Source: Treatment (P-value)"
+    )
+  ) %>%
+  # Add border above P-value row
+  tab_style(
+    style = cell_borders(sides = "top", color = "black", weight = px(1)),
+    locations = cells_body(
+      rows = treatment == "Source: Treatment (P-value)"
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_options(
     row_group.background.color = "#E0E0E0",
     table.font.names = "Times New Roman"
   )
 
-# Save outputs
-gt::gtsave(gt_tbl, "soil_nitrogen_results.rtf")
-readr::write_csv(formatted_table, "soil_nitrogen_formatted.csv")
+gtsave(gt_tbl, "soil_nitrogen_kruskal.rtf")
+gt_tbl
+# Save detailed CSV with Variance included
+write_csv(results_combined, "soil_nitrogen_kruskal_stats.csv")
 
-print("Analysis Complete. Generated 'soil_nitrogen_results.rtf' and 'soil_nitrogen_formatted.csv'.")
-```
+print("Analysis Complete. Table includes Date-level and Year-level analysis.")
