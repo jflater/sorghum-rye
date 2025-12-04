@@ -1,0 +1,434 @@
+---
+title: "Figure 2: N₂O Flux with Plot-Level Cumulative Uncertainty"
+format: 
+  html:
+    toc: true
+    code-fold: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+  error: false
+---
+
+# Setup and Data Loading
+
+```{r setup}
+#| label: setup
+#| message: false
+#| warning: false
+
+# Load required packages
+library(tidyverse)
+library(lubridate)
+library(patchwork)
+library(readxl)
+
+# Re-establish dplyr preferences after loading packages
+if (requireNamespace("conflicted", quietly = TRUE)) {
+  library(conflicted)
+  conflicts_prefer(dplyr::select)
+  conflicts_prefer(dplyr::filter)
+  conflicts_prefer(dplyr::summarise)
+}
+
+# Custom theme for consistency (from Final_Figures_Tables.qmd)
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      panel.background = element_rect(fill = "#ffffffff", color = NA),
+      plot.background = element_rect(fill = "#ffffffff", color = NA),
+      panel.grid.major = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor = element_blank(),
+      text = element_text(color = "#000000ff"),
+      axis.text = element_text(color = "#000000ff"),
+      strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.spacing = unit(2, "lines")
+    )
+}
+
+# Treatment colors (from Final_Figures_Tables.qmd)
+treatment_colors <- c(
+  "Sorghum" = "#D8D97AFF",
+  "Sorghum + Rye" = "#95C36EFF", 
+  "Corn" = "#74C8C3FF",
+  "Soy" = "#0A2E57FF"
+)
+
+scale_color_treatments <- function() scale_color_manual(values = treatment_colors)
+scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
+```
+
+# Data Import
+
+```{r data-import}
+#| label: data-import
+#| message: false
+
+# Import flux data 
+flux_data <- read_csv("data/cleaned_flux_data.csv") %>%
+  mutate(date = as.Date(date)) 
+
+# Import historical rain data
+rain <- read_xlsx("data/rain/historical_rain.xlsx")
+
+rain <- rain %>%
+  select(day, doy, precipmm) %>%
+  mutate(
+    date = as.Date(day),
+    year = year(date),
+  ) %>%
+  group_by(year) %>%
+  arrange(date) %>%
+  mutate(cumulative_precip = cumsum(precipmm))
+
+rain <- rain %>%
+  mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
+```
+
+# Plot-Level Cumulative Flux Calculation
+
+This implements a more statistically appropriate uncertainty method:
+- Work at the plot level (Treatment × year × plot)
+- Interpolate daily fluxes between measurement dates
+- Compute cumulative flux over time per plot
+- Summarize across plots to get mean, SE, and 95% CI
+
+```{r plot-level-cumulative}
+#| label: plot-level-cumulative
+
+# Filter to target treatments and years
+flux_filtered <- flux_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  filter(year %in% c(2023, 2024))
+
+# Calculate daily flux per plot (averaging row and interrow within each plot-date)
+daily_flux_plot <- flux_filtered %>%
+  group_by(plot, treatment, year, date) %>%
+  summarise(
+    flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000,  # Convert g to kg
+    .groups = "drop"
+  ) %>%
+  arrange(treatment, year, plot, date)
+
+# Get date ranges per treatment-year for interpolation bounds
+date_ranges <- daily_flux_plot %>%
+  group_by(treatment, year) %>%
+  summarise(
+    min_date = min(date, na.rm = TRUE),
+    max_date = max(date, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Implement plot-level cumulative flux with interpolation
+cum_flux_plot_level <- daily_flux_plot %>%
+  # Create all combinations of treatment-year-plot
+  group_by(treatment, year, plot) %>%
+  # Get the date range for this treatment-year
+  left_join(date_ranges, by = c("treatment", "year")) %>%
+  group_modify(~ {
+    df <- .x
+    if (nrow(df) < 2) return(tibble())
+    
+    # Create full date sequence within measurement range
+    all_dates <- seq(first(df$min_date), first(df$max_date), by = "day")
+    
+    # Create tibble with all dates
+    full_dates <- tibble(date = all_dates)
+    
+    # Join with observed data
+    df_full <- full_dates %>%
+      left_join(df %>% select(date, flux), by = "date")
+    
+    # Interpolate flux values
+    valid_data <- df %>% filter(!is.na(flux))
+    if (nrow(valid_data) >= 2) {
+      df_full <- df_full %>%
+        mutate(
+          flux_interp = approx(
+            x = valid_data$date,
+            y = valid_data$flux,
+            xout = date,
+            rule = 1,
+            ties = "ordered"
+          )$y
+        )
+    } else {
+      df_full <- df_full %>%
+        mutate(flux_interp = NA_real_)
+    }
+    
+    # Calculate cumulative flux
+    df_full %>%
+      filter(!is.na(flux_interp)) %>%
+      mutate(cum_flux = cumsum(flux_interp))
+  }) %>%
+  ungroup()
+
+# Summarize across plots to get mean and CI
+cum_flux_summary <- cum_flux_plot_level %>%
+  group_by(treatment, year, date) %>%
+  summarise(
+    cum_flux_mean = mean(cum_flux, na.rm = TRUE),
+    cum_flux_sd = sd(cum_flux, na.rm = TRUE),
+    n_plots = n(),
+    cum_flux_se = cum_flux_sd / sqrt(n_plots),
+    t_crit = qt(0.975, df = pmax(n_plots - 1, 1)),
+    cum_flux_ci = t_crit * cum_flux_se,
+    .groups = "drop"
+  ) %>%
+  # Handle cases where CI might be NA
+  mutate(
+    cum_flux_ci = replace_na(cum_flux_ci, 0)
+  )
+
+# Create a version with observed points marked
+cum_flux_observed <- cum_flux_plot_level %>%
+  filter(!is.na(flux)) %>%
+  group_by(treatment, year, date) %>%
+  summarise(
+    cum_flux_mean = mean(cum_flux, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("✓ Plot-level cumulative flux calculation complete\n")
+cat("Summary data:", nrow(cum_flux_summary), "rows\n")
+cat("Treatments:", paste(unique(cum_flux_summary$treatment), collapse = ", "), "\n")
+cat("Years:", paste(unique(cum_flux_summary$year), collapse = ", "), "\n")
+```
+
+# Build Daily Flux Summary
+
+```{r daily-flux-summary}
+#| label: daily-flux-summary
+
+# Build daily treatment means and SE for N2O flux (for daily plot)
+daily_flux <- flux_filtered %>%
+  mutate(Treatment = treatment) %>%
+  group_by(Treatment, year, date) %>%
+  summarise(
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000,  # Convert g to kg
+    se_flux = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(sum(!is.na(gnha_day_no_negative))) / 1000,
+    .groups = "drop"
+  )
+
+# Get flux measurement date ranges for each year
+flux_date_ranges <- daily_flux %>%
+  group_by(year) %>%
+  summarise(
+    min_date = min(date, na.rm = TRUE),
+    max_date = max(date, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Calculate daily significance tests between treatments
+daily_significance <- flux_filtered %>%
+  group_by(year, date) %>%
+  summarise(
+    p_value = {
+      sorghum_flux <- gnha_day_no_negative[treatment == "Sorghum"]
+      sorghum_rye_flux <- gnha_day_no_negative[treatment == "Sorghum + Rye"]
+      sorghum_flux <- sorghum_flux[!is.na(sorghum_flux)]
+      sorghum_rye_flux <- sorghum_rye_flux[!is.na(sorghum_rye_flux)]
+      if (length(sorghum_flux) >= 2 && length(sorghum_rye_flux) >= 2) {
+        tryCatch({
+          t_result <- t.test(sorghum_flux, sorghum_rye_flux)
+          t_result$p.value
+        }, error = function(e) NA_real_)
+      } else {
+        NA_real_
+      }
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    significant = p_value < 0.05,
+    star_label = ifelse(significant & !is.na(p_value), "*", "")
+  )
+
+# Get max flux values for star positioning
+max_flux_by_date <- daily_flux %>%
+  group_by(year, date) %>%
+  summarise(max_flux = max(mean_flux + se_flux, na.rm = TRUE), .groups = "drop")
+
+# Combine significance data with position data
+star_data <- daily_significance %>%
+  left_join(max_flux_by_date, by = c("year", "date")) %>%
+  filter(star_label == "*") %>%
+  mutate(star_y = max_flux * 1.1)
+
+# Filter precipitation to match flux measurement periods only
+daily_precip_trimmed <- rain %>%
+  transmute(date, year, precipmm) %>%
+  filter(year %in% c(2023, 2024)) %>%
+  left_join(flux_date_ranges, by = "year") %>%
+  filter(date >= min_date, date <= max_date) %>%
+  select(date, year, precipmm)
+
+# Fertilizer event dates
+fert_events <- tibble(
+  year = c(2023, 2024),
+  fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
+)
+```
+
+# Create Figure 2 with Plot-Level Cumulative Uncertainty
+
+```{r figure2-plotlevel}
+#| label: fig-figure2-plotlevel
+#| fig-cap: "Daily and cumulative N₂O flux with plot-level between-plot 95% CI"
+#| fig-width: 13.3
+#| fig-height: 7.5
+
+# Calculate global maxima for consistent y-axes
+global_max_flux <- max(daily_flux$mean_flux + daily_flux$se_flux, na.rm = TRUE)
+global_max_precip <- max(daily_precip_trimmed$precipmm, na.rm = TRUE)
+global_max_cum_flux <- max(cum_flux_summary$cum_flux_mean + cum_flux_summary$cum_flux_ci, na.rm = TRUE)
+
+# Scale precipitation to fit on flux scale, positioned from top down
+global_precip_scale_factor <- global_max_flux * 0.4 / global_max_precip
+global_plot_top <- global_max_flux * 1.1
+
+create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
+  # Filter data for the specific year
+  flux_year <- daily_flux %>% filter(year == year_val)
+  precip_year <- daily_precip_trimmed %>% filter(year == year_val)
+  star_year <- star_data %>% filter(year == year_val)
+  fert_year <- fert_events %>% filter(year == year_val)
+  cum_flux_year <- cum_flux_summary %>% 
+    filter(year == year_val) %>%
+    rename(Treatment = treatment)
+  cum_flux_points <- cum_flux_observed %>% 
+    filter(year == year_val) %>%
+    rename(Treatment = treatment)
+
+  # Full-year limits (force Jan 1 → Dec 31)
+  year_start <- as.Date(sprintf("%d-01-01", year_val))
+  year_end <- as.Date(sprintf("%d-12-31", year_val))
+
+  # Daily flux plot with precipitation
+  daily_plot <- ggplot() +
+    # Precipitation bars (from top down)
+    geom_rect(data = precip_year,
+              aes(xmin = date - 0.5, xmax = date + 0.5,
+                  ymin = global_plot_top - precipmm * global_precip_scale_factor, ymax = global_plot_top),
+              fill = "#377EB8", alpha = 0.7) +
+    # Daily flux points
+    geom_point(data = flux_year,
+               aes(x = date, y = mean_flux, color = Treatment),
+               size = 2) +
+    geom_errorbar(data = flux_year,
+                  aes(x = date, ymin = mean_flux - se_flux, ymax = mean_flux + se_flux, color = Treatment),
+                  width = 0.2, alpha = 0.5) +
+    # Fertilizer events
+    geom_vline(data = fert_year,
+               aes(xintercept = as.numeric(fertilizer_date)),
+               linetype = "dashed", color = "red", alpha = 0.7) +
+    # Significance stars
+    geom_text(data = star_year,
+              aes(x = date, y = star_y, label = star_label),
+              color = "black", size = 8) +
+    # Scales and styling
+    scale_color_treatments() +
+    guides(color = "none") +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(year_start, year_end)) +
+    scale_y_continuous(
+      name = if (!is_right_panel) expression("Daily N"[2]*"O Flux (kg N ha"^-1*" day"^-1*")") else "",
+      limits = c(0, global_plot_top),
+      sec.axis = sec_axis(~ (global_plot_top - .) / global_precip_scale_factor,
+                          name = if (is_right_panel) "Daily Precipitation (mm)" else "")
+    ) +
+    theme_publication() +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
+      axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank()
+    ) +
+    labs(title = paste("", year_val), x = "") +
+    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
+
+  # Cumulative flux plot with PLOT-LEVEL 95% CI
+  cumulative_plot <- ggplot(cum_flux_year, aes(x = date, y = cum_flux_mean, color = Treatment)) +
+    geom_ribbon(aes(ymin = pmax(cum_flux_mean - cum_flux_ci, 0), 
+                    ymax = cum_flux_mean + cum_flux_ci, 
+                    fill = Treatment),
+                alpha = 0.2, linewidth = 0) +
+    geom_line(linewidth = 1.1) +
+    geom_point(data = cum_flux_points, 
+               aes(x = date, y = cum_flux_mean, color = Treatment), 
+               size = 1.8) +
+    scale_color_treatments() +
+    scale_fill_treatments() +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(year_start, year_end)) +
+    scale_y_continuous(
+      name = if (!is_right_panel) expression("Cumulative N"[2]*"O Flux (kg N ha"^-1*")") else "",
+      limits = c(0, global_max_cum_flux)
+    ) +
+    labs(x = "Month") +
+    theme_publication() +
+    theme(
+      legend.position = "none",
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text()
+    )
+
+  # Combine daily and cumulative plots vertically
+  (daily_plot / cumulative_plot) +
+    patchwork::plot_layout(heights = c(1.2, 1))
+}
+
+# Create plots for both years
+plot_2023 <- create_dual_axis_plot(2023, is_right_panel = FALSE)
+plot_2024 <- create_dual_axis_plot(2024, is_right_panel = TRUE)
+
+# Combine plots side by side
+figure2 <- (plot_2023 | plot_2024) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom", 
+        legend.justification = "center",
+        legend.box.just = "center")
+
+figure2
+```
+
+# Save Figure
+
+```{r save-figure}
+#| label: save-figure
+
+# Save the figure with specified dimensions
+ggsave(
+  filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI.png",
+  plot = figure2,
+  width = 174,
+  height = 174,
+  units = "mm",
+  dpi = 600,
+  bg = "white"
+)
+
+cat("✓ Figure saved to figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI.png\n")
+cat("  Dimensions: 174 mm × 174 mm @ 600 dpi\n")
+```
+
+# Summary
+
+This figure implements a more statistically appropriate uncertainty method for cumulative N₂O flux:
+
+1. **Plot-level calculation**: Cumulative flux is computed for each individual plot (Treatment × year × plot)
+2. **Interpolation**: Daily fluxes are interpolated between measurement dates within each plot
+3. **Between-plot variability**: The ribbon shows 95% CI based on the variability between plots within each treatment
+4. **Statistical basis**: CI = t_crit × SE, where SE = SD / √n and t_crit comes from the t-distribution with n-1 degrees of freedom
+
+This approach is more appropriate than propagating measurement error because it captures the actual biological variability between experimental units (plots) rather than measurement uncertainty within units.
