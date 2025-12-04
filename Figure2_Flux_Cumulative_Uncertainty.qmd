@@ -78,7 +78,7 @@ rain <- rain %>%
   select(day, doy, precipmm) %>%
   mutate(
     date = as.Date(day),
-    year = year(date),
+    year = year(date)
   ) %>%
   group_by(year) %>%
   arrange(date) %>%

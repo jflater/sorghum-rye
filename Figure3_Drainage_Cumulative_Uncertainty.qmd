@@ -85,7 +85,7 @@ rain <- rain %>%
   select(day, doy, precipmm) %>%
   mutate(
     date = as.Date(day),
-    year = year(date),
+    year = year(date)
   ) %>%
   group_by(year) %>%
   arrange(date) %>%
@@ -158,7 +158,7 @@ cum_leach_plot_level <- daily_leaching_plot %>%
       left_join(df %>% select(date, daily_loss), by = "date")
     
     # Interpolate loss values
-    valid_data <- df %>% filter(!is.na(daily_loss) & daily_loss > 0)
+    valid_data <- df %>% filter(!is.na(daily_loss))
     if (nrow(valid_data) >= 2) {
       df_full <- df_full %>%
         mutate(
@@ -204,7 +204,7 @@ cum_leach_summary <- cum_leach_plot_level %>%
 
 # Create a version with observed points marked
 cum_leach_observed <- cum_leach_plot_level %>%
-  filter(!is.na(daily_loss) & daily_loss > 0) %>%
+  filter(!is.na(daily_loss)) %>%
   group_by(treatment, year, date) %>%
   summarise(
     cum_leach_mean = mean(cum_leach, na.rm = TRUE),
