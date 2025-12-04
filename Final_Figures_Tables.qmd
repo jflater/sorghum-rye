@@ -136,7 +136,9 @@ rain <- rain %>%
 ```
 
 # Helper Functions
+
 # Stats
+
 ```{r}
 library(dplyr)
 library(rstatix)
@@ -200,6 +202,7 @@ compare_soil_inorgN <- function(data, variable, group_vars) {
     ungroup()
 }
 ```
+
 ```{r helper-functions}
 # Function for pairwise t-tests within groups
 #| label: get-pvals

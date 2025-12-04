@@ -409,7 +409,7 @@ ggsave(
 )
 
 ggsave(
-  filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI.png",
+  filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI_log.png",
   plot     = figure2_plotlevel_log,
   width    = 174,
   height   = 174,
