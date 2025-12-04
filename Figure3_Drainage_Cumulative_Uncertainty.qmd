@@ -53,6 +53,7 @@ rain <- readxl::read_xlsx("data/rain/historical_rain.xlsx") %>%
   mutate(date = as.Date(day), year = year(date))
 ```
 
+
 ## Daily Leaching and Plot-Level Cumulative Curves
 
 ```{r leaching-cumulative}
@@ -207,8 +208,99 @@ cumulative_leaching_plot <- ggplot(cum_leaching_summary,
     panel.spacing = unit(2, "lines")
   )
 
-figure3_plotlevel <- (monthly_plot / cumulative_leaching_plot) +
-  patchwork::plot_layout(heights = c(1, 1.2))
+# Dual-axis daily + cumulative panels (matches Figure 2 styling)
+global_max_loss <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
+global_max_precip <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
+global_max_cum_loss <- max(cum_leaching_summary$cum_loss_mean + cum_leaching_summary$cum_loss_ci, na.rm = TRUE)
+
+# Scale precipitation to "rain down" from the top of the daily loss axis
+global_precip_scale_factor <- global_max_loss * 0.4 / global_max_precip
+global_plot_top <- global_max_loss * 1.1
+
+create_dual_axis_leaching_plot <- function(year_val, is_right_panel = FALSE) {
+  leaching_year <- daily_leaching_summary %>% filter(year == year_val)
+  precip_year <- daily_precip_leaching %>% filter(year == year_val)
+  cum_leach_year <- cum_leaching_summary %>% filter(year == year_val)
+  obs_year <- obs_points %>% filter(year == year_val)
+
+  year_limits <- leaching_date_ranges %>% filter(year == year_val)
+  year_start <- year_limits$min_date
+  year_end   <- year_limits$max_date
+
+  daily_plot <- ggplot() +
+    geom_rect(data = precip_year,
+              aes(xmin = date - 0.5, xmax = date + 0.5,
+                  ymin = global_plot_top - precipmm * global_precip_scale_factor, ymax = global_plot_top),
+              fill = "#377EB8", alpha = 0.7) +
+    geom_point(data = leaching_year,
+               aes(x = date, y = mean_loss, color = treatment),
+               size = 2) +
+    geom_errorbar(data = leaching_year,
+                  aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = treatment),
+                  width = 0.2, alpha = 0.5) +
+    scale_color_treatments() +
+    guides(color = "none") +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(year_start, year_end)) +
+    scale_y_continuous(
+      name = if (!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" day"^-1*")") else "",
+      limits = c(0, global_plot_top),
+      sec.axis = sec_axis(~ (global_plot_top - .) / global_precip_scale_factor,
+                          name = if (is_right_panel) "Daily Precipitation (mm)" else "")
+    ) +
+    theme_publication() +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
+      axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank()
+    ) +
+    labs(title = paste("", year_val), x = "") +
+    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
+
+  cumulative_plot <- ggplot(cum_leach_year,
+                            aes(x = date, y = cum_loss_mean, color = treatment, fill = treatment)) +
+    geom_ribbon(aes(ymin = pmax(cum_loss_mean - cum_loss_ci, 0),
+                    ymax = cum_loss_mean + cum_loss_ci),
+                alpha = 0.2, linewidth = 0) +
+    geom_line(linewidth = 1.1) +
+    geom_point(data = obs_year, inherit.aes = FALSE,
+               aes(x = date, y = cum_obs, color = treatment),
+               alpha = 0.5, shape = 16, size = 1.2) +
+    scale_color_treatments() +
+    scale_fill_treatments() +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(year_start, year_end)) +
+    scale_y_continuous(
+      name = if (!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1*")") else "",
+      limits = c(0, global_max_cum_loss)
+    ) +
+    labs(x = "Month") +
+    theme_publication() +
+    theme(
+      legend.position = "none",
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text()
+    )
+
+  (daily_plot / cumulative_plot) +
+    patchwork::plot_layout(heights = c(1.2, 1))
+}
+library(patchwork)
+plot_leaching_2023 <- create_dual_axis_leaching_plot(2023, is_right_panel = FALSE)
+plot_leaching_2024 <- create_dual_axis_leaching_plot(2024, is_right_panel = TRUE)
+
+figure3_plotlevel <- (plot_leaching_2023 | plot_leaching_2024) +
+  patchwork::plot_layout(guides = "collect") &
+  theme(legend.position = "bottom",
+        legend.justification = "center",
+        legend.box.just = "center")
 
 figure3_plotlevel
 ```
