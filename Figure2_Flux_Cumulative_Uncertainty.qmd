@@ -395,6 +395,118 @@ figure2_plotlevel_log <- (precip_plot / daily_flux_plot / cummulative_flux_plot_
 figure2_plotlevel_log
 ```
 
+## Dual-Axis Version (plot-level CI styling)
+
+```{r figure-2-dual-axis-plotlevel}
+#| label: fig-n2o-flux-dual-axis-plotlevel
+#| fig-cap: "Daily and cumulative N2O flux with precipitation on dual axes (plot-level CI style)"
+#| fig-width: 10
+#| fig-height: 8
+
+# Global limits for consistent scaling across panels (reuses existing calculations)
+global_max_flux <- max(daily_flux$mean_flux + daily_flux$se_flux, na.rm = TRUE)
+global_max_precip <- max(daily_precip_trimmed$precipmm, na.rm = TRUE)
+global_max_cum_flux <- max(cum_flux_summary$cum_flux_mean + cum_flux_summary$cum_flux_ci, na.rm = TRUE)
+
+# Scale precipitation so bars "rain down" from the top of the flux axis
+global_precip_scale_factor <- global_max_flux * 0.4 / global_max_precip
+global_plot_top <- global_max_flux * 1.1
+
+create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
+  flux_year <- daily_flux %>% filter(year == year_val)
+  precip_year <- daily_precip_trimmed %>% filter(year == year_val)
+  star_year <- star_data %>% filter(year == year_val)
+  fert_year <- fert_events %>% filter(year == year_val)
+  cum_flux_year <- cum_flux_summary %>% filter(year == year_val)
+
+  # Full-year limits to align x-axes
+  year_start <- as.Date(sprintf("%d-01-01", year_val))
+  year_end   <- as.Date(sprintf("%d-12-31", year_val))
+
+  daily_plot <- ggplot() +
+    geom_rect(data = precip_year,
+              aes(xmin = date - 0.5, xmax = date + 0.5,
+                  ymin = global_plot_top - precipmm * global_precip_scale_factor, ymax = global_plot_top),
+              fill = "#377EB8", alpha = 0.7) +
+   # geom_line(data = flux_year,
+   #           aes(x = date, y = mean_flux, color = Treatment),
+   #           linewidth = 1.1, alpha = 0.85) +
+    geom_point(data = flux_year,
+               aes(x = date, y = mean_flux, color = Treatment),
+               size = 2) +
+    geom_errorbar(data = flux_year,
+                  aes(x = date, ymin = mean_flux - se_flux, ymax = mean_flux + se_flux, color = Treatment),
+                  width = 0.2, alpha = 0.5) +
+    geom_vline(data = fert_year,
+               aes(xintercept = as.numeric(fertilizer_date)),
+               linetype = "dashed", color = "red", alpha = 0.7) +
+    geom_text(data = star_year,
+              aes(x = date, y = star_y, label = star_label),
+              color = "black", size = 5) +
+    scale_color_treatments() +
+    guides(color = "none") +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(year_start, year_end)) +
+    scale_y_continuous(
+      name = if (!is_right_panel) expression("Daily N"[2]*"O Flux (g N ha"^-1*" day"^-1*")") else "",
+      limits = c(0, global_plot_top),
+      sec.axis = sec_axis(~ (global_plot_top - .) / global_precip_scale_factor,
+                          name = if (is_right_panel) "Daily Precipitation (mm)" else "")
+    ) +
+    theme_publication() +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
+      axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank()
+    ) +
+    labs(title = paste("", year_val), x = "") +
+    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
+
+  cumulative_plot <- ggplot(cum_flux_year,
+                            aes(x = date, y = cum_flux_mean, color = Treatment, fill = Treatment)) +
+    geom_ribbon(aes(ymin = pmax(cum_flux_mean - cum_flux_ci, 0),
+                    ymax = cum_flux_mean + cum_flux_ci),
+                alpha = 0.2, linewidth = 0) +
+    geom_line(linewidth = 1.1) +
+    scale_color_treatments() +
+    scale_fill_treatments() +
+    scale_x_date(date_breaks = "1 month", date_labels = "%b",
+                 limits = c(year_start, year_end)) +
+    scale_y_continuous(
+      name = if (!is_right_panel) expression("Cumulative N"[2]*"O Flux (g N ha"^-1*")") else "",
+      limits = c(0, global_max_cum_flux)
+    ) +
+    labs(x = "Month") +
+    theme_publication() +
+    theme(
+      legend.position = "none",
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text()
+    )
+
+  (daily_plot / cumulative_plot) +
+    patchwork::plot_layout(heights = c(1.2, 1))
+}
+
+plot_2023 <- create_dual_axis_plot(2023, is_right_panel = FALSE)
+plot_2024 <- create_dual_axis_plot(2024, is_right_panel = TRUE)
+
+figure2_dual_axis_plotlevel <- (plot_2023 | plot_2024) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom",
+        legend.justification = "center",
+        legend.box.just = "center")
+
+figure2_dual_axis_plotlevel
+```
+
 ## Export Figure
 
 ```{r save-figure, echo=FALSE}
@@ -411,6 +523,16 @@ ggsave(
 ggsave(
   filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI_log.png",
   plot     = figure2_plotlevel_log,
+  width    = 174,
+  height   = 174,
+  units    = "mm",
+  dpi      = 600,
+  bg       = "white"
+)
+
+ggsave(
+  filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI_dualaxis.png",
+  plot     = figure2_dual_axis_plotlevel,
   width    = 174,
   height   = 174,
   units    = "mm",
