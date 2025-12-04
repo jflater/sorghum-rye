@@ -328,7 +328,7 @@ cumulative_flux_plot <- ggplot(cum_flux_summary,
   scale_fill_treatments() +
   scale_x_date(date_breaks = "1 month", date_labels = "%b") +
   labs(x = "Month",
-       y = expression("Cumulative N"[2]*"O Flux (g N ha"^-1*")"),
+       y = expression("Cumulative N"[2]*"O Flux (kg N ha"^-1*")"),
        color = "Treatment", fill = "Treatment") +
   facet_wrap(~year, nrow = 1, scales = "free_x") +
   theme_publication() +
@@ -472,14 +472,14 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
                             aes(x = date, y = cum_flux_mean, color = Treatment, fill = Treatment)) +
     geom_ribbon(aes(ymin = pmax(cum_flux_mean - cum_flux_ci, 0),
                     ymax = cum_flux_mean + cum_flux_ci),
-                alpha = 0.2, linewidth = 0) +
+                alpha = 0.15, linewidth = 0) +
     geom_line(linewidth = 1.1) +
     scale_color_treatments() +
     scale_fill_treatments() +
     scale_x_date(date_breaks = "1 month", date_labels = "%b",
                  limits = c(year_start, year_end)) +
     scale_y_continuous(
-      name = if (!is_right_panel) expression("Cumulative N"[2]*"O Flux (g N ha"^-1*")") else "",
+      name = if (!is_right_panel) expression("Cumulative N"[2]*"O Flux (kg N ha"^-1*")") else "",
       limits = c(0, global_max_cum_flux)
     ) +
     labs(x = "Month") +
