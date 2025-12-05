@@ -168,12 +168,8 @@ daily_leaching_significance <- leaching_data %>%
       sorghum_rye_loss <- sorghum_rye_loss[!is.na(sorghum_rye_loss)]
 
       # Perform t-test if we have enough data
-      if (length(sorghum_loss) >= 2 && length(sorghum_rye_loss) >= 2) {
-        tryCatch(
-          {
-            t_result <- t.test(sorghum_loss, sorghum_rye_loss)
-            t_result$p.value
-          },
+      if (length(sorghum_loss) >= 3 && length(sorghum_rye_loss) >= 3) {
+        tryCatch(wilcox.test(sorghum_loss, sorghum_rye_loss, exact = FALSE)$p.value,
           error = function(e) NA_real_
         )
       } else {
@@ -254,6 +250,10 @@ global_max_cum_loss <- max(cum_leaching_trimmed$cum_loss + cum_leaching_trimmed$
 global_precip_scale_factor_leaching <- global_max_loss * 0.4 / global_max_precip_leaching
 global_plot_top_leaching <- global_max_loss * 1.1
 
+fert_events <- tibble(
+  year = c(2023, 2024),
+  fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
+)
 # Updated dual-axis function (matches Figure 2 structure)
 create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
   leaching_year <- daily_leaching_summary %>% filter(year == year_val)
@@ -261,13 +261,14 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
   star_year <- leaching_star_data %>% filter(year == year_val)
   cum_year <- cum_leaching_trimmed %>% filter(year == year_val)
   obs_year <- obs_points_trimmed %>% filter(year == year_val)
-
+  fert_year <- fert_events %>% filter(year == year_val)
   # axis limits: actual leaching measurement window for this year
   year_range <- actual_leaching_date_ranges %>%
     dplyr::filter(year == year_val)
 
   year_start <- year_range$min_date
   year_end <- year_range$max_date
+
   # ---- DAILY PANEL ----
   daily_plot <- ggplot() +
     geom_rect(
@@ -289,10 +290,15 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = treatment),
       width = 0.2, alpha = 0.5
     ) +
+    geom_vline(
+      data = fert_year,
+      aes(xintercept = as.numeric(fertilizer_date)),
+      linetype = "dashed", color = "red", alpha = 0.7
+    ) +
     geom_text(
       data = star_year,
       aes(x = date, y = star_y, label = star_label),
-      color = "black", size = 8
+      color = "black", size = 5
     ) +
     scale_color_treatments() +
     guides(color = "none") +
@@ -301,7 +307,7 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       limits = c(year_start, year_end)
     ) +
     scale_y_continuous(
-      name = if (!is_right_panel) expression("Daily N Loss (kg N ha"^-1 * " day"^-1 * ")") else "",
+      name = if (!is_right_panel) expression("Daily Inorganic N Loss (kg N ha"^-1 * " day"^-1 * ")") else "",
       limits = c(0, global_plot_top_leaching),
       sec.axis = sec_axis(~ (global_plot_top_leaching - .) / global_precip_scale_factor_leaching,
         name = if (is_right_panel) "Daily Precipitation (mm)" else ""
@@ -341,17 +347,17 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       limits = c(year_start, year_end)
     ) +
     scale_y_continuous(
-      name = if (!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1 * ")") else "",
+      name = if (!is_right_panel) expression("Cumulative Inorganic N Loss (kg N ha"^-1 * ")") else "",
       limits = c(0, global_max_cum_loss)
     ) +
     labs(x = "Month") +
     theme_publication() +
     theme(
-      legend.position = "none",
       axis.text.y = if (is_right_panel) element_blank() else element_text(),
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.title.y = if (is_right_panel) element_blank() else element_text()
-    )
+    ) +
+    labs(color = "Treatment", fill = "Treatment")
 
   # ---- Combine top + bottom panels ----
   (daily_plot / cumulative_plot) +
@@ -371,7 +377,13 @@ figure3_dual_axis <- (leach_2023 | leach_2024) +
   )
 
 figure3_dual_axis
-# ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2.png",
-#       figure3_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
-# ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2BIG.png",
-#       figure3_dual_axis, width = 13.3, height = 7.5, dpi = 300, bg = "white")
+
+ggsave(
+  filename = "figures/figure3_dual_axis_leaching_precip_2023_2024.png",
+  plot     = figure3_dual_axis,
+  width    = 174,
+  height   = 174,
+  units    = "mm",
+  dpi      = 600,
+  bg       = "white"
+)
