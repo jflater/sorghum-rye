@@ -382,7 +382,7 @@ ggsave(
   filename = "figures/figure3_dual_axis_leaching_precip_2023_2024.png",
   plot     = figure3_dual_axis,
   width    = 174,
-  height   = 174,
+  height   = 234,
   units    = "mm",
   dpi      = 600,
   bg       = "white"

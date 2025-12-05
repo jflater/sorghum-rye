@@ -534,7 +534,7 @@ ggsave(
   filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI_dualaxis.png",
   plot     = figure2_dual_axis_plotlevel,
   width    = 174,
-  height   = 174,
+  height   = 234,
   units    = "mm",
   dpi      = 600,
   bg       = "white"
