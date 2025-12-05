@@ -87,9 +87,12 @@ rain <- rain %>%
 plot_area_ft2 <- 120 * 160
 plot_area_ha <- plot_area_ft2 / 107639.1041671
 
-# Build daily treatment means and SE for leaching
+# Build daily treatment means and SE for leaching (plot-level daily loss)
 daily_leaching <- leaching_data %>%
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  filter(
+    treatment %in% c("Sorghum", "Sorghum + Rye"),
+    !is.na(total_n_loss_mg) # keep only days with actual N loss data
+  ) %>%
   mutate(
     daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
   ) %>%
@@ -100,58 +103,50 @@ daily_leaching <- leaching_data %>%
   ) %>%
   arrange(plot, treatment, year, date)
 
-# Calculate treatment means and SE for daily losses
+# Treatment means and SE for *daily* losses (for top panel)
 daily_leaching_summary <- daily_leaching %>%
   group_by(treatment, year, date) %>%
   summarise(
     mean_loss = mean(daily_loss, na.rm = TRUE),
-    se_loss = sd(daily_loss, na.rm = TRUE) / sqrt(sum(!is.na(daily_loss))),
+    se_loss   = sd(daily_loss, na.rm = TRUE) / sqrt(sum(!is.na(daily_loss))),
+    .groups   = "drop"
+  )
+# -----------------------------------------------------------------------------
+# 4b. Plot-level cumulative leaching and treatment-level SE for ribbons
+# -----------------------------------------------------------------------------
+
+# 1) Cumulative N loss per plot, using the existing cumulative_n_loss_mg
+cum_leaching_plot <- leaching_data %>%
+  filter(
+    treatment %in% c("Sorghum", "Sorghum + Rye"),
+    !is.na(cumulative_n_loss_mg)
+  ) %>%
+  mutate(
+    cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha # mg -> kg N ha^-1
+  ) %>%
+  group_by(plot, treatment, year, date) %>%
+  summarise(
+    cum_loss_kgha = mean(cum_loss_kgha, na.rm = TRUE), # just in case of duplicates
     .groups = "drop"
   )
+# 2) Treatment means and SE of cumulative loss at each date
+cum_leaching_combined <- cum_leaching_plot %>%
+  group_by(treatment, year, date) %>%
+  summarise(
+    vals = list(cum_loss_kgha[!is.na(cum_loss_kgha)]),
+    n_plots = length(vals[[1]]),
+    cum_loss = mean(vals[[1]]),
+    cum_se = if (n_plots > 1) sd(vals[[1]]) / sqrt(n_plots) else 0,
+    .groups = "drop"
+  ) %>%
+  select(-vals)
 
-# Build cumulative leaching with robust handling for sparse observations
-cum_leaching_combined <- daily_leaching_summary %>%
-  arrange(treatment, year, date) %>%
-  group_by(treatment, year) %>%
-  group_modify(~{
-    df <- .x
-    if (nrow(df) == 0) return(tibble())
-    # Date span limited to observed range
-    start_date <- min(df$date, na.rm = TRUE)
-    end_date   <- max(df$date, na.rm = TRUE)
-    all_dates  <- tibble(date = seq.Date(start_date, end_date, by = "day"))
-    df_full <- all_dates %>% left_join(df, by = "date")
-    # Interpolate within range when >= 2 points, otherwise treat missing days as 0
-    n_pts <- sum(!is.na(df$mean_loss))
-    if (n_pts >= 2) {
-      mean_loss_interp <- approx(x = df$date[!is.na(df$mean_loss)], y = df$mean_loss[!is.na(df$mean_loss)],
-                                 xout = df_full$date, rule = 1, ties = "ordered")$y
-      se_loss_interp   <- approx(x = df$date[!is.na(df$se_loss)], y = df$se_loss[!is.na(df$se_loss)],
-                                 xout = df_full$date, rule = 1, ties = "ordered")$y
-      df_full <- df_full %>% mutate(
-        mean_loss_interp = mean_loss_interp,
-        se_loss_interp   = se_loss_interp
-      )
-    } else {
-      df_full <- df_full %>% mutate(
-        mean_loss_interp = replace_na(mean_loss, 0),
-        se_loss_interp   = replace_na(se_loss, 0)
-      )
-    }
-    df_full %>%
-      mutate(
-        cum_loss = cumsum(replace_na(mean_loss_interp, 0)),
-        cum_se   = sqrt(cumsum(replace_na(se_loss_interp, 0)^2))
-      )
-  }) %>%
-  ungroup()
-
-# Compute observed cumulative points for visibility when sparse
-obs_points <- daily_leaching_summary %>%
-  group_by(treatment, year) %>%
-  arrange(date) %>%
-  mutate(cum_obs = cumsum(replace_na(mean_loss, 0))) %>%
-  ungroup()
+# 3) "Observed" cumulative points for plotting (just the mean curve)
+obs_points <- cum_leaching_combined %>%
+  transmute(
+    treatment, year, date,
+    cum_obs = cum_loss
+  )
 
 # Calculate daily significance tests for leaching between treatments
 daily_leaching_significance <- leaching_data %>%
@@ -174,10 +169,13 @@ daily_leaching_significance <- leaching_data %>%
 
       # Perform t-test if we have enough data
       if (length(sorghum_loss) >= 2 && length(sorghum_rye_loss) >= 2) {
-        tryCatch({
-          t_result <- t.test(sorghum_loss, sorghum_rye_loss)
-          t_result$p.value
-        }, error = function(e) NA_real_)
+        tryCatch(
+          {
+            t_result <- t.test(sorghum_loss, sorghum_rye_loss)
+            t_result$p.value
+          },
+          error = function(e) NA_real_
+        )
       } else {
         NA_real_
       }
@@ -223,15 +221,25 @@ daily_precip_leaching <- rain %>%
   filter(date >= min_date, date <= max_date) %>%
   select(date, year, precipmm)
 
-# Subset cumulative data to match actual measurement date range
+# Subset cumulative data to the observed cumulative date range per year
 cum_leaching_trimmed <- cum_leaching_combined %>%
-  left_join(actual_leaching_date_ranges, by = "year") %>%
+  group_by(year) %>%
+  mutate(
+    min_date = min(date, na.rm = TRUE),
+    max_date = max(date, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
   filter(date >= min_date, date <= max_date) %>%
   select(-min_date, -max_date)
 
 # Also trim observed points to match
 obs_points_trimmed <- obs_points %>%
-  left_join(actual_leaching_date_ranges, by = "year") %>%
+  group_by(year) %>%
+  mutate(
+    min_date = min(date, na.rm = TRUE),
+    max_date = max(date, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
   filter(date >= min_date, date <= max_date) %>%
   select(-min_date, -max_date)
 
@@ -249,22 +257,26 @@ global_plot_top_leaching <- global_max_loss * 1.1
 # Updated dual-axis function (matches Figure 2 structure)
 create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
   leaching_year <- daily_leaching_summary %>% filter(year == year_val)
-  precip_year   <- daily_precip_leaching  %>% filter(year == year_val)
-  star_year     <- leaching_star_data     %>% filter(year == year_val)
-  cum_year      <- cum_leaching_trimmed   %>% filter(year == year_val)
-  obs_year      <- obs_points_trimmed     %>% filter(year == year_val)
+  precip_year <- daily_precip_leaching %>% filter(year == year_val)
+  star_year <- leaching_star_data %>% filter(year == year_val)
+  cum_year <- cum_leaching_trimmed %>% filter(year == year_val)
+  obs_year <- obs_points_trimmed %>% filter(year == year_val)
 
-  # full-year axis limits (Jan 1–Dec 31)
-  year_start <- as.Date(sprintf("%d-01-01", year_val))
-  year_end   <- as.Date(sprintf("%d-12-31", year_val))
+  # axis limits: actual leaching measurement window for this year
+  year_range <- actual_leaching_date_ranges %>%
+    dplyr::filter(year == year_val)
 
+  year_start <- year_range$min_date
+  year_end <- year_range$max_date
   # ---- DAILY PANEL ----
   daily_plot <- ggplot() +
     geom_rect(
       data = precip_year,
-      aes(xmin = date - 0.5, xmax = date + 0.5,
-          ymin = global_plot_top_leaching - precipmm * global_precip_scale_factor_leaching,
-          ymax = global_plot_top_leaching),
+      aes(
+        xmin = date - 0.5, xmax = date + 0.5,
+        ymin = global_plot_top_leaching - precipmm * global_precip_scale_factor_leaching,
+        ymax = global_plot_top_leaching
+      ),
       fill = "#377EB8", alpha = 0.7
     ) +
     geom_point(
@@ -284,13 +296,16 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     ) +
     scale_color_treatments() +
     guides(color = "none") +
-    scale_x_date(date_breaks = "1 month", date_labels = "%b",
-                 limits = c(year_start, year_end)) +
+    scale_x_date(
+      date_breaks = "1 month", date_labels = "%b",
+      limits = c(year_start, year_end)
+    ) +
     scale_y_continuous(
-      name = if (!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" day"^-1*")") else "",
+      name = if (!is_right_panel) expression("Daily N Loss (kg N ha"^-1 * " day"^-1 * ")") else "",
       limits = c(0, global_plot_top_leaching),
       sec.axis = sec_axis(~ (global_plot_top_leaching - .) / global_precip_scale_factor_leaching,
-                          name = if (is_right_panel) "Daily Precipitation (mm)" else "")
+        name = if (is_right_panel) "Daily Precipitation (mm)" else ""
+      )
     ) +
     theme_publication() +
     theme(
@@ -326,7 +341,7 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       limits = c(year_start, year_end)
     ) +
     scale_y_continuous(
-      name = if (!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1*")") else "",
+      name = if (!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1 * ")") else "",
       limits = c(0, global_max_cum_loss)
     ) +
     labs(x = "Month") +
@@ -349,16 +364,14 @@ leach_2024 <- create_leaching_dual_axis_plot(2024, is_right_panel = TRUE)
 
 figure3_dual_axis <- (leach_2023 | leach_2024) +
   patchwork::plot_layout(guides = "collect") &
-  theme(legend.position = "bottom",
-        legend.justification = "center",
-        legend.box.just = "center")
+  theme(
+    legend.position = "bottom",
+    legend.justification = "center",
+    legend.box.just = "center"
+  )
 
 figure3_dual_axis
-ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2.png",
-       figure3_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
-ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2BIG.png",
-       figure3_dual_axis, width = 13.3, height = 7.5, dpi = 300, bg = "white")
-
-cat("\nFigure saved to:\n")
-cat("  - figures/figure3_dual_axis_leaching_precip_2023_2024v2.png\n")
-cat("  - figures/figure3_dual_axis_leaching_precip_2023_2024v2BIG.png\n")
+# ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2.png",
+#       figure3_dual_axis, width = 6.5, height = 8, dpi = 300, bg = "white")
+# ggsave("figures/figure3_dual_axis_leaching_precip_2023_2024v2BIG.png",
+#       figure3_dual_axis, width = 13.3, height = 7.5, dpi = 300, bg = "white")
