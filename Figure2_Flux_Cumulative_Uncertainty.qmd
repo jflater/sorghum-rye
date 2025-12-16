@@ -542,3 +542,24 @@ ggsave(
 ```
 
 # Check Units!!!!
+
+Get range of peak flux for sorghum and sorghum + rye treatments
+```{r}
+target_treatments <- c("Sorghum", "Sorghum + Rye")
+
+peak_stats <- flux_data %>%
+  mutate(year = year(date)) %>%
+  filter(treatment %in% target_treatments) %>%
+  filter(year %in% c(2023, 2024)) %>%
+  group_by(plot, year) %>%
+  summarise(
+    max_flux = max(gnha_day_no_negative, na.rm = TRUE), .groups = "drop"
+  ) %>%
+  group_by(year) %>%
+  summarise(
+    min_flux = min(max_flux, na.rm = TRUE),
+    max_flux = max(max_flux, na.rm = TRUE)
+  )
+
+peak_stats
+```
