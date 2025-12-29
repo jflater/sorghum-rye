@@ -1587,7 +1587,7 @@ six_panel_plot <-
     legend.margin        = margin(b = 4)
   )
 
-ggsave("figures/figure1_weather.png", six_panel_plot, width = 174, height = 174, dpi = 600, bg = "white", units = "mm")
+ggsave("figures/figure1_weather.png", six_panel_plot, width = 84, height = 84, dpi = 600, bg = "white", units = "mm")
 six_panel_plot
 
 ```
