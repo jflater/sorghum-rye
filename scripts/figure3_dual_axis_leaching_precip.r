@@ -33,6 +33,8 @@ theme_publication <- function(base_size = 12) {
       panel.grid.major = element_line(color = alpha("#B7B5B3", 0.2)),
       panel.grid.minor = element_blank(),
       text = element_text(color = "#000000ff"),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+      axis.line = element_blank(),
       axis.text = element_text(color = "#000000ff"),
       strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
       axis.text.x = element_text(angle = 45, hjust = 1),
@@ -43,7 +45,7 @@ theme_publication <- function(base_size = 12) {
 # Treatment colors
 treatment_colors <- c(
   "Sorghum" = "#D8D97AFF",
-  "Sorghum + Rye" = "#95C36EFF",
+  "Sorghum + WCC" = "#95C36EFF",
   "Corn" = "#74C8C3FF",
   "Soy" = "#0A2E57FF"
 )
@@ -93,6 +95,7 @@ daily_leaching <- leaching_data %>%
     treatment %in% c("Sorghum", "Sorghum + Rye"),
     !is.na(total_n_loss_mg) # keep only days with actual N loss data
   ) %>%
+  mutate(treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment)) %>%
   mutate(
     daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
   ) %>%
@@ -121,6 +124,7 @@ cum_leaching_plot <- leaching_data %>%
     treatment %in% c("Sorghum", "Sorghum + Rye"),
     !is.na(cumulative_n_loss_mg)
   ) %>%
+  mutate(treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment)) %>%
   mutate(
     cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha # mg -> kg N ha^-1
   ) %>%
@@ -151,6 +155,7 @@ obs_points <- cum_leaching_combined %>%
 # Calculate daily significance tests for leaching between treatments
 daily_leaching_significance <- leaching_data %>%
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment)) %>%
   mutate(
     year = lubridate::year(date),
     daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
@@ -161,7 +166,7 @@ daily_leaching_significance <- leaching_data %>%
     p_value = {
       # Get leaching values for each treatment
       sorghum_loss <- daily_n_loss_kgha[treatment == "Sorghum"]
-      sorghum_rye_loss <- daily_n_loss_kgha[treatment == "Sorghum + Rye"]
+      sorghum_rye_loss <- daily_n_loss_kgha[treatment == "Sorghum + WCC"]
 
       # Remove NA values
       sorghum_loss <- sorghum_loss[!is.na(sorghum_loss)]
@@ -197,6 +202,7 @@ leaching_star_data <- daily_leaching_significance %>%
 # Get actual measurement date ranges from RAW leaching data
 actual_leaching_date_ranges <- leaching_data %>%
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment)) %>%
   mutate(year = lubridate::year(date)) %>%
   filter(year %in% c(2023, 2024), !is.na(total_n_loss_mg)) %>%
   group_by(year) %>%
@@ -212,10 +218,7 @@ print(actual_leaching_date_ranges)
 # Filter precipitation to match ACTUAL leaching measurement periods
 daily_precip_leaching <- rain %>%
   transmute(date, year, precipmm) %>%
-  filter(year %in% c(2023, 2024)) %>%
-  left_join(actual_leaching_date_ranges, by = "year") %>%
-  filter(date >= min_date, date <= max_date) %>%
-  select(date, year, precipmm)
+  filter(year %in% c(2023, 2024))
 
 # Subset cumulative data to the observed cumulative date range per year
 cum_leaching_trimmed <- cum_leaching_combined %>%
@@ -263,11 +266,8 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
   obs_year <- obs_points_trimmed %>% filter(year == year_val)
   fert_year <- fert_events %>% filter(year == year_val)
   # axis limits: actual leaching measurement window for this year
-  year_range <- actual_leaching_date_ranges %>%
-    dplyr::filter(year == year_val)
-
-  year_start <- year_range$min_date
-  year_end <- year_range$max_date
+  year_start <- as.Date(paste0(year_val, "-01-01"))
+  year_end <- as.Date(paste0(year_val, "-12-31"))
 
   # ---- DAILY PANEL ----
   daily_plot <- ggplot() +
@@ -290,11 +290,11 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = treatment),
       width = 0.2, alpha = 0.5
     ) +
-    geom_vline(
-      data = fert_year,
-      aes(xintercept = as.numeric(fertilizer_date)),
-      linetype = "dashed", color = "red", alpha = 0.7
-    ) +
+    # geom_vline(
+    #   data = fert_year,
+    #   aes(xintercept = as.numeric(fertilizer_date)),
+    #   linetype = "dashed", color = "red", alpha = 0.7
+    # ) +
     geom_text(
       data = star_year,
       aes(x = date, y = star_y, label = star_label),
@@ -303,11 +303,11 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     scale_color_treatments() +
     guides(color = "none") +
     scale_x_date(
-      date_breaks = "1 month", date_labels = "%b",
+      date_breaks = "2 month", date_labels = "%b",
       limits = c(year_start, year_end)
     ) +
     scale_y_continuous(
-      name = if (!is_right_panel) expression("Daily Inorganic N Loss (kg N ha"^-1 * " day"^-1 * ")") else "",
+      name = if (!is_right_panel) expression("Daily N Loss (kg N ha"^-1 * " d"^-1 * ")") else "",
       limits = c(0, global_plot_top_leaching),
       sec.axis = sec_axis(~ (global_plot_top_leaching - .) / global_precip_scale_factor_leaching,
         name = if (is_right_panel) "Daily Precipitation (mm)" else ""
@@ -318,6 +318,7 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       legend.position = "none",
       axis.text.x = element_blank(),
       axis.ticks.x = element_blank(),
+      axis.title.x = element_blank(),
       axis.text.y = if (is_right_panel) element_blank() else element_text(),
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.title.y = if (is_right_panel) element_blank() else element_text(),
@@ -325,7 +326,6 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
       axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank()
     ) +
-    labs(title = paste("", year_val), x = "") +
     geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
 
   # ---- CUMULATIVE PANEL (now identical to Figure 2) ----
@@ -335,19 +335,19 @@ create_leaching_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       alpha = 0.2, linewidth = 0
     ) +
     geom_line(linewidth = 1.1) +
-    geom_point(
-      data = obs_year,
-      aes(x = date, y = cum_obs, color = treatment),
-      size = 1.8
-    ) +
+    # geom_point(
+    #   data = obs_year,
+    #   aes(x = date, y = cum_obs, color = treatment),
+    #   size = 1.8
+    # ) +
     scale_color_treatments() +
     scale_fill_treatments() +
     scale_x_date(
-      date_breaks = "1 month", date_labels = "%b",
+      date_breaks = "2 month", date_labels = "%b",
       limits = c(year_start, year_end)
     ) +
     scale_y_continuous(
-      name = if (!is_right_panel) expression("Cumulative Inorganic N Loss (kg N ha"^-1 * ")") else "",
+      name = if (!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1 * ")") else "",
       limits = c(0, global_max_cum_loss)
     ) +
     labs(x = "Month") +
@@ -371,7 +371,7 @@ leach_2024 <- create_leaching_dual_axis_plot(2024, is_right_panel = TRUE)
 figure3_dual_axis <- (leach_2023 | leach_2024) +
   patchwork::plot_layout(guides = "collect") &
   theme(
-    legend.position = "bottom",
+    legend.position = "top",
     legend.justification = "center",
     legend.box.just = "center"
   )
@@ -382,8 +382,27 @@ ggsave(
   filename = "figures/figure3_dual_axis_leaching_precip_2023_2024.png",
   plot     = figure3_dual_axis,
   width    = 174,
-  height   = 234,
+  height   = 174,
   units    = "mm",
   dpi      = 600,
   bg       = "white"
 )
+
+
+# find what percent nitrate is of total leaching
+leaching_data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment)) %>%
+  mutate(
+    year = lubridate::year(date),
+    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha,
+    daily_no3_loss_kgha = (nitrate_loss_mg / 1e6) / plot_area_ha
+  ) %>%
+  filter(year %in% c(2023, 2024)) %>%
+  group_by(treatment, year) %>%
+  summarise(
+    total_n_loss = sum(daily_n_loss_kgha, na.rm = TRUE),
+    total_no3_loss = sum(daily_no3_loss_kgha, na.rm = TRUE),
+    percent_no3 = total_no3_loss / total_n_loss * 100,
+    .groups = "drop"
+  ) 

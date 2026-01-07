@@ -13,7 +13,8 @@ seasonal_flux <- read_csv("data/seasonal_flux_combined.csv") %>%
     se_flux = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(n()),
     .groups = "drop"
   ) %>%
-  filter(Treatment %in% c("Sorghum", "Sorghum + Rye") | is.na(Treatment)) %>%
+  mutate(Treatment = if_else(Treatment == "Sorghum + Rye", "Sorghum + WCC", Treatment)) %>%
+  filter(Treatment %in% c("Sorghum", "Sorghum + WCC") | is.na(Treatment)) %>%
   pivot_wider(names_from = Treatment, values_from = mean_flux)
 
 compare_df_cols(
@@ -31,7 +32,7 @@ treatment_colors <- c(
   "Corn" = "#fda500",
   "Soy" = "#E9967A",
   "Sorghum" = "#D2B48C",
-  "Sorghum + Rye" = "#8B4513"
+  "Sorghum + WCC" = "#8B4513"
 )
 
 theme_sabr <- function(base_size = 14) {
@@ -55,15 +56,14 @@ fert_events <- data.frame(
 
 df <- daily %>%
   pivot_longer(
-    c(Sorghum, `Sorghum + Rye`),
+    c(Sorghum, `Sorghum + WCC`),
     names_to = "treatment",
     values_to = "value"
   ) %>%
   mutate(
-    treatment = factor(treatment, levels = c("Sorghum", "Sorghum + Rye"))
-  ) %>%
-  select(day, treatment, value, se_flux) %>%
+    treatment = factor(treatment, levels = c("Sorghum", "Sorghum + WCC")) |>
   filter(!is.na(value) & year(day) %in% c(2023))
+)
 
 
 year_min <- year(min(df$day, na.rm = TRUE))
@@ -138,10 +138,11 @@ flag_df <- read_csv("data/seasonal_flux_combined.csv") %>%
     mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
     .groups = "drop"
   ) %>%
+  mutate(Treatment = if_else(Treatment == "Sorghum + Rye", "Sorghum + WCC", Treatment)) %>%
   pivot_wider(names_from = Treatment, values_from = mean_flux) %>%
-  select(day, Sorghum, `Sorghum + Rye`) %>%
+  select(day, Sorghum, `Sorghum + WCC`) %>%
   mutate(
-    diff = abs(Sorghum - `Sorghum + Rye`),
+    diff = abs(Sorghum - `Sorghum + WCC`),
     flag = ifelse(diff > diff_thresh, "Flagged", "Normal")
   ) %>%
   filter(flag == "Flagged")
@@ -190,12 +191,12 @@ combined_plot
 ########### 2024###############################################################
 df <- daily %>%
   pivot_longer(
-    c(Sorghum, `Sorghum + Rye`),
+    c(Sorghum, `Sorghum + WCC`),
     names_to = "treatment",
     values_to = "value"
   ) %>%
   mutate(
-    treatment = factor(treatment, levels = c("Sorghum", "Sorghum + Rye"))
+    treatment = factor(treatment, levels = c("Sorghum", "Sorghum + WCC"))
   ) %>%
   select(day, treatment, value, se_flux) %>%
   filter(!is.na(value) & year(day) %in% c(2024))
@@ -277,10 +278,11 @@ flag_df <- read_csv("data/seasonal_flux_combined.csv") %>%
     mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
     .groups = "drop"
   ) %>%
+  mutate(Treatment = if_else(Treatment == "Sorghum + Rye", "Sorghum + WCC", Treatment)) %>%
   pivot_wider(names_from = Treatment, values_from = mean_flux) %>%
-  select(day, Sorghum, `Sorghum + Rye`) %>%
+  select(day, Sorghum, `Sorghum + WCC`) %>%
   mutate(
-    diff = abs(Sorghum - `Sorghum + Rye`),
+    diff = abs(Sorghum - `Sorghum + WCC`),
     flag = ifelse(diff > diff_thresh, "Flagged", "Normal")
   ) %>%
   filter(flag == "Flagged")
@@ -331,7 +333,8 @@ combined_plot | combined_plot2
 # ---- load daily means + SE for 2023 ----
 daily_se <- read_csv("data/seasonal_flux_combined.csv") %>%
   rename(day = year_month_day) %>%
-  filter(Treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(Treatment = if_else(Treatment == "Sorghum + Rye", "Sorghum + WCC", Treatment)) %>%
+  filter(Treatment %in% c("Sorghum", "Sorghum + WCC")) %>%
   mutate(day = as.Date(day)) %>%
   filter(year(day) == 2023) %>%
   group_by(Treatment, day) %>%
@@ -345,7 +348,7 @@ daily_se <- read_csv("data/seasonal_flux_combined.csv") %>%
 start <- as.Date("2023-01-01")
 end <- as.Date("2023-12-31")
 grid <- expand_grid(
-  Treatment = c("Sorghum", "Sorghum + Rye"),
+  Treatment = c("Sorghum", "Sorghum + WCC"),
   day = seq.Date(start, end, by = "day")
 )
 
@@ -380,7 +383,7 @@ interp <- grid %>%
   ungroup()
 
 # ---- plot cumulative with ribbon ----
-treatment_colors <- c("Sorghum" = "#D2B48C", "Sorghum + Rye" = "#8B4513")
+treatment_colors <- c("Sorghum" = "#D2B48C", "Sorghum + WCC" = "#8B4513")
 
 p_cum <- ggplot(interp, aes(day, cum_flux, color = Treatment, fill = Treatment)) +
   geom_ribbon(aes(ymin = cum_flux - cum_se, ymax = cum_flux + cum_se),
@@ -410,7 +413,8 @@ p_cum
 # ---- load daily means + SE for 2024 ----
 daily_se <- read_csv("data/seasonal_flux_combined.csv") %>%
   rename(day = year_month_day) %>%
-  filter(Treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
+  mutate(Treatment = if_else(Treatment == "Sorghum + Rye", "Sorghum + WCC", Treatment)) %>%
+  filter(Treatment %in% c("Sorghum", "Sorghum + WCC")) %>%
   mutate(day = as.Date(day)) %>%
   filter(year(day) == 2024) %>%
   group_by(Treatment, day) %>%
@@ -424,7 +428,7 @@ daily_se <- read_csv("data/seasonal_flux_combined.csv") %>%
 start <- as.Date("2024-01-01")
 end <- as.Date("2024-12-30")
 grid <- expand_grid(
-  Treatment = c("Sorghum", "Sorghum + Rye"),
+  Treatment = c("Sorghum", "Sorghum + WCC"),
   day = seq.Date(start, end, by = "day")
 )
 
@@ -459,7 +463,7 @@ interp <- grid %>%
   ungroup()
 
 # ---- plot cumulative with ribbon ----
-treatment_colors <- c("Sorghum" = "#D2B48C", "Sorghum + Rye" = "#8B4513")
+treatment_colors <- c("Sorghum" = "#D2B48C", "Sorghum + WCC" = "#8B4513")
 
 p_cum2 <- ggplot(interp, aes(day, cum_flux, color = Treatment, fill = Treatment)) +
   geom_ribbon(aes(ymin = cum_flux - cum_se, ymax = cum_flux + cum_se),

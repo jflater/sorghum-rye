@@ -1,18 +1,49 @@
+# Libraries
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(patchwork)
+```
+
 # Theme
+
 ```{r}
 # Custom theme for consistency
 theme_publication <- function(base_size = 12) {
-  theme_minimal(base_size = base_size) +
+  theme_minimal(base_size = base_size, base_family = "Arial") +
     theme(
+      # Backgrounds
       panel.background = element_rect(fill = "#ffffffff", color = NA),
       plot.background = element_rect(fill = "#ffffffff", color = NA),
+      strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      
+      # Grid
       panel.grid.major = element_line(color = alpha("#B7B5B3", 0.2)),
       panel.grid.minor = element_blank(),
+      panel.spacing = unit(2, "lines"),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+
+      # Text & Axis
       text = element_text(color = "#000000ff"),
-      axis.text = element_text(color = "#000000ff"),
-      strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      panel.spacing = unit(2, "lines")
+      axis.text = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title = element_text(size = base_size),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line = element_line(color = "black", linewidth = 0.5),
+      axis.ticks = element_line(color = "black", linewidth = 0.5),
+      
+      # Legend
+      legend.position = "top",
+      legend.justification = "center",
+      legend.direction = "horizontal",
+      legend.box = "horizontal",
+      legend.margin = margin(b = 1, unit = "pt"),
+      legend.box.margin = margin(b = 1, unit = "pt"),
+      legend.text = element_text(size = base_size * 0.9),
+      legend.title = element_text(size = base_size),
+      legend.key.width = unit(0.8, "cm"),
+      legend.key.height = unit(0.3, "cm")
     )
 }
 
@@ -30,6 +61,7 @@ scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
 ```
 
 # Data loading
+
 ```{r}
 rain <- read_xlsx("data/rain/historical_rain.xlsx")
 gdd <- read_xlsx("data/rain/historical_rain.xlsx")
@@ -38,6 +70,7 @@ flux_data <- read_csv("data/cleaned_flux_data.csv") |>
 ```
 
 # Figure 1: Precipitation and GDD plots with historical envelopes
+
 ```{r}
 # Precipitation and GDD plots with historical envelopes
 # Import historical rain and gdd data
@@ -136,18 +169,7 @@ rain_plot_v2 <- ggplot() +
   ) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b") +
   labs(x = "", y = "Cumulative Precipitation (mm)") +
-  theme_publication() +
-  theme(
-    legend.position = "top",
-    text = element_text(family = "Arial", size = 10),
-    axis.text = element_text(size = 8),
-    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-    axis.title = element_text(size = 10),
-    legend.text = element_text(size = 9),
-    legend.title = element_text(size = 10),
-    legend.key.width = unit(0.8, "cm"),
-    legend.key.height = unit(0.3, "cm")
-  )
+  theme_publication(base_size = 10)
 
 # GDD plot
 gdd_plot_v2 <- ggplot() +
@@ -173,31 +195,16 @@ gdd_plot_v2 <- ggplot() +
   ) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b") +
   labs(x = "", y = "Cumulative Growing Degree Days (GDD)") +
-  theme_publication() +
-  theme(
-    legend.position = "top",
-    text = element_text(family = "Arial", size = 10),
-    axis.text = element_text(size = 8),
-    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-    axis.title = element_text(size = 10),
-    legend.text = element_text(size = 9),
-    legend.title = element_text(size = 10),
-    legend.key.width = unit(0.8, "cm"),
-    legend.key.height = unit(0.3, "cm")
-  )
+  theme_publication(base_size = 10)
 
 # Combine into pdplot with shared legend
 six_panel_plot <- (rain_plot_v2 | gdd_plot_v2) +
   plot_layout(guides = "collect") &
+  theme_publication(base_size = 10) &
   theme(
     legend.position = "top",
-    legend.justification = "center",
-    legend.direction = "horizontal",
-    legend.box = "horizontal",
-    legend.margin = margin(b = 1, unit = "pt"),
-    legend.box.margin = margin(b = 1, unit = "pt"),
     plot.margin = margin(t = 3, r = 4, b = 2, l = 4, unit = "pt")
-  ) & 
+  ) &
   guides(
     color = guide_legend(nrow = 2, byrow = TRUE),
     linetype = guide_legend(nrow = 2, byrow = TRUE)
@@ -229,213 +236,6 @@ cat("Historical mean period (GDD):",  hist_range_gdd$start_date, "to", hist_rang
 ```
 
 # Figure 2: Soil moisture and temperature from LiCOR survey chamber
-```{r}
-# Soil moisture and temperature 4-panel plot
-
-# Calculate summary statistics
-moist_temp <- flux_data |>
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
-  rename(Treatment = treatment) |>
-  group_by(Treatment, year, date) |>
-  summarise(
-    mean_soil_moisture = mean(swc_2_mean, na.rm = TRUE),
-    mean_soil_temp = mean(ts_2_mean, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# Per-date t-tests between treatments
-raw_soil <- flux_data |>
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
-  rename(Treatment = treatment) |>
-  mutate(year = year(date))
-
-get_date_pvals <- function(df, value_col) {
-  df |>
-    group_by(year, date) |>
-    summarise(
-      p = {
-        vals <- .data[[value_col]]
-        trt  <- Treatment
-        has_two <- length(unique(na.omit(trt))) == 2
-        counts  <- table(trt[!is.na(vals)])
-        ok <- has_two && all(counts >= 1) && length(na.omit(vals)) >= 2
-        if (ok) {
-          out <- tryCatch(t.test(vals ~ trt)$p.value, error = function(e) NA_real_)
-          out
-        } else NA_real_
-      },
-      .groups = "drop"
-    ) |>
-    filter(!is.na(p) & p < 0.05)
-}
-
-pvals_moist <- get_date_pvals(raw_soil, "swc_2_mean")
-pvals_temp  <- get_date_pvals(raw_soil, "ts_2_mean")
-
-# Split data by year
-moist_temp_2023 <- filter(moist_temp, year == 2023)
-moist_temp_2024 <- filter(moist_temp, year == 2024)
-
-# Calculate global y-axis limits
-global_moisture_limits <- range(moist_temp$mean_soil_moisture, na.rm = TRUE)
-global_temp_limits <- range(moist_temp$mean_soil_temp, na.rm = TRUE)
-
-global_moisture_limits[2] <- global_moisture_limits[2] * 1.12
-global_temp_limits[2] <- global_temp_limits[2] * 1.12
-
-moisture_breaks <- pretty(global_moisture_limits, n = 5)
-temp_breaks <- pretty(global_temp_limits, n = 5)
-
-# Star positions for moisture
-moisture_stars <- moist_temp |>
-  group_by(year, date) |>
-  summarise(y_star = max(mean_soil_moisture, na.rm = TRUE) * 1.05, .groups = "drop") |>
-  inner_join(pvals_moist, by = c("year", "date")) |>
-  filter(is.finite(y_star))
-
-moisture_segments <- moisture_stars |>
-  distinct(year, date) |>
-  left_join(moist_temp, by = c("year", "date")) |>
-  group_by(year, date) |>
-  slice_max(order_by = mean_soil_moisture, n = 1, with_ties = FALSE) |>
-  mutate(
-    x = date - 2,
-    xend = date + 2,
-    y = 0.5
-  ) |>
-  ungroup()
-
-# Star positions for temperature
-temp_stars <- moist_temp |>
-  group_by(year, date) |>
-  summarise(y_star = max(mean_soil_temp, na.rm = TRUE) * 1.05, .groups = "drop") |>
-  inner_join(pvals_temp, by = c("year", "date")) |>
-  filter(is.finite(y_star))
-
-temp_segments <- temp_stars |>
-  distinct(year, date) |>
-  left_join(moist_temp, by = c("year", "date")) |>
-  group_by(year, date) |>
-  slice_max(order_by = mean_soil_temp, n = 1, with_ties = FALSE) |>
-  mutate(
-    x = date - 2,
-    xend = date + 2,
-    y = 35 
-  ) |>
-  ungroup()
-
-# 2023 Soil Moisture (bottom left)
-p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Treatment, shape = Treatment)) +
-  geom_line(linewidth = .5) +
-  geom_point(size = 1.5) +
-  scale_color_treatments() +
-  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b",
-               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
-  scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks, 
-                     expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "2023", y = expression("Volumetric Soil Moisture (cm"^3*" "*"cm"^-3*")")) +
-  geom_hline(yintercept = 0.5, color = "black", linewidth = 7) +
-  geom_segment(
-    data = moisture_segments |> filter(year == 2023),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
-  ) +
-  theme_publication() +
-  theme(legend.position = "none")
-
-# 2024 Soil Moisture (bottom right)
-p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Treatment, shape = Treatment)) +
-  geom_line(linewidth = .5) +
-  geom_point(size = 1.5) +
-  scale_color_treatments() +
-  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b",
-               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
-  scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks,
-                     expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "2024", y = "") +
-  geom_hline(yintercept = 0.5, color = "black", linewidth = 7) +
-  geom_segment(
-    data = moisture_segments |> filter(year == 2024),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
-  ) +
-  theme_publication() +
-  theme(
-    axis.text.y = element_blank(),
-    axis.ticks.y = element_blank(),
-    legend.position = "none"
-  )
-
-# 2023 Soil Temperature (top left)
-p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatment, shape = Treatment)) +
-  geom_line(linewidth = .5) +
-  geom_point(size = 1.5) +
-  scale_color_treatments() +
-  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b",
-               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
-  scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks,
-                     expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "", y = "Soil Temperature (°C)") +
-  geom_hline(yintercept = 35, color = "black", linewidth = 7) +
-  geom_segment(
-    data = temp_segments |> filter(year == 2023),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
-  ) +
-  theme_publication() +
-  theme(
-    axis.text.x = element_blank(),
-    axis.ticks.x = element_blank(),
-    legend.position = "none"
-  )
-
-# 2024 Soil Temperature (top right)
-p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatment, shape = Treatment)) +
-  geom_line(linewidth = .5) +
-  geom_point(size = 1.5) +
-  scale_color_treatments() +
-  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + Rye" = 15)) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b",
-               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
-  scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks,
-                     expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "", y = "") +
-  geom_hline(yintercept = 35, color = "black", linewidth = 7) +
-  geom_segment(
-    data = temp_segments |> filter(year == 2024),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
-  ) +
-  theme_publication() +
-  theme(
-    axis.text.x = element_blank(),
-    axis.ticks.x = element_blank(),
-    axis.text.y = element_blank(),
-    axis.ticks.y = element_blank(),
-    legend.position = "none"
-  )
-
-# Combine panels
-soil_4panel <- (p3 | p4) / (p1 | p2) +
-  patchwork::plot_layout(guides = "collect", heights = c(1, 1)) &
-  theme(
-    legend.position = "top",
-    legend.justification = "center",
-    legend.direction = "horizontal",
-    legend.box = "horizontal",
-    legend.margin = margin(b = 4)
-  )
-
-soil_4panel
-
-ggsave("figures/figure2_soil_moisture_temperature.png", soil_4panel, 
-       width = 174, height = 174, dpi = 600, bg = "white", units = "mm")
-```
-
-V2 
 
 ```{r}
 # Soil moisture and temperature 4-panel plot
@@ -491,7 +291,7 @@ global_moisture_limits <- range(moist_temp$mean_soil_moisture, na.rm = TRUE)
 global_temp_limits <- range(moist_temp$mean_soil_temp, na.rm = TRUE)
 
 global_moisture_limits[2] <- global_moisture_limits[2] * 1.12
-global_temp_limits[2] <- global_temp_limits[2] * 1.12
+global_temp_limits[2] <- 40
 
 moisture_breaks <- pretty(global_moisture_limits, n = 5)
 temp_breaks <- pretty(global_temp_limits, n = 5)
@@ -530,7 +330,7 @@ temp_segments <- temp_stars |>
   mutate(
     x = date - 2,
     xend = date + 2,
-    y = 35 
+    y = 40 
   ) |>
   ungroup()
 
@@ -538,140 +338,116 @@ temp_segments <- temp_stars |>
 p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Treatment, linetype = Treatment, shape = Treatment)) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.5) +
-  scale_color_manual(values = c("Sorghum" = treatment_colors["Sorghum"], "Sorghum + WCC" = treatment_colors["Sorghum + Rye"])) +
+  scale_color_manual(values = treatment_colors) +
   scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b",
                limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
   scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks, 
                      expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "Month", y = expression("Volumetric Soil Moisture (cm"^3*" "*"cm"^-3*")")) +
-  geom_hline(yintercept = 0.5, color = "grey90", linewidth = 7) +
+  labs(x = "Month", y = expression("Volumetric Soil Moisture (cm"^3*" "*"cm"^-3*")"),
+       color = "Treatment", linetype = "Treatment", shape = "Treatment") +
+  geom_hline(yintercept = 0.5, color = "black", linewidth = 7) +
   geom_segment(
     data = moisture_segments |> filter(year == 2023),
     aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
     linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
   ) +
-  theme_publication() +
-  theme(
-    legend.position = "none",
-    text = element_text(family = "Arial", size = 10),
-    axis.text = element_text(size = 8),
-    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-    axis.title = element_text(size = 10),
-    axis.line = element_line(color = "black", linewidth = 0.5),
-    axis.ticks = element_line(color = "black", linewidth = 0.5)
-  )
+  annotate("text", x = as.Date("2023-01-15"), y = 0.47,
+           label = "c", size = 4, color = "black", fontface = "bold") +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none")
 
 # 2024 Soil Moisture (bottom right)
 p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Treatment, linetype = Treatment, shape = Treatment)) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.5) +
-  scale_color_manual(values = c("Sorghum" = treatment_colors["Sorghum"], "Sorghum + WCC" = treatment_colors["Sorghum + Rye"])) +
+  scale_color_manual(values = treatment_colors) +
   scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b",
                limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
   scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks,
                      expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "Month", y = "") +
-  geom_hline(yintercept = 0.5, color = "grey90", linewidth = 7) +
+  labs(x = "Month", y = "", color = "Treatment", linetype = "Treatment", shape = "Treatment") +
+  geom_hline(yintercept = 0.5, color = "black", linewidth = 7) +
   geom_segment(
     data = moisture_segments |> filter(year == 2024),
     aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
     linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
   ) +
-  theme_publication() +
+  annotate("text", x = as.Date("2024-01-15"), y = 0.47,
+           label = "d", size = 4, color = "black", fontface = "bold") +
+  theme_publication(base_size = 10) +
   theme(
     axis.text.y = element_blank(),
     axis.ticks.y = element_blank(),
-    legend.position = "none",
-    text = element_text(family = "Arial", size = 10),
-    axis.text = element_text(size = 8),
-    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-    axis.title = element_text(size = 10),
-    axis.line = element_line(color = "black", linewidth = 0.5),
     axis.line.y = element_blank(),
-    axis.ticks.x = element_line(color = "black", linewidth = 0.5)
+    legend.position = "none"
   )
 
 # 2023 Soil Temperature (top left)
 p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatment, linetype = Treatment, shape = Treatment)) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.5) +
-  scale_color_manual(values = c("Sorghum" = treatment_colors["Sorghum"], "Sorghum + WCC" = treatment_colors["Sorghum + Rye"])) +
+  scale_color_manual(values = treatment_colors) +
   scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b",
                limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
   scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks,
-                     expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "", y = "Soil Temperature (°C)") +
-  geom_hline(yintercept = 35, color = "grey90", linewidth = 7) +
+                     expand = expansion(mult = c(0.05, 0.05))) +
+  labs(x = "", y = "Soil Temperature (°C)", color = "Treatment", linetype = "Treatment", shape = "Treatment") +
+  geom_hline(yintercept = 40, color = "black", linewidth = 7) +
   geom_segment(
     data = temp_segments |> filter(year == 2023),
     aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
     linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
   ) +
-  theme_publication() +
+  annotate("text", x = as.Date("2023-01-15"), y = 37,
+           label = "a", size = 4, color = "black", fontface = "bold") +
+  theme_publication(base_size = 10) +
   theme(
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
-    legend.position = "none",
-    text = element_text(family = "Arial", size = 10),
-    axis.text = element_text(size = 8),
-    axis.title = element_text(size = 10),
-    axis.line = element_line(color = "black", linewidth = 0.5),
     axis.line.x = element_blank(),
-    axis.ticks.y = element_line(color = "black", linewidth = 0.5)
+    legend.position = "none"
   )
 
 # 2024 Soil Temperature (top right)
 p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatment, linetype = Treatment, shape = Treatment)) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.5) +
-  scale_color_manual(values = c("Sorghum" = treatment_colors["Sorghum"], "Sorghum + WCC" = treatment_colors["Sorghum + Rye"])) +
+  scale_color_manual(values = treatment_colors) +
   scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b",
                limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
   scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks,
-                     expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "", y = "") +
-  geom_hline(yintercept = 35, color = "grey90", linewidth = 7) +
+                     expand = expansion(mult = c(0.05, 0.05))) +
+  labs(x = "", y = "", color = "Treatment", linetype = "Treatment", shape = "Treatment") +
+  geom_hline(yintercept = 40, color = "black", linewidth = 7) +
   geom_segment(
     data = temp_segments |> filter(year == 2024),
     aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
     linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
   ) +
-  theme_publication() +
+  annotate("text", x = as.Date("2024-01-15"), y = 37,
+           label = "b", size = 4, color = "black", fontface = "bold") +
+  theme_publication(base_size = 10) +
   theme(
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
     axis.text.y = element_blank(),
     axis.ticks.y = element_blank(),
-    legend.position = "none",
-    text = element_text(family = "Arial", size = 10),
-    axis.text = element_text(size = 8),
-    axis.title = element_text(size = 10),
-    axis.line = element_blank()
+    axis.line = element_blank(),
+    legend.position = "none"
   )
 
 # Combine panels
 soil_4panel <- (p3 | p4) / (p1 | p2) +
   patchwork::plot_layout(guides = "collect", heights = c(1, 1)) &
-  theme(
-    legend.position = "top",
-    legend.justification = "center",
-    legend.direction = "horizontal",
-    legend.box = "horizontal",
-    legend.margin = margin(b = 1, unit = "pt"),
-    legend.box.margin = margin(b = 1, unit = "pt"),
-    legend.text = element_text(size = 9),
-    legend.title = element_text(size = 10),
-    legend.key.width = unit(0.8, "cm"),
-    legend.key.height = unit(0.3, "cm")
-  ) &
+  theme(legend.position = "top") &
   guides(
     color = guide_legend(nrow = 2, byrow = TRUE),
     linetype = guide_legend(nrow = 2, byrow = TRUE),
@@ -682,4 +458,384 @@ soil_4panel
 
 ggsave("figures/figure2_soil_moisture_temperature.png", soil_4panel, 
        width = 174, height = 174, dpi = 600, bg = "white", units = "mm")
+```
+# Figure 3: Sorghum and Sorghum + WCC biomass
+```{r}
+
+```
+
+# Figure 4: Mean daily and cummulative nitrous oxide emissions
+
+```{r}
+# Prepare Flux Data
+flux_subset <- flux_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(
+      treatment == "Sorghum + Rye",
+      "Sorghum + WCC",
+      treatment
+    ),
+    year = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024))
+
+# 1. Daily Means and SE (for top panel)
+daily_flux <- flux_subset |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000, # kg N ha-1 day-1
+    se_flux = sd(gnha_day_no_negative, na.rm = TRUE) /
+      sqrt(sum(!is.na(gnha_day_no_negative))) /
+      1000,
+    .groups = "drop"
+  )
+
+# 2. Significance (Wilcoxon on plot means)
+daily_significance <- flux_subset |>
+  group_by(year, date, Treatment, plot) |>
+  summarise(
+    plot_mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(year, date) |>
+  summarise(
+    p_value = {
+      sorghum_vals <- plot_mean_flux[Treatment == "Sorghum"]
+      wcc_vals <- plot_mean_flux[Treatment == "Sorghum + WCC"]
+      sorghum_vals <- sorghum_vals[!is.na(sorghum_vals)]
+      wcc_vals <- wcc_vals[!is.na(wcc_vals)]
+
+      if (length(sorghum_vals) >= 3 && length(wcc_vals) >= 3) {
+        tryCatch(
+          wilcox.test(sorghum_vals, wcc_vals, exact = FALSE)$p.value,
+          error = function(e) NA_real_
+        )
+      } else {
+        NA_real_
+      }
+    },
+    .groups = "drop"
+  ) |>
+  mutate(
+    significant = p_value < 0.05,
+    star_label = if_else(significant & !is.na(p_value), "*", "")
+  )
+
+# Star positions
+max_flux_by_date <- daily_flux |>
+  group_by(year, date) |>
+  summarise(max_flux = max(mean_flux + se_flux, na.rm = TRUE), .groups = "drop")
+
+star_data <- daily_significance |>
+  left_join(max_flux_by_date, by = c("year", "date")) |>
+  filter(star_label == "*") |>
+  mutate(star_y = max_flux * 1.1)
+
+# 3. Cumulative Flux Calculation (CORRECTED)
+
+# First: Aggregate to one value per plot per day (averaging Row/Interrow)
+daily_flux_plot_level <- flux_subset |>
+  group_by(Treatment, year, plot, date) |>
+  summarise(
+    daily_flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000, # kg N
+    .groups = "drop"
+  )
+
+# Second: Interpolate and Accumulate
+cum_flux_plot_level <- daily_flux_plot_level |>
+  arrange(Treatment, year, plot, date) |>
+  group_by(Treatment, year, plot) |>
+  group_modify(~ {
+    # Complete the date sequence for this specific plot
+    df <- .x |>
+      complete(date = seq(min(date), max(date), by = "day")) |>
+      arrange(date)
+
+    non_na <- !is.na(df$daily_flux)
+    
+    # Skip if insufficient data
+    if (sum(non_na) == 0) return(tibble())
+
+    # Interpolate
+    flux_interp <- if (sum(non_na) >= 2) {
+      approx(
+        x = df$date[non_na],
+        y = df$daily_flux[non_na],
+        xout = df$date,
+        rule = 1, # NA outside range
+        ties = "ordered"
+      )$y
+    } else {
+      # Fallback for single point (rare)
+      rep(df$daily_flux[non_na][1], nrow(df))
+    }
+
+    # Accumulate and filter out NAs (e.g. before first sampling)
+    df |>
+      mutate(
+        flux_interp = flux_interp,
+        cum_flux = cumsum(flux_interp)
+      ) |>
+      filter(!is.na(flux_interp))
+  }) |>
+  ungroup()
+
+# Third: Summary Statistics for Plotting
+cum_flux_summary <- cum_flux_plot_level |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    cum_flux_mean = mean(cum_flux, na.rm = TRUE),
+    cum_flux_sd = sd(cum_flux, na.rm = TRUE),
+    n_plots = n(),
+    cum_flux_se = cum_flux_sd / sqrt(n_plots),
+    t_crit = if_else(n_plots > 1, qt(0.975, df = n_plots - 1), NA_real_),
+    cum_flux_ci = t_crit * cum_flux_se,
+    .groups = "drop"
+  )
+
+# Precipitation
+flux_date_ranges <- daily_flux |>
+  group_by(year) |>
+  summarise(min_date = min(date), max_date = max(date), .groups = "drop")
+daily_precip_trimmed <- rain |>
+  select(date, year, precipmm) |>
+  filter(year %in% c(2023, 2024)) |>
+  left_join(flux_date_ranges, by = "year") |>
+  filter(date >= min_date, date <= max_date)
+fert_events <- tibble(
+  year = c(2023, 2024),
+  fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
+)
+
+# Plotting Constants
+global_max_flux <- max(daily_flux$mean_flux + daily_flux$se_flux, na.rm = TRUE)
+global_max_precip <- max(daily_precip_trimmed$precipmm, na.rm = TRUE)
+global_max_cum_flux <- max(
+  cum_flux_summary$cum_flux_mean + cum_flux_summary$cum_flux_ci,
+  na.rm = TRUE
+)
+global_precip_scale_factor <- global_max_flux * 0.4 / global_max_precip
+global_plot_top <- global_max_flux * 1.1
+
+# Plot Function
+create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
+  flux_year <- filter(daily_flux, year == year_val)
+  precip_year <- filter(daily_precip_trimmed, year == year_val)
+  star_year <- filter(star_data, year == year_val)
+  fert_year <- filter(fert_events, year == year_val)
+  cum_flux_year <- filter(cum_flux_summary, year == year_val)
+  year_start <- as.Date(paste0(year_val, "-01-01"))
+  year_end <- as.Date(paste0(year_val, "-12-31"))
+
+  daily_plot <- ggplot() +
+    geom_rect(
+      data = precip_year,
+      aes(
+        xmin = date - 0.5,
+        xmax = date + 0.5,
+        ymin = global_plot_top - precipmm * global_precip_scale_factor,
+        ymax = global_plot_top
+      ),
+      fill = "#377EB8",
+      alpha = 0.7
+    ) +
+    geom_point(
+      data = flux_year,
+      aes(x = date, y = mean_flux, color = Treatment),
+      size = 1.5
+    ) +
+    geom_errorbar(
+      data = flux_year,
+      aes(
+        x = date,
+        ymin = mean_flux - se_flux,
+        ymax = mean_flux + se_flux,
+        color = Treatment
+      ),
+      width = 0.2,
+      alpha = 0.5
+    # ) +
+    # geom_vline(
+    #   data = fert_year,
+    #   aes(xintercept = fertilizer_date),
+    #   linetype = "dashed",
+    #   color = "red",
+    #   alpha = 0.7
+    ) +
+    geom_text(
+      data = star_year,
+      aes(x = date, y = star_y, label = star_label),
+      color = "black",
+      size = 5
+    ) +
+    guides(color = "none") +
+    scale_color_manual(values = treatment_colors) +
+    scale_x_date(
+      date_breaks = "2 months",
+      date_labels = "%b",
+      limits = c(year_start, year_end)
+    ) +
+    scale_y_continuous(
+      name = if (!is_right_panel) {
+        expression("Daily N"[2] * "O Flux (kg N ha"^-1 * " d"^-1 * ")")
+      } else {
+        ""
+      },
+      limits = c(0, global_plot_top),
+      sec.axis = sec_axis(
+        ~ (global_plot_top - .) / global_precip_scale_factor,
+        name = if (is_right_panel) "Daily Precipitation (mm)" else ""
+      )
+    ) +
+    theme_publication(base_size = 10) +
+    theme(
+      legend.position = "none",
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.line.x = element_blank(),
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.line.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      axis.text.y.right = if (is_right_panel) {
+        element_text(color = "#377EB8")
+      } else {
+        element_blank()
+      },
+      axis.ticks.y.right = if (is_right_panel) {
+        element_line()
+      } else {
+        element_blank()
+      },
+      axis.title.y.right = if (is_right_panel) {
+        element_text(color = "#377EB8")
+      } else {
+        element_blank()
+      }
+    ) +
+    labs(x = "") +
+    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
+
+  cumulative_plot <- ggplot(
+    cum_flux_year,
+    aes(x = date, y = cum_flux_mean, color = Treatment, fill = Treatment)
+  ) +
+    geom_ribbon(
+      aes(
+        ymin = pmax(cum_flux_mean - cum_flux_ci, 0),
+        ymax = cum_flux_mean + cum_flux_ci
+      ),
+      alpha = 0.15,
+      linewidth = 0
+    ) +
+    geom_line(linewidth = 1) +
+    scale_color_manual(values = treatment_colors) +
+    scale_fill_manual(values = treatment_colors) +
+    scale_x_date(
+      date_breaks = "2 months",
+      date_labels = "%b",
+      limits = c(year_start, year_end)
+    ) +
+    scale_y_continuous(
+      name = if (!is_right_panel) {
+        expression("Cumulative N"[2] * "O Flux (kg N ha"^-1 * ")")
+      } else {
+        ""
+      },
+      limits = c(0, global_max_cum_flux)
+    ) +
+    labs(x = "Month") +
+    theme_publication(base_size = 10) +
+    theme(
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.line.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text()
+    )
+
+  (daily_plot / cumulative_plot) + patchwork::plot_layout(heights = c(1.2, 1))
+}
+
+figure3_dual_axis <- (create_dual_axis_plot(2023) |
+  create_dual_axis_plot(2024, TRUE)) +
+  patchwork::plot_layout(guides = "collect") &
+  theme(legend.position = "top", legend.justification = "center")
+
+figure3_dual_axis
+
+ggsave(
+  filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI_dualaxis.png",
+  plot = figure3_dual_axis,
+  width = 174,
+  height = 174,
+  units = "mm",
+  dpi = 600,
+  bg = "white"
+)
+```
+
+# plot-level cumulative range accross all sorghum sorghum + WCC and corn for the 2 years
+```{r}
+# Filter data for Sorghum, Sorghum + WCC, and Corn across 2023 and 2024
+flux_range_data <- flux_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye", "Corn")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    year = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024))
+
+# Calculate daily flux per plot (averaging row/interrow if present)
+daily_flux_plot <- flux_range_data |>
+  group_by(Treatment, year, plot, date) |>
+  summarise(
+    daily_flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000, # kg N ha-1
+    .groups = "drop"
+  )
+
+# Interpolate daily values and calculate cumulative sum for each plot
+cum_flux_plot <- daily_flux_plot |>
+  arrange(Treatment, year, plot, date) |>
+  group_by(Treatment, year, plot) |>
+  group_modify(~ {
+    # Create full date sequence for the plot's observation period
+    df <- .x |>
+      complete(date = seq(min(date), max(date), by = "day")) |>
+      arrange(date)
+
+    non_na <- !is.na(df$daily_flux)
+    if (sum(non_na) == 0) return(tibble())
+
+    # Linear interpolation
+    flux_interp <- if (sum(non_na) >= 2) {
+      approx(
+        x = df$date[non_na],
+        y = df$daily_flux[non_na],
+        xout = df$date,
+        rule = 1, # NA outside observed range
+        ties = "ordered"
+      )$y
+    } else {
+      rep(df$daily_flux[non_na][1], nrow(df))
+    }
+
+    df |>
+      mutate(
+        flux_interp = flux_interp,
+        cum_flux = cumsum(replace_na(flux_interp, 0))
+      ) |>
+      filter(!is.na(flux_interp))
+  }) |>
+  ungroup()
+
+# Extract the final cumulative total for each plot
+final_cum_values <- cum_flux_plot |>
+  group_by(Treatment, year, plot) |>
+  summarise(total_cum = max(cum_flux), .groups = "drop")
+
+# Calculate and print the range across all plots
+overall_range <- range(final_cum_values$total_cum)
+cat("Overall cumulative N2O flux range (kg N ha-1) across Sorghum, Sorghum + WCC, and Corn (2023-2024):",
+    paste(round(overall_range, 2), collapse = " - "), "\n")
 ```
