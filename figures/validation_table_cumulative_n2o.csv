@@ -1,0 +1,5 @@
+"year","Treatment","Mean_SE","CI_Lower","CI_Upper","In_Range_Check"
+2023,"Sorghum","1.23 (0.34)",0.14,2.32,"Matches Text"
+2023,"Sorghum + WCC","1.00 (0.26)",0.16,1.83,"Matches Text"
+2024,"Sorghum","1.59 (0.52)",-0.07,3.26,"Matches Text"
+2024,"Sorghum + WCC","0.87 (0.27)",0,1.73,"Check Value"
