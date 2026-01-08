@@ -459,6 +459,114 @@ soil_4panel
 ggsave("figures/figure2_soil_moisture_temperature.png", soil_4panel, 
        width = 174, height = 174, dpi = 600, bg = "white", units = "mm")
 ```
+
+```{r}
+# ---- Extract + summarize SIGNIFICANT date-level treatment differences (Figure 2) ----
+
+dir.create("data/processed", recursive = TRUE, showWarnings = FALSE)
+
+# Helper: build wide table and join p-values
+make_sig_table <- function(means_df, value_col, pvals_df, out_csv,
+                           sorghum_name = "Sorghum",
+                           wcc_name = "Sorghum + WCC") {
+
+  wide <- means_df |>
+    select(year, date, Treatment, !!sym(value_col)) |>
+    tidyr::pivot_wider(names_from = Treatment, values_from = !!sym(value_col)) |>
+    rename(
+      sorghum = !!sorghum_name,
+      wcc     = !!wcc_name
+    ) |>
+    mutate(
+      diff_sorghum_minus_wcc = sorghum - wcc
+    ) |>
+    filter(!is.na(sorghum) & !is.na(wcc))
+
+  sig_tbl <- wide |>
+    left_join(pvals_df, by = c("year", "date")) |>
+    mutate(
+      p = as.numeric(p),
+      sig = !is.na(p) & p < 0.05,
+      wcc_lower = wcc < sorghum,
+      sig_wcc_lower = sig & wcc_lower
+    )
+
+  readr::write_csv(sig_tbl, out_csv)
+  sig_tbl
+}
+
+# Temperature table (uses moist_temp means + pvals_temp from your t-tests)
+temp_sig_table <- make_sig_table(
+  means_df = moist_temp,
+  value_col = "mean_soil_temp",
+  pvals_df = pvals_temp,
+  out_csv = "data/processed/soil_temp_sig_by_date.csv"
+)
+
+# Moisture table
+moist_sig_table <- make_sig_table(
+  means_df = moist_temp,
+  value_col = "mean_soil_moisture",
+  pvals_df = pvals_moist,
+  out_csv = "data/processed/soil_moist_sig_by_date.csv"
+)
+
+# ---- Summaries needed for manuscript text ----
+
+summarize_sig <- function(sig_tbl) {
+  # X out of Y where significant differences exist (either direction)
+  Y <- sum(sig_tbl$sig, na.rm = TRUE)
+  X <- sum(sig_tbl$sig_wcc_lower, na.rm = TRUE)
+
+  by_year <- sig_tbl |>
+    group_by(year) |>
+    summarise(
+      Y = sum(sig, na.rm = TRUE),
+      X = sum(sig_wcc_lower, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  # Range of sorghum minus wcc differences on significant-lower dates
+  diff_rng <- sig_tbl |>
+    filter(sig_wcc_lower) |>
+    summarise(
+      min_diff = min(diff_sorghum_minus_wcc, na.rm = TRUE),
+      max_diff = max(diff_sorghum_minus_wcc, na.rm = TRUE)
+    )
+
+  list(X = X, Y = Y, by_year = by_year, diff_rng = diff_rng)
+}
+
+temp_sum  <- summarize_sig(temp_sig_table)
+moist_sum <- summarize_sig(moist_sig_table)
+
+# Print strings you can copy into manuscript drafts
+cat(
+  "Temperature: WCC significantly LOWER than Sorghum on ",
+  temp_sum$X, " out of ", temp_sum$Y,
+  " significant dates (",
+  paste0(temp_sum$by_year$year, ": ", temp_sum$by_year$X, "/", temp_sum$by_year$Y, collapse = ", "),
+  "). Sorghum was ",
+  round(temp_sum$diff_rng$min_diff, 2), "–", round(temp_sum$diff_rng$max_diff, 2),
+  " °C warmer on those dates (p < 0.05).\n",
+  sep = ""
+)
+
+cat(
+  "Moisture: WCC significantly LOWER than Sorghum on ",
+  moist_sum$X, " out of ", moist_sum$Y,
+  " significant dates (",
+  paste0(moist_sum$by_year$year, ": ", moist_sum$by_year$X, "/", moist_sum$by_year$Y, collapse = ", "),
+  "). Sorghum was ",
+  round(moist_sum$diff_rng$min_diff, 3), "–", round(moist_sum$diff_rng$max_diff, 3),
+  " cm3 cm-3 higher on those dates (p < 0.05).\n",
+  sep = ""
+)
+
+cat("Saved: data/processed/soil_temp_sig_by_date.csv\n")
+cat("Saved: data/processed/soil_moist_sig_by_date.csv\n")
+
+```
 # Figure 3: Sorghum and Sorghum + WCC biomass
 ```{r}
 
