@@ -1,3 +1,35 @@
+---
+title: "Sorghum-Rye Biomass and Flux Analysis"
+author: "Jared Flater"
+date: last-modified
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-location: left
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-tools: true
+    df-print: paged
+    self-contained: true
+    fig-width: 8
+    fig-height: 6
+  pdf:
+    documentclass: article
+    geometry:
+      - margin=1in
+    toc: true
+    number-sections: true
+    colorlinks: true
+    fig-width: 7
+    fig-height: 5
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
 # Libraries
 
 ```{r setup, message=FALSE, warning=FALSE}
@@ -67,6 +99,8 @@ rain <- read_xlsx("data/rain/historical_rain.xlsx")
 gdd <- read_xlsx("data/rain/historical_rain.xlsx")
 flux_data <- read_csv("data/cleaned_flux_data.csv") |>
   mutate(date = as.Date(date)) 
+
+
 ```
 
 # Figure 1: Precipitation and GDD plots with historical envelopes
@@ -567,7 +601,9 @@ cat("Saved: data/processed/soil_temp_sig_by_date.csv\n")
 cat("Saved: data/processed/soil_moist_sig_by_date.csv\n")
 
 ```
+
 # Figure 3: Sorghum and Sorghum + WCC biomass
+
 ```{r}
 
 ```
@@ -884,6 +920,7 @@ ggsave(
 ```
 
 # plot-level cumulative range accross all sorghum sorghum + WCC and corn for the 2 years
+
 ```{r}
 # Filter data for Sorghum, Sorghum + WCC, and Corn across 2023 and 2024
 flux_range_data <- flux_data |>
@@ -901,6 +938,24 @@ daily_flux_plot <- flux_range_data |>
     daily_flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000, # kg N ha-1
     .groups = "drop"
   )
+
+# Extract the Range in GRAMS 
+range_stats <- daily_flux_plot |>
+  summarise(
+    min_flux_g = min(daily_flux), 
+    max_flux_g = max(daily_flux)
+  )
+
+# 3. Check specific High Values (to verify the ">600" claim)
+top_fluxes <- daily_flux_plot |>
+  arrange(desc(daily_flux)) |>
+  slice(1:5) |>
+  select(year, Treatment, date, daily_flux)
+
+# Print results
+print(range_stats)
+print("Top 5 Flux Events (g N ha-1 d-1):")
+print(top_fluxes)
 
 # Interpolate daily values and calculate cumulative sum for each plot
 cum_flux_plot <- daily_flux_plot |>
@@ -946,4 +1001,874 @@ final_cum_values <- cum_flux_plot |>
 overall_range <- range(final_cum_values$total_cum)
 cat("Overall cumulative N2O flux range (kg N ha-1) across Sorghum, Sorghum + WCC, and Corn (2023-2024):",
     paste(round(overall_range, 2), collapse = " - "), "\n")
+```
+
+```{r}
+library(dplyr)
+library(gt)
+
+# 1. Use your existing 'cum_flux_summary' (which already has Means & CIs)
+# Filter for just the relevant treatments (No Corn) and the final date of each year
+validation_stats <- cum_flux_summary |>
+  filter(Treatment %in% c("Sorghum", "Sorghum + WCC")) |>
+  group_by(year, Treatment) |>
+  slice_max(date, n = 1) |> # Get the end-of-season cumulative total
+  ungroup() |>
+  select(year, Treatment, cum_flux_mean, cum_flux_se, cum_flux_ci)
+
+# 2. Create the Publication-Ready Table
+validation_table <- validation_stats |>
+  mutate(
+    # Create the "Mean (SE)" string often used in papers
+    Mean_SE = sprintf("%.2f (%.2f)", cum_flux_mean, cum_flux_se),
+    # Calculate 95% CI Range
+    CI_Lower = cum_flux_mean - cum_flux_ci,
+    CI_Upper = cum_flux_mean + cum_flux_ci,
+    # Create a visual check for the "0.9 to 1.6" range statement
+    In_Range_Check = case_when(
+      cum_flux_mean >= 0.9 & cum_flux_mean <= 1.6 ~ "✅ Matches Text",
+      TRUE ~ "⚠️ Check Value"
+    )
+  ) |>
+  select(year, Treatment, Mean_SE, CI_Lower, CI_Upper, In_Range_Check) |>
+  gt() |>
+  tab_header(
+    title = md("**Validation of Cumulative N₂O Statement**"),
+    subtitle = "Verifying: 'Reduced non-significantly (Range: 0.9 to 1.6 kg N)'"
+  ) |>
+  cols_label(
+    Mean_SE = "Mean Cumulative Flux (SE)",
+    CI_Lower = "95% CI Lower",
+    CI_Upper = "95% CI Upper",
+    In_Range_Check = "Text Validation"
+  ) |>
+  fmt_number(
+    columns = c(CI_Lower, CI_Upper),
+    decimals = 2
+  ) |>
+  # Color code the rows to make it easy to spot the treatments
+  tab_style(
+    style = list(cell_fill(color = "#f9f9f9")),
+    locations = cells_body(rows = year == 2024)
+  )
+
+# 3. Display and Save
+validation_table
+
+# Save it so you have a permanent record for the response letter
+gtsave(validation_table, "figures/validation_table_cumulative_n2o.png")
+```
+
+# Row vs. Interrow flux comparisons
+
+```{r}
+glimpse(flux_data)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+
+# 1. Prepare Data & Fix Labels
+# We factorize 'Treatment' immediately to lock in the "Sorghum + WCC" label order
+row_interrow_comparison <- flux_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC")), # Locks order
+    year = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024)) |>
+  select(year, date, Treatment, plot, rowvs_interrow, gnha_day_no_negative)
+
+# 2. Summary Statistics (Your Request)
+row_interrow_summary <- row_interrow_comparison |>
+  group_by(year, Treatment, rowvs_interrow) |> # Grouped by Year/Trt/Pos
+  summarise(
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    max_flux = max(gnha_day_no_negative, na.rm = TRUE),
+    sd = sd(gnha_day_no_negative, na.rm = TRUE),
+    n = sum(!is.na(gnha_day_no_negative)),
+    .groups = "drop"
+  )
+
+print("--- Summary Statistics by Position ---")
+print(row_interrow_summary)
+
+# 3. Calculate Differences for Reviewer MM2 (Interrow - Row)
+# This pivots the data wide so we can subtract Row from Interrow for every specific plot/date
+diff_analysis <- row_interrow_comparison |>
+  pivot_wider(
+    names_from = rowvs_interrow,
+    values_from = gnha_day_no_negative,
+    names_prefix = "Flux_"
+  ) |>
+  # Adjust 'Flux_Interrow' / 'Flux_Row' if your actual values in 'rowvs_interrow' differ (e.g. "Row", "Inter")
+  mutate(
+    Diff = Flux_Interrow - Flux_Row
+  ) |>
+  filter(!is.na(Diff))
+
+# Statistical Test: Is the mean difference significantly different from 0?
+t_test_result <- t.test(diff_analysis$Diff)
+
+print("--- Paired T-Test Results (Reviewer Check) ---")
+print(t_test_result)
+
+# 4. PLOT A: Absolute Fluxes (Your Request)
+p1_boxplot <- ggplot(row_interrow_comparison, aes(x = Treatment, y = gnha_day_no_negative, fill = rowvs_interrow)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) + # Hide outliers to see the box better
+  geom_jitter(position = position_jitterdodge(), alpha = 0.1, size = 0.5) + # Show raw data points
+  facet_wrap(~ year) +
+  labs(
+    title = "N2O Flux Distribution: Row vs. Interrow",
+    y = expression("N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
+    fill = "Position"
+  ) +
+  scale_fill_manual(values = c("grey40", "grey80")) + # High contrast for paper
+  theme_publication() +
+  theme(legend.position = "top")
+
+# 5. PLOT B: The "Difference" Plot (For Reviewer MM2)
+# This shows if the Interrow is consistently higher (above 0) or lower (below 0)
+p2_diff <- ggplot(diff_analysis, aes(x = Treatment, y = Diff, fill = Treatment)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_violin(alpha = 0.5) +
+  geom_boxplot(width = 0.1, outlier.shape = NA) +
+  facet_wrap(~ year) +
+  labs(
+    title = "Systematic Bias Check: (Interrow - Row)",
+    subtitle = "Centered on 0 (red line) justifies pooling data",
+    y = expression("Difference (g N ha"^-1*" day"^-1*")")
+  ) +
+  scale_fill_manual(values = treatment_colors) +
+  theme_publication() +
+  theme(legend.position = "none")
+
+# Display Plots
+print(p1_boxplot)
+print(p2_diff)
+
+
+# Generate Descriptive Stats for All Treatments
+flux_summary_stats <- flux_data |>
+  # Ensure we capture ALL treatments (remove the filter if Miscanthus is in the raw data)
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye", "Corn", "Soy")) |> 
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    year = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024)) |>
+  group_by(Treatment) |>
+  summarise(
+    min_flux = min(gnha_day_no_negative, na.rm = TRUE),
+    max_flux = max(gnha_day_no_negative, na.rm = TRUE),
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    median_flux = median(gnha_day_no_negative, na.rm = TRUE),
+    n_obs = n()
+  )
+
+print(flux_summary_stats)
+```
+
+# Figure X: Nitrogen Leaching
+
+```{r}
+# Figure 5: Nitrate Leaching and Precipitation
+
+
+# 1. Load and Process Leaching Data
+# Define plot area constants
+plot_area_ft2 <- 120 * 160
+plot_area_ha <- plot_area_ft2 / 107639.1041671
+
+leaching_data <- read_csv("data/clean_leaching.csv") |>
+  janitor::clean_names() |>
+  mutate(
+    date = as.Date(date),
+    year = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024))
+
+# 2. Daily Leaching Calculation
+daily_leaching_summary <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    mean_loss = mean(daily_n_loss_kgha, na.rm = TRUE),
+    se_loss = sd(daily_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(daily_n_loss_kgha))),
+    .groups = "drop"
+  )
+
+# 3. Cumulative Leaching Calculation
+cum_leaching_summary <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    cum_loss_mean = mean(cum_loss_kgha, na.rm = TRUE),
+    cum_loss_sd = sd(cum_loss_kgha, na.rm = TRUE),
+    n = n(),
+    cum_loss_se = cum_loss_sd / sqrt(n),
+    # Calculate 95% CI
+    t_crit = qt(0.975, df = pmax(n - 1, 1)),
+    cum_loss_ci = t_crit * cum_loss_se,
+    .groups = "drop"
+  )
+
+# 4. Significance Testing (Daily)
+daily_leaching_sig <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  group_by(year, date) |>
+  summarise(
+    p_value = {
+      sorg <- daily_n_loss_kgha[Treatment == "Sorghum"]
+      wcc  <- daily_n_loss_kgha[Treatment == "Sorghum + WCC"]
+      if (length(na.omit(sorg)) >= 3 && length(na.omit(wcc)) >= 3) {
+        tryCatch(wilcox.test(sorg, wcc)$p.value, error = function(e) NA)
+      } else NA
+    },
+    .groups = "drop"
+  ) |>
+  mutate(
+    star_label = if_else(!is.na(p_value) & p_value < 0.05, "*", "")
+  )
+
+# 5. Prepare Plot Data (Stars & Precip)
+leaching_stars <- daily_leaching_summary |>
+  group_by(year, date) |>
+  summarise(max_y = max(mean_loss + se_loss, na.rm = TRUE), .groups = "drop") |>
+  inner_join(daily_leaching_sig, by = c("year", "date")) |>
+  filter(star_label == "*") |>
+  mutate(star_y = max_y * 1.1)
+
+daily_precip_leaching <- rain |>
+  filter(year %in% c(2023, 2024)) |>
+  group_by(year) |>
+  filter(date >= min(leaching_data$date) & date <= max(leaching_data$date)) |>
+  ungroup()
+
+# Scaling factors
+max_leach <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
+max_precip_l <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
+scale_factor_l <- (max_leach * 0.4) / max_precip_l
+plot_top_l <- max_leach * 1.1
+max_cum_leach <- max(cum_leaching_summary$cum_loss_mean + cum_leaching_summary$cum_loss_ci, na.rm = TRUE)
+
+# 6. Plotting Function
+create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
+  # Data subsets
+  d_sub <- filter(daily_leaching_summary, year == year_val)
+  c_sub <- filter(cum_leaching_summary, year == year_val)
+  p_sub <- filter(daily_precip_leaching, year == year_val)
+  s_sub <- filter(leaching_stars, year == year_val)
+  
+  x_lims <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+  
+  # Top Panel: Daily Leaching + Precip
+  p_daily <- ggplot() +
+    # Precip bars (inverted from top)
+    geom_rect(
+      data = p_sub,
+      aes(xmin = date - 0.5, xmax = date + 0.5, 
+          ymin = plot_top_l - (precipmm * scale_factor_l), ymax = plot_top_l),
+      fill = "#377EB8", alpha = 0.7
+    ) +
+    # Leaching points & errors
+    geom_point(data = d_sub, aes(x = date, y = mean_loss, color = Treatment), size = 1.5) +
+    geom_errorbar(
+      data = d_sub, 
+      aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = Treatment),
+      width = 0.2, alpha = 0.5
+    ) +
+    # Significance stars
+    geom_text(data = s_sub, aes(x = date, y = star_y, label = star_label), size = 5) +
+    scale_color_manual(values = treatment_colors) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(
+      name = if(!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" d"^-1*")") else "",
+      limits = c(0, plot_top_l),
+      sec.axis = sec_axis(~ (plot_top_l - .) / scale_factor_l, 
+                          name = if(is_right_panel) "Precipitation (mm)" else "")
+    ) +
+    theme_publication(base_size = 10) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.position = "none",
+      axis.line.x = element_blank(),
+      axis.title.y.right = element_text(color = "#377EB8"),
+      axis.text.y.right = element_text(color = "#377EB8")
+    )
+    
+  if(is_right_panel) {
+    p_daily <- p_daily + theme(
+      axis.text.y.left = element_blank(),
+      axis.ticks.y.left = element_blank(),
+      axis.line.y.left = element_blank()
+    )
+  } else {
+    p_daily <- p_daily + theme(
+      axis.text.y.right = element_blank(),
+      axis.ticks.y.right = element_blank()
+    )
+  }
+
+  # Bottom Panel: Cumulative Leaching
+  p_cum <- ggplot(c_sub, aes(x = date, y = cum_loss_mean, color = Treatment, fill = Treatment)) +
+    geom_ribbon(
+      aes(ymin = pmax(cum_loss_mean - cum_loss_ci, 0), ymax = cum_loss_mean + cum_loss_ci),
+      alpha = 0.15, linewidth = 0
+    ) +
+    geom_line(linewidth = 1) +
+    scale_color_manual(values = treatment_colors) +
+    scale_fill_manual(values = treatment_colors) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(
+      name = if(!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1*")") else "",
+      limits = c(0, max_cum_leach)
+    ) +
+    labs(x = "Month") +
+    theme_publication(base_size = 10) +
+    theme(legend.position = "none")
+
+  if(is_right_panel) {
+    p_cum <- p_cum + theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(), 
+      axis.line.y = element_blank()
+    )
+  }
+
+  p_daily / p_cum + plot_layout(heights = c(1.2, 1))
+}
+
+# 7. Assemble Figure
+fig_leaching <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "top", legend.justification = "center")
+
+fig_leaching
+
+ggsave("figures/figure3_leaching_precip.png", fig_leaching,
+       width = 174, height = 174, units = "mm", dpi = 600, bg = "white")
+```
+
+# Check Leaching error ribbons compared to figure3_dual_axis_leaching_precip.r
+
+# Figure 5: Nitrate Leaching and Precipitation
+
+```{r}
+# 1. Load and Process Leaching Data
+# Define plot area constants
+plot_area_ft2 <- 120 * 160
+plot_area_ha <- plot_area_ft2 / 107639.1041671
+
+leaching_data <- read_csv("data/clean_leaching.csv") |>
+  janitor::clean_names() |>
+  mutate(
+    date = as.Date(date),
+    year = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024))
+
+# 2. Daily Leaching Calculation
+daily_leaching_summary <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    mean_loss = mean(daily_n_loss_kgha, na.rm = TRUE),
+    se_loss = sd(daily_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(daily_n_loss_kgha))),
+    .groups = "drop"
+  )
+
+# 3. Cumulative Leaching Calculation
+# Updated to match Figure 3 R script logic (using SE for ribbons, not 95% CI)
+cum_leaching_summary <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    cum_loss_mean = mean(cum_loss_kgha, na.rm = TRUE),
+    cum_loss_sd = sd(cum_loss_kgha, na.rm = TRUE),
+    n = n(),
+    # Use standard error for ribbons
+    cum_loss_se = cum_loss_sd / sqrt(n), 
+    .groups = "drop"
+  )
+
+# 4. Significance Testing (Daily)
+daily_leaching_sig <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  group_by(year, date) |>
+  summarise(
+    p_value = {
+      sorg <- daily_n_loss_kgha[Treatment == "Sorghum"]
+      wcc  <- daily_n_loss_kgha[Treatment == "Sorghum + WCC"]
+      if (length(na.omit(sorg)) >= 3 && length(na.omit(wcc)) >= 3) {
+        tryCatch(wilcox.test(sorg, wcc)$p.value, error = function(e) NA)
+      } else NA
+    },
+    .groups = "drop"
+  ) |>
+  mutate(
+    star_label = if_else(!is.na(p_value) & p_value < 0.05, "*", "")
+  )
+
+# 5. Prepare Plot Data (Stars & Precip)
+leaching_stars <- daily_leaching_summary |>
+  group_by(year, date) |>
+  summarise(max_y = max(mean_loss + se_loss, na.rm = TRUE), .groups = "drop") |>
+  inner_join(daily_leaching_sig, by = c("year", "date")) |>
+  filter(star_label == "*") |>
+  mutate(star_y = max_y * 1.1)
+
+daily_precip_leaching <- rain |>
+  filter(year %in% c(2023, 2024)) |>
+  group_by(year) |>
+  filter(date >= min(leaching_data$date) & date <= max(leaching_data$date)) |>
+  ungroup()
+
+# Scaling factors (match R script logic)
+max_leach <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
+max_precip_l <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
+scale_factor_l <- (max_leach * 0.4) / max_precip_l
+plot_top_l <- max_leach * 1.1
+
+# Updated scaling for ribbons using SE
+max_cum_leach <- max(cum_leaching_summary$cum_loss_mean + cum_leaching_summary$cum_loss_se, na.rm = TRUE)
+
+# 6. Plotting Function
+create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
+  # Data subsets
+  d_sub <- filter(daily_leaching_summary, year == year_val)
+  c_sub <- filter(cum_leaching_summary, year == year_val)
+  p_sub <- filter(daily_precip_leaching, year == year_val)
+  s_sub <- filter(leaching_stars, year == year_val)
+  
+  x_lims <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+  
+  # Top Panel: Daily Leaching + Precip
+  p_daily <- ggplot() +
+    # Precip bars
+    geom_rect(
+      data = p_sub,
+      aes(xmin = date - 0.5, xmax = date + 0.5, 
+          ymin = plot_top_l - (precipmm * scale_factor_l), ymax = plot_top_l),
+      fill = "#377EB8", alpha = 0.7
+    ) +
+    # Leaching points & errors
+    geom_point(data = d_sub, aes(x = date, y = mean_loss, color = Treatment), size = 1.5) +
+    geom_errorbar(
+      data = d_sub, 
+      aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = Treatment),
+      width = 0.2, alpha = 0.5
+    ) +
+    # Significance stars
+    geom_text(data = s_sub, aes(x = date, y = star_y, label = star_label), size = 5) +
+    scale_color_manual(values = treatment_colors) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(
+      name = if(!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" d"^-1*")") else "",
+      limits = c(0, plot_top_l),
+      sec.axis = sec_axis(~ (plot_top_l - .) / scale_factor_l, 
+                          name = if(is_right_panel) "Precipitation (mm)" else "")
+    ) +
+    theme_publication(base_size = 10) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.position = "none",
+      axis.line.x = element_blank(),
+      axis.title.y.right = element_text(color = "#377EB8"),
+      axis.text.y.right = element_text(color = "#377EB8")
+    )
+    
+  if(is_right_panel) {
+    p_daily <- p_daily + theme(
+      axis.text.y.left = element_blank(),
+      axis.ticks.y.left = element_blank(),
+      axis.line.y.left = element_blank()
+    )
+  } else {
+    p_daily <- p_daily + theme(
+      axis.text.y.right = element_blank(),
+      axis.ticks.y.right = element_blank()
+    )
+  }
+
+  # Bottom Panel: Cumulative Leaching (Updated)
+  p_cum <- ggplot(c_sub, aes(x = date, y = cum_loss_mean, color = Treatment, fill = Treatment)) +
+    geom_ribbon(
+      # CHANGED: Using SE instead of CI to match R script
+      aes(ymin = pmax(cum_loss_mean - cum_loss_se, 0), ymax = cum_loss_mean + cum_loss_se),
+      alpha = 0.15, linewidth = 0
+    ) +
+    geom_line(linewidth = 1) +
+    scale_color_manual(values = treatment_colors) +
+    scale_fill_manual(values = treatment_colors) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(
+      name = if(!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1*")") else "",
+      limits = c(0, max_cum_leach)
+    ) +
+    labs(x = "Month") +
+    theme_publication(base_size = 10) +
+    theme(legend.position = "none")
+
+  if(is_right_panel) {
+    p_cum <- p_cum + theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(), 
+      axis.line.y = element_blank()
+    )
+  }
+
+  p_daily / p_cum + plot_layout(heights = c(1.2, 1))
+}
+
+# 7. Assemble Figure
+fig_leaching <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "top", legend.justification = "center")
+
+fig_leaching
+
+ggsave("figures/figure3_leaching_precip.png", fig_leaching,
+       width = 174, height = 174, units = "mm", dpi = 600, bg = "white")
+```
+
+
+
+# Table 3: Annual Nitrogen Losses
+
+```{r table3-nitrogen-losses}
+#| message: FALSE
+#| warning: FALSE
+
+library(gt)
+library(emmeans)
+library(multcomp)
+
+# --- 1. N2O Data Processing (Interpolation & Cumulative) ---
+
+# Summarize daily flux by plot/date
+daily_flux_summary <- flux_data |>
+  group_by(plot, rowvs_interrow, treatment, year, date) |>
+  summarise(mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), .groups = "drop") |>
+  arrange(plot, rowvs_interrow, treatment, year, date)
+
+# Interpolation helper function
+interpolate_daily_flux <- function(data) {
+  # Get unique plot combinations
+  plot_combinations <- data |>
+    distinct(plot, rowvs_interrow, treatment, year)
+  
+  purrr::map_dfr(seq_len(nrow(plot_combinations)), function(i) {
+    combo <- plot_combinations[i, ]
+    
+    subset_data <- data |>
+      filter(
+        plot == combo$plot,
+        rowvs_interrow == combo$rowvs_interrow,
+        treatment == combo$treatment,
+        year == combo$year
+      ) |>
+      arrange(date)
+    
+    # Create full year sequence
+    start_date <- as.Date(paste0(combo$year, "-01-01"))
+    end_date <- as.Date(paste0(combo$year, "-12-31"))
+    all_days <- seq(start_date, end_date, by = "day")
+    
+    # Interpolate if we have sufficient data
+    if (nrow(subset_data) >= 2 && !all(is.na(subset_data$mean_flux))) {
+      valid_data <- subset_data[!is.na(subset_data$mean_flux), ]
+      
+      if (nrow(valid_data) >= 2) {
+        interpolated_flux <- approx(
+          x = as.numeric(valid_data$date),
+          y = valid_data$mean_flux,
+          xout = as.numeric(all_days),
+          rule = 1
+        )$y
+      } else {
+        interpolated_flux <- rep(NA_real_, length(all_days))
+      }
+    } else {
+      interpolated_flux <- rep(NA_real_, length(all_days))
+    }
+    
+    tibble(
+      plot = combo$plot,
+      rowvs_interrow = combo$rowvs_interrow,
+      treatment = combo$treatment,
+      year = combo$year,
+      date = all_days,
+      interpolated_flux = interpolated_flux
+    )
+  })
+}
+
+# Apply interpolation
+interpolated_flux_data <- interpolate_daily_flux(daily_flux_summary)
+
+# Calculate cumulative N2O per plot (g -> kg)
+plot_cumulative_n2o <- interpolated_flux_data |>
+  group_by(plot, rowvs_interrow, treatment, year) |>
+  summarise(
+    annual_cumulative_n2o = sum(interpolated_flux, na.rm = TRUE) / 1000, 
+    .groups = "drop"
+  ) |>
+  filter(is.finite(annual_cumulative_n2o))
+
+# --- 2. Leaching Data Processing ---
+
+# Ensure leaching data is available (re-load if necessary)
+if (!exists("leaching_data")) {
+  leaching_data <- read_csv("data/clean_leaching.csv") |>
+    janitor::clean_names() |>
+    mutate(
+      date = as.Date(date),
+      year = year(date)
+    ) |>
+    filter(year %in% c(2023, 2024))
+}
+
+# Calculate annual cumulative nitrogen leaching per plot
+plot_area_ft2 <- 120 * 160
+plot_area_ha <- plot_area_ft2 / 107639.1041671
+
+annual_leaching <- leaching_data |>
+  group_by(plot, treatment, year) |>
+  summarise(
+    # mg -> kg, then divide by hectares
+    annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha, 
+    .groups = "drop"
+  ) |>
+  filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
+
+# --- 3. Statistical Summaries and Letters ---
+
+# Summarize by treatment and year
+n2o_summary <- plot_cumulative_n2o |>
+  group_by(treatment, year) |>
+  summarise(
+    n_plots = n(),
+    mean_n2o = mean(annual_cumulative_n2o, na.rm = TRUE),
+    sd_n2o = sd(annual_cumulative_n2o, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+leaching_summary <- annual_leaching |>
+  group_by(treatment, year) |>
+  summarise(
+    n_plots = n(),
+    mean_leaching = mean(annual_cumulative_leaching, na.rm = TRUE),
+    sd_leaching = sd(annual_cumulative_leaching, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Helper: Compute Tukey letters within year
+compute_letters_by_year <- function(df, value_col) {
+  d <- df |> filter(!is.na(.data[[value_col]]))
+  trts <- sort(unique(d$treatment))
+  if (length(trts) < 2) return(tibble(treatment = trts, letter = "a"))
+  
+  fml <- as.formula(paste(value_col, "~ treatment"))
+  fit <- lm(fml, data = d)
+  emm <- emmeans::emmeans(fit, ~ treatment)
+  
+  if (requireNamespace("multcomp", quietly = TRUE)) {
+    out <- multcomp::cld(emm, adjust = "tukey", Letters = letters) |>
+      as_tibble() |>
+      transmute(treatment, letter = gsub("\\s+", "", .group)) |>
+      mutate(
+        letter = ifelse(grepl("[0-9]", letter), chartr("123456789", "abcdefghi", letter), letter),
+        letter = ifelse(letter == "" | is.na(letter), "a", letter)
+      )
+  } else {
+    out <- tibble(treatment = trts, letter = "a")
+  }
+  out
+}
+
+# Calculate letters
+leach_letters <- annual_leaching |>
+  group_by(year) |>
+  group_modify(~ compute_letters_by_year(.x, "annual_cumulative_leaching")) |>
+  ungroup()
+
+n2o_letters <- plot_cumulative_n2o |>
+  group_by(year) |>
+  group_modify(~ compute_letters_by_year(.x, "annual_cumulative_n2o")) |>
+  ungroup()
+
+# Join letters (only show for annual rows, not 2-year total later)
+leaching_summary <- leaching_summary |>
+  left_join(leach_letters, by = c("treatment", "year")) |>
+  mutate(leaching_result = sprintf("%.3f ± %.3f (%s)", mean_leaching, sd_leaching, letter))
+
+n2o_summary <- n2o_summary |>
+  left_join(n2o_letters, by = c("treatment", "year")) |>
+  mutate(n2o_result = sprintf("%.3f ± %.3f (%s)", mean_n2o, sd_n2o, letter))
+
+# Calculate 2-Year Totals (Sum of Means, SD via Quadrature)
+n2o_two_year <- n2o_summary |>
+  filter(year %in% c(2023, 2024)) |>
+  group_by(treatment) |>
+  summarise(
+    mean_n2o = sum(mean_n2o, na.rm = TRUE),
+    sd_n2o = sqrt(sum(sd_n2o^2, na.rm = TRUE)),
+    .groups = "drop"
+  ) |>
+  mutate(year = "2023-2024", n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))
+
+leaching_two_year <- leaching_summary |>
+  filter(year %in% c(2023, 2024)) |>
+  group_by(treatment) |>
+  summarise(
+    mean_leaching = sum(mean_leaching, na.rm = TRUE),
+    sd_leaching = sqrt(sum(sd_leaching^2, na.rm = TRUE)),
+    .groups = "drop"
+  ) |>
+  mutate(year = "2023-2024", leaching_result = sprintf("%.3f ± %.3f", mean_leaching, sd_leaching))
+
+# --- 4. Organize Data for Table ---
+
+# Extract numeric means for Cost calculation
+n2o_means <- bind_rows(
+  n2o_summary |> mutate(year = as.character(year)) |> select(year, treatment, mean_n2o),
+  n2o_two_year |> select(year, treatment, mean_n2o)
+)
+
+leaching_means <- bind_rows(
+  leaching_summary |> mutate(year = as.character(year)) |> select(year, treatment, mean_leaching),
+  leaching_two_year |> select(year, treatment, mean_leaching)
+)
+
+# Combine textual results
+combined_nitrogen_data <- bind_rows(
+  n2o_summary |> mutate(year = as.character(year)) |> select(year, treatment, n2o_result),
+  n2o_two_year |> select(year, treatment, n2o_result)
+) |>
+  full_join(
+    bind_rows(
+      leaching_summary |> mutate(year = as.character(year)) |> select(year, treatment, leaching_result),
+      leaching_two_year |> select(year, treatment, leaching_result)
+    ),
+    by = c("year", "treatment")
+  ) |>
+  left_join(n2o_means, by = c("year", "treatment")) |>
+  left_join(leaching_means, by = c("year", "treatment")) |>
+  mutate(
+    year_order = case_when(year == "2023" ~ 1, year == "2024" ~ 2, year == "2023-2024" ~ 3),
+    # Preza-Fontes cost values
+    environmental_cost_dollars = (mean_n2o * 16.18) + (mean_leaching * 18.54),
+    total_environmental_cost = sprintf("$%.2f", environmental_cost_dollars)
+  )
+
+# ANOVA / Source of Variation
+combined_n2o_data <- plot_cumulative_n2o |> mutate(year_factor = as.factor(year))
+aov_n2o <- aov(annual_cumulative_n2o ~ year_factor * treatment, data = combined_n2o_data)
+
+combined_leaching_data <- annual_leaching |> mutate(year_factor = as.factor(year))
+aov_leaching <- aov(annual_cumulative_leaching ~ year_factor * treatment, data = combined_leaching_data)
+
+source_variation_n <- tibble(
+  source = c("Year", "Treatment", "Year × Treatment"),
+  n2o_p = summary(aov_n2o)[[1]][1:3, "Pr(>F)"],
+  leaching_p = summary(aov_leaching)[[1]][1:3, "Pr(>F)"]
+) |>
+  mutate(
+    across(c(n2o_p, leaching_p), ~ case_when(
+      .x < 0.001 ~ "< 0.001",
+      .x < 0.01 ~ sprintf("%.3f", .x),
+      TRUE ~ sprintf("%.2f", .x)
+    )),
+    year = "", year_order = 4, treatment = source,
+    n2o_result = n2o_p, leaching_result = leaching_p, 
+    total_environmental_cost = ""
+  ) |>
+  select(-source, -n2o_p, -leaching_p)
+
+# Assemble Complete Table
+separator_n <- tibble(
+  year = "Source of Variation", year_order = 3.5, treatment = "",
+  n2o_result = "", leaching_result = "", total_environmental_cost = ""
+)
+
+table3_complete <- bind_rows(
+  combined_nitrogen_data, separator_n, source_variation_n
+) |>
+  arrange(year_order, treatment) |>
+  mutate(
+    year_display = case_when(
+      year == "Source of Variation" ~ year,
+      year != lag(year, default = "") ~ as.character(year),
+      TRUE ~ ""
+    ),
+    is_new_section = year != lag(year, default = "") & year != "Source of Variation"
+  )
+
+# --- 5. Generate GT Table ---
+
+table3_gt <- table3_complete |>
+  select(
+    Year = year_display,
+    Treatment = treatment,
+    `N2O Loss` = n2o_result,
+    `N Leaching` = leaching_result, 
+    `Total Environmental Cost` = total_environmental_cost,
+    is_new_section
+  ) |>
+  gt() |>
+  tab_header(title = md("**Table 3. Annual nitrogen losses**")) |>
+  cols_label(
+    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
+    `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
+    `Total Environmental Cost` = md("Total Environmental Cost<br>(USD ha<sup>-1</sup>)")
+  ) |>
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_section == TRUE)
+  ) |>
+  cols_width(
+    Year ~ px(90), Treatment ~ px(150),
+    `N2O Loss` ~ px(160), `N Leaching` ~ px(160), 
+    `Total Environmental Cost` ~ px(160)
+  ) |>
+  tab_style(
+    style = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Year == "Source of Variation")  
+  ) |>
+  cols_hide(columns = is_new_section) |>
+  tab_footnote(
+    footnote = "Values are mean ± standard deviation. Letters (in parentheses) indicate Tukey-adjusted groups within year (α = 0.05). Two-year totals (2023–202# Table 3: Annual Nitrogen Losses
 ```
