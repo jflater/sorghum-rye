@@ -44,7 +44,7 @@ library(patchwork)
 ```{r}
 # Custom theme for consistency
 theme_publication <- function(base_size = 12) {
-  theme_minimal(base_size = base_size, base_family = "Arial") +
+  theme_minimal(base_size = base_size, base_family = "sans") +
     theme(
       # Backgrounds
       panel.background = element_rect(fill = "#ffffffff", color = NA),
@@ -1005,7 +1005,7 @@ cat("Overall cumulative N2O flux range (kg N ha-1) across Sorghum, Sorghum + WCC
 
 ```{r}
 library(dplyr)
-library(gt)
+# Note: 'gt' package not available, using knitr::kable instead
 
 # 1. Use your existing 'cum_flux_summary' (which already has Means & CIs)
 # Filter for just the relevant treatments (No Corn) and the final date of each year
@@ -1022,41 +1022,28 @@ validation_table <- validation_stats |>
     # Create the "Mean (SE)" string often used in papers
     Mean_SE = sprintf("%.2f (%.2f)", cum_flux_mean, cum_flux_se),
     # Calculate 95% CI Range
-    CI_Lower = cum_flux_mean - cum_flux_ci,
-    CI_Upper = cum_flux_mean + cum_flux_ci,
+    CI_Lower = round(cum_flux_mean - cum_flux_ci, 2),
+    CI_Upper = round(cum_flux_mean + cum_flux_ci, 2),
     # Create a visual check for the "0.9 to 1.6" range statement
     In_Range_Check = case_when(
-      cum_flux_mean >= 0.9 & cum_flux_mean <= 1.6 ~ "✅ Matches Text",
-      TRUE ~ "⚠️ Check Value"
+      cum_flux_mean >= 0.9 & cum_flux_mean <= 1.6 ~ "Matches Text",
+      TRUE ~ "Check Value"
     )
   ) |>
-  select(year, Treatment, Mean_SE, CI_Lower, CI_Upper, In_Range_Check) |>
-  gt() |>
-  tab_header(
-    title = md("**Validation of Cumulative N₂O Statement**"),
-    subtitle = "Verifying: 'Reduced non-significantly (Range: 0.9 to 1.6 kg N)'"
-  ) |>
-  cols_label(
-    Mean_SE = "Mean Cumulative Flux (SE)",
-    CI_Lower = "95% CI Lower",
-    CI_Upper = "95% CI Upper",
-    In_Range_Check = "Text Validation"
-  ) |>
-  fmt_number(
-    columns = c(CI_Lower, CI_Upper),
-    decimals = 2
-  ) |>
-  # Color code the rows to make it easy to spot the treatments
-  tab_style(
-    style = list(cell_fill(color = "#f9f9f9")),
-    locations = cells_body(rows = year == 2024)
-  )
+  select(year, Treatment, Mean_SE, CI_Lower, CI_Upper, In_Range_Check)
 
 # 3. Display and Save
-validation_table
+cat("### Validation of Cumulative N₂O Statement\n")
+cat("Verifying: 'Reduced non-significantly (Range: 0.9 to 1.6 kg N)'\n\n")
+knitr::kable(validation_table, 
+             col.names = c("Year", "Treatment", "Mean Cumulative Flux (SE)", 
+                          "95% CI Lower", "95% CI Upper", "Text Validation"),
+             caption = "Validation of Cumulative N₂O Statement",
+             align = c('l', 'l', 'r', 'r', 'r', 'l'))
 
-# Save it so you have a permanent record for the response letter
-gtsave(validation_table, "figures/validation_table_cumulative_n2o.png")
+# Save as CSV since PNG generation requires gt package
+write.csv(validation_table, "figures/validation_table_cumulative_n2o.csv", row.names = FALSE)
+cat("\nTable saved to: figures/validation_table_cumulative_n2o.csv\n")
 ```
 
 # Row vs. Interrow flux comparisons
@@ -1183,7 +1170,7 @@ plot_area_ft2 <- 120 * 160
 plot_area_ha <- plot_area_ft2 / 107639.1041671
 
 leaching_data <- read_csv("data/clean_leaching.csv") |>
-  janitor::clean_names() |>
+  
   mutate(
     date = as.Date(date),
     year = year(date)
@@ -1376,7 +1363,7 @@ plot_area_ft2 <- 120 * 160
 plot_area_ha <- plot_area_ft2 / 107639.1041671
 
 leaching_data <- read_csv("data/clean_leaching.csv") |>
-  janitor::clean_names() |>
+  
   mutate(
     date = as.Date(date),
     year = year(date)
@@ -1568,7 +1555,7 @@ ggsave("figures/figure3_leaching_precip.png", fig_leaching,
 #| message: FALSE
 #| warning: FALSE
 
-library(gt)
+# Note: 'gt' package not available, using knitr::kable instead
 library(emmeans)
 library(multcomp)
 
@@ -1649,7 +1636,7 @@ plot_cumulative_n2o <- interpolated_flux_data |>
 # Ensure leaching data is available (re-load if necessary)
 if (!exists("leaching_data")) {
   leaching_data <- read_csv("data/clean_leaching.csv") |>
-    janitor::clean_names() |>
+    
     mutate(
       date = as.Date(date),
       year = year(date)
@@ -1833,42 +1820,26 @@ table3_complete <- bind_rows(
     is_new_section = year != lag(year, default = "") & year != "Source of Variation"
   )
 
-# --- 5. Generate GT Table ---
+# --- 5. Generate Table Output ---
+# Note: 'gt' package not available, using knitr::kable instead
 
-table3_gt <- table3_complete |>
+table3_display <- table3_complete |>
   select(
     Year = year_display,
     Treatment = treatment,
-    `N2O Loss` = n2o_result,
-    `N Leaching` = leaching_result, 
-    `Total Environmental Cost` = total_environmental_cost,
-    is_new_section
-  ) |>
-  gt() |>
-  tab_header(title = md("**Table 3. Annual nitrogen losses**")) |>
-  cols_label(
-    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
-    `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
-    `Total Environmental Cost` = md("Total Environmental Cost<br>(USD ha<sup>-1</sup>)")
-  ) |>
-  tab_style(
-    style = cell_borders(sides = "top", weight = px(1), color = "gray"),
-    locations = cells_body(rows = is_new_section == TRUE)
-  ) |>
-  cols_width(
-    Year ~ px(90), Treatment ~ px(150),
-    `N2O Loss` ~ px(160), `N Leaching` ~ px(160), 
-    `Total Environmental Cost` ~ px(160)
-  ) |>
-  tab_style(
-    style = cell_borders(sides = "top", weight = px(2)),
-    locations = cells_body(rows = Year == "Source of Variation")
-  ) |>
-  tab_style(
-    style = cell_text(weight = "bold"),
-    locations = cells_body(rows = Year == "Source of Variation")  
-  ) |>
-  cols_hide(columns = is_new_section) |>
-  tab_footnote(
-    footnote = "Values are mean ± standard deviation. Letters (in parentheses) indicate Tukey-adjusted groups within year (α = 0.05). Two-year totals (2023–202# Table 3: Annual Nitrogen Losses
+    `N2O Loss (kg N/ha)` = n2o_result,
+    `N Leaching (kg N/ha)` = leaching_result, 
+    `Total Environmental Cost (USD/ha)` = total_environmental_cost
+  )
+
+cat("### Table 3. Annual nitrogen losses\n\n")
+knitr::kable(table3_display, 
+             caption = "Table 3. Annual nitrogen losses",
+             align = c('l', 'l', 'r', 'r', 'r'))
+
+cat("\n\n**Note:** Values are mean ± standard deviation. Letters (in parentheses) indicate Tukey-adjusted groups within year (α = 0.05). Two-year totals (2023–2024) show sum of annual means. Environmental cost calculated using Preza-Fontes values: $16.18/kg N₂O and $18.54/kg N leaching.\n")
+
+# Save table as CSV
+write.csv(table3_display, "tables/table3_nitrogen_losses.csv", row.names = FALSE)
+cat("\nTable saved to: tables/table3_nitrogen_losses.csv\n")
 ```
