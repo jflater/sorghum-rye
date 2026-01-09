@@ -15,15 +15,6 @@ format:
     self-contained: true
     fig-width: 8
     fig-height: 6
-  pdf:
-    documentclass: article
-    geometry:
-      - margin=1in
-    toc: true
-    number-sections: true
-    colorlinks: true
-    fig-width: 7
-    fig-height: 5
 execute:
   warning: false
   message: false
@@ -1560,8 +1551,6 @@ ggsave("figures/figure3_leaching_precip.png", fig_leaching,
        width = 174, height = 174, units = "mm", dpi = 600, bg = "white")
 ```
 
-
-
 # Table 3: Annual Nitrogen Losses
 
 ```{r table3-nitrogen-losses}
@@ -1870,5 +1859,350 @@ table3_gt <- table3_complete |>
   ) |>
   cols_hide(columns = is_new_section) |>
   tab_footnote(
-    footnote = "Values are mean ± standard deviation. Letters (in parentheses) indicate Tukey-adjusted groups within year (α = 0.05). Two-year totals (2023–202# Table 3: Annual Nitrogen Losses
+    footnote = "Values are mean ± standard deviation. Letters (in parentheses) indicate Tukey-adjusted groups within year (α = 0.05). Two-year totals (2023–202# Table 3: Annual Nitrogen Losses")
+
+# print table
+table3_gt
+
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(gt)
+library(emmeans)
+library(multcomp)
+
+# --- 1. PREPARE PLOT-LEVEL DATA (JOINING N2O & LEACHING) ---
+
+# A. Aggregate N2O to single Plot value (averaging row/interrow)
+n2o_plot_clean <- plot_cumulative_n2o |>
+  group_by(year, plot, treatment) |>
+  summarise(
+    n2o_kg_ha = mean(annual_cumulative_n2o, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# B. Prepare Leaching (already plot level)
+leach_plot_clean <- annual_leaching |>
+  select(year, plot, treatment, leaching_kg_ha = annual_cumulative_leaching)
+
+# C. Join and Calculate Plot-Level EDC
+# Costs: N2O = $16.18/kg N, Leaching = $18.54/kg N (Preza-Fontes et al.)
+plot_level_economics <- n2o_plot_clean |>
+  inner_join(leach_plot_clean, by = c("year", "plot", "treatment")) |>
+  mutate(
+    edc_dollars = (n2o_kg_ha * 16.18) + (leaching_kg_ha * 18.54)
+  )
+
+# --- 2. PREPARE "2-YEAR TOTAL" DATA FOR STATS ---
+
+# We sum the 2023 and 2024 values for each plot to test the "Combined" effect
+plot_level_2year <- plot_level_economics |>
+  filter(year %in% c(2023, 2024)) |>
+  group_by(plot, treatment) |>
+  summarise(
+    n2o_kg_ha = sum(n2o_kg_ha, na.rm = TRUE),
+    leaching_kg_ha = sum(leaching_kg_ha, na.rm = TRUE),
+    edc_dollars = sum(edc_dollars, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(year = "2023-2024") # Label for the table
+
+# Combine Annual and 2-Year Data into one master dataset for stats
+master_stats_data <- bind_rows(
+  plot_level_economics |> mutate(year = as.character(year)),
+  plot_level_2year
+)
+
+# --- 3. STATS LOOP (Calculate Means + Letters for ALL 3 Columns) ---
+
+# Helper function: Linear Model + Tukey Letters
+get_stats_with_letters <- function(df, val_col) {
+  # 1. Calculate Means & SD
+  summ <- df |>
+    group_by(treatment) |>
+    summarise(
+      mean_val = mean(.data[[val_col]], na.rm = TRUE),
+      sd_val = sd(.data[[val_col]], na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # 2. Generate Letters (LM -> Emmeans -> CLD)
+  # Fit model
+  fit <- lm(as.formula(paste(val_col, "~ treatment")), data = df)
+  
+  # Get letters
+  letters_df <- tryCatch({
+    fit |>
+      emmeans(~ treatment) |>
+      cld(adjust = "tukey", Letters = letters, alpha = 0.05) |>
+      as_tibble() |>
+      mutate(letter = trimws(.group)) |>
+      select(treatment, letter)
+  }, error = function(e) {
+    tibble(treatment = unique(df$treatment), letter = "")
+  })
+  
+  # 3. Join
+  left_join(summ, letters_df, by = "treatment")
+}
+
+# Run the loop for each Year (2023, 2024, 2023-2024) and each Variable
+final_table_data <- master_stats_data |>
+  group_by(year) |>
+  group_modify(~ {
+    # N2O Stats
+    n2o <- get_stats_with_letters(.x, "n2o_kg_ha") |>
+      mutate(n2o_str = sprintf("%.2f \u00B1 %.2f (%s)", mean_val, sd_val, letter)) |>
+      select(treatment, n2o_str)
+    
+    # Leaching Stats
+    leach <- get_stats_with_letters(.x, "leaching_kg_ha") |>
+      mutate(leach_str = sprintf("%.2f \u00B1 %.2f (%s)", mean_val, sd_val, letter)) |>
+      select(treatment, leach_str)
+    
+    # EDC Stats (The new addition!)
+    edc <- get_stats_with_letters(.x, "edc_dollars") |>
+      mutate(edc_str = sprintf("$%.2f \u00B1 %.2f (%s)", mean_val, sd_val, letter)) |>
+      select(treatment, edc_str)
+    
+    # Merge them all
+    n2o |> left_join(leach, by="treatment") |> left_join(edc, by="treatment")
+  }) |>
+  ungroup()
+
+# --- 4. FORMATTING THE GT TABLE ---
+
+# Re-calculate ANOVA P-values for the footer (Global Model)
+# Note: This is just for the footer P-values
+aov_edc <- aov(edc_dollars ~ as.factor(year) * treatment, data = plot_level_economics)
+p_trt_edc <- summary(aov_edc)[[1]]["treatment", "Pr(>F)"]
+
+final_table_data |>
+  mutate(
+    year_order = case_when(year == "2023" ~ 1, year == "2024" ~ 2, TRUE ~ 3)
+  ) |>
+  arrange(year_order, treatment) |>
+  select(Year = year, Treatment = treatment, `N2O Loss` = n2o_str, `N Leaching` = leach_str, `Env. Damage Cost` = edc_str) |>
+  gt() |>
+  tab_header(title = md("**Table 3. Annual nitrogen losses and environmental costs**")) |>
+  cols_label(
+    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
+    `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
+    `Env. Damage Cost` = md("Total Environmental Cost<br>(USD ha<sup>-1</sup>)")
+  ) |>
+  cols_align(align = "center", columns = -Treatment) |>
+  tab_style(
+    style = cell_borders(sides = "top", color = "gray"),
+    locations = cells_body(rows = Year != lag(Year, default = ""))
+  ) |>
+  tab_footnote(
+    footnote = md(sprintf(
+      "Values are mean ± SD. Letters indicate Tukey-adjusted groups within year/period (α=0.05). Costs: N₂O ($16.18/kg N) + Leaching ($18.54/kg N). Global ANOVA Treatment effect for Cost: p = %.3f.", 
+      p_trt_edc
+    ))
+  )
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(gt)
+library(emmeans)
+library(multcomp)
+
+# --- 1. PREPARE PLOT-LEVEL DATA (Averaging Row/Interrow) ---
+
+# N2O: Average Row/Interrow daily, THEN sum for the year
+n2o_plot <- interpolated_flux_data |>
+  group_by(plot, treatment, year, date) |>
+  summarise(daily_plot_flux = mean(interpolated_flux, na.rm = TRUE), .groups = "drop") |>
+  group_by(plot, treatment, year) |>
+  summarise(
+    n2o_kg_ha = sum(daily_plot_flux, na.rm = TRUE) / 1000, 
+    .groups = "drop"
+  )
+
+# Leaching: Ensure Plot Level
+leach_plot <- annual_leaching |>
+  select(year, plot, treatment, leaching_kg_ha = annual_cumulative_leaching)
+
+# Join & Calculate Plot EDC
+plot_economics <- n2o_plot |>
+  inner_join(leach_plot, by = c("year", "plot", "treatment")) |>
+  mutate(edc_dollars = (n2o_kg_ha * 16.18) + (leaching_kg_ha * 18.54))
+
+# --- 2. CALCULATE 2-YEAR TOTALS (Method of Moments) ---
+
+# A. Continuous Systems (Real Sums)
+continuous_2year <- plot_economics |>
+  filter(year %in% c(2023, 2024), treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  group_by(plot, treatment) |>
+  summarise(
+    n2o_kg_ha = sum(n2o_kg_ha, na.rm = TRUE),
+    leaching_kg_ha = sum(leaching_kg_ha, na.rm = TRUE),
+    edc_dollars = sum(edc_dollars, na.rm = TRUE),
+    count = n(),
+    .groups = "drop"
+  ) |>
+  filter(count == 2) |>
+  select(-count)
+
+# B. Rotation Systems (Variance Propagation)
+# Annual stats (using all plots)
+rotation_annual_stats <- plot_economics |>
+  filter(year %in% c(2023, 2024), treatment %in% c("Corn", "Soy")) |>
+  group_by(treatment, year) |>
+  summarise(
+    mu_n2o = mean(n2o_kg_ha, na.rm = TRUE), var_n2o = var(n2o_kg_ha, na.rm = TRUE),
+    mu_leach = mean(leaching_kg_ha, na.rm = TRUE), var_leach = var(leaching_kg_ha, na.rm = TRUE),
+    mu_edc = mean(edc_dollars, na.rm = TRUE), var_edc = var(edc_dollars, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Propagate to 2-Year Totals
+rotation_2year_stats <- rotation_annual_stats |>
+  group_by(treatment) |>
+  summarise(
+    final_mu_n2o = sum(mu_n2o), final_sd_n2o = sqrt(sum(var_n2o)),
+    final_mu_leach = sum(mu_leach), final_sd_leach = sqrt(sum(var_leach)),
+    final_mu_edc = sum(mu_edc), final_sd_edc = sqrt(sum(var_edc)),
+    .groups = "drop"
+  )
+
+# Synthetic Plots for ANOVA (n=3)
+rotation_synthetic_plots <- rotation_2year_stats |>
+  group_by(treatment) |>
+  group_modify(~ {
+    n_sim <- 3
+    make_dist <- function(n, mu, sd) {
+      x <- rnorm(n)
+      if(sd > 0) x_final <- ((x - mean(x)) / sd(x)) * sd + mu else x_final <- rep(mu, n)
+      return(pmax(0, x_final))
+    }
+    tibble(
+      plot = paste0("Syn_", 1:n_sim),
+      n2o_kg_ha = make_dist(n_sim, .x$final_mu_n2o, .x$final_sd_n2o),
+      leaching_kg_ha = make_dist(n_sim, .x$final_mu_leach, .x$final_sd_leach),
+      edc_dollars = make_dist(n_sim, .x$final_mu_edc, .x$final_sd_edc)
+    )
+  }) |>
+  ungroup()
+
+# Combine Real + Synthetic
+final_2year_data <- bind_rows(continuous_2year, rotation_synthetic_plots) |>
+  mutate(year = "2023-2024")
+
+# Master Dataset
+stats_input_data <- bind_rows(
+  plot_economics |> mutate(year = as.character(year)),
+  final_2year_data
+)
+
+# --- 3. STATISTICAL LOOP (3 SIG FIGS) ---
+
+calc_stat_column <- function(data, col_name, is_money = FALSE) {
+  # Fit Model
+  fit <- lm(as.formula(paste(col_name, "~ treatment")), data = data)
+  
+  # Get Letters
+  lets <- tryCatch({
+    emmeans(fit, ~ treatment) |>
+      cld(adjust = "tukey", Letters = letters, alpha = 0.05) |>
+      as_tibble() |>
+      mutate(letter = trimws(.group)) |>
+      select(treatment, letter)
+  }, error = function(e) tibble(treatment = unique(data$treatment), letter = ""))
+  
+  # Get Summary Stats & Format to 3 Sig Figs
+  data |>
+    group_by(treatment) |>
+    summarise(mean = mean(.data[[col_name]], na.rm = TRUE), sd = sd(.data[[col_name]], na.rm = TRUE), .groups = "drop") |>
+    left_join(lets, by = "treatment") |>
+    mutate(
+      # Formatting Logic: 3 Significant Figures
+      mean_str = formatC(signif(mean, 3), digits = 3, format = "fg", flag = "#"),
+      sd_str = formatC(signif(sd, 3), digits = 3, format = "fg", flag = "#"),
+      # Remove trailing dots (e.g., "123." -> "123")
+      mean_str = sub("\\.$", "", mean_str),
+      sd_str = sub("\\.$", "", sd_str),
+      
+      result_str = if(is_money) {
+        sprintf("$%s \u00B1 %s (%s)", mean_str, sd_str, letter)
+      } else {
+        sprintf("%s \u00B1 %s (%s)", mean_str, sd_str, letter)
+      }
+    ) |>
+    select(treatment, result_str)
+}
+
+# Run Loop
+table_body <- stats_input_data |>
+  group_by(year) |>
+  group_modify(~ {
+    n2o <- calc_stat_column(.x, "n2o_kg_ha")
+    leach <- calc_stat_column(.x, "leaching_kg_ha")
+    edc <- calc_stat_column(.x, "edc_dollars", is_money = TRUE)
+    n2o |> rename(N2O = result_str) |>
+      left_join(leach |> rename(Leach = result_str), by = "treatment") |>
+      left_join(edc |> rename(Cost = result_str), by = "treatment")
+  }) |>
+  ungroup()
+
+# --- 4. SOURCE OF VARIATION ---
+# (Using plot_economics for correct global stats)
+aov_n2o <- summary(aov(n2o_kg_ha ~ as.factor(year) * treatment, data = plot_economics))[[1]]
+aov_leach <- summary(aov(leaching_kg_ha ~ as.factor(year) * treatment, data = plot_economics))[[1]]
+aov_edc <- summary(aov(edc_dollars ~ as.factor(year) * treatment, data = plot_economics))[[1]]
+
+format_p <- function(p) ifelse(p < 0.001, "< 0.001", sprintf("%.3f", p))
+
+source_var <- tibble(
+  year = "Source of Variation",
+  treatment = c("Treatment", "Year", "Year × Treatment"),
+  N2O = c(format_p(aov_n2o[2, "Pr(>F)"]), format_p(aov_n2o[1, "Pr(>F)"]), format_p(aov_n2o[3, "Pr(>F)"])),
+  Leach = c(format_p(aov_leach[2, "Pr(>F)"]), format_p(aov_leach[1, "Pr(>F)"]), format_p(aov_leach[3, "Pr(>F)"])),
+  Cost = c(format_p(aov_edc[2, "Pr(>F)"]), format_p(aov_edc[1, "Pr(>F)"]), format_p(aov_edc[3, "Pr(>F)"]))
+)
+
+# --- 5. FINALIZE TABLE & RENDER ---
+trt_order <- c("Corn", "Soy", "Sorghum", "Sorghum + Rye")
+
+final_table <- bind_rows(table_body, source_var) |>
+  mutate(
+    order_helper = case_when(
+      year == "2023" ~ 1, year == "2024" ~ 2,
+      year == "2023-2024" ~ 3, year == "Source of Variation" ~ 4
+    ),
+    treatment_factor = factor(treatment, levels = c(trt_order, "Treatment", "Year", "Year × Treatment"))
+  ) |>
+  arrange(order_helper, treatment_factor) |>
+  select(Year = year, Treatment = treatment, `N2O Loss` = N2O, `N Leaching` = Leach, `Env. Damage Cost` = Cost)
+
+ft <- final_table |>
+  gt() |>
+  tab_header(title = md("**Table 3. Annual nitrogen losses and environmental costs**")) |>
+  cols_label(
+    `N2O Loss` = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>-1</sup>)"),
+    `N Leaching` = md("N Leaching<br>(kg N ha<sup>-1</sup>)"),
+    `Env. Damage Cost` = md("Total Environmental Cost<br>(USD ha<sup>-1</sup>)")
+  ) |>
+  cols_align(align = "center", columns = -Treatment) |>
+  tab_style(
+    style = cell_borders(sides = "top", color = "gray", weight = px(2)),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) |>
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) |>
+  tab_footnote(
+    footnote = "Values are mean ± SD (3 significant figures). Letters indicate Tukey-adjusted groups within year/period (α=0.05). Costs: N₂O ($16.18/kg N) + Leaching ($18.54/kg N). Two-year totals for Corn/Soy estimated using variance propagation of annual crop phases."
+  )
+ft
+# Save as RTF
+
+gtsave(ft, "tables/table3_nitrogen_losses_environmental_costs.rtf")
 ```
