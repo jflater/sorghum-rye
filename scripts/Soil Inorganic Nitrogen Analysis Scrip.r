@@ -189,3 +189,125 @@ gtsave(gt_tbl, "soil_nitrogen_kruskal.rtf")
 write_csv(results_combined, "soil_nitrogen_kruskal_stats.csv")
 
 print("Analysis Complete. Table includes Date-level and Year-level analysis.")
+
+
+library(tidyverse)
+library(rstatix)
+library(multcompView)
+library(gt)
+library(glue)
+
+# --- 1. PREPARE DATA ---
+# (Assuming 'data' is loaded)
+df_analysis <- data %>%
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>% 
+  mutate(
+    total_n = ammonia_mg_per_kg + nitrate_mg_per_kg,
+    nitrate_prop = nitrate_mg_per_kg / total_n * 100,
+    year = as.character(year)
+  )
+
+# --- 2. CALCULATE STATS & P-VALUES ---
+
+get_year_stats <- function(data, yr) {
+  df_yr <- data %>% filter(year == yr)
+  
+  # Global Kruskal-Wallis
+  kw <- kruskal_test(df_yr, total_n ~ treatment)
+  p_val <- kw$p
+  
+  # Post-hoc Letters
+  if(p_val < 0.05) {
+    dunn <- dunn_test(df_yr, total_n ~ treatment, p.adjust.method = "holm") %>%
+      mutate(pair = paste(group1, group2, sep="-"))
+    lets <- multcompLetters(setNames(dunn$p.adj, dunn$pair))$Letters
+  } else {
+    lets <- setNames(rep("", length(unique(df_yr$treatment))), unique(df_yr$treatment))
+  }
+  
+  # Summary Stats Row
+  stats <- df_yr %>%
+    group_by(treatment) %>%
+    summarise(
+      n = n(),
+      mean = mean(total_n, na.rm=TRUE),
+      sd = sd(total_n, na.rm=TRUE),
+      min = min(total_n, na.rm=TRUE),
+      med = median(total_n, na.rm=TRUE),
+      max = max(total_n, na.rm=TRUE)
+    ) %>%
+    mutate(
+      letter = lets[treatment],
+      year = yr,
+      row_type = "data",  # Helper for sorting
+      display_mean = glue("{sprintf('%.2f', mean)} ± {sprintf('%.2f', sd)}{letter}")
+    )
+  
+  # P-value Row (Created manually to fit the table structure)
+  p_row <- tibble(
+    year = yr,
+    treatment = "P-value",
+    n = NA,
+    min = NA, med = NA, max = NA,
+    row_type = "p_val",
+    display_mean = ifelse(p_val < 0.001, "< 0.001", sprintf("%.3f", p_val))
+  )
+  
+  bind_rows(stats, p_row)
+}
+
+# Run and Combine
+stats_2023 <- get_year_stats(df_analysis, "2023")
+stats_2024 <- get_year_stats(df_analysis, "2024")
+
+final_df <- bind_rows(stats_2023, stats_2024) %>%
+  # SORTING LOGIC: Year (Ascending) -> Row Type (Data first, then P-value)
+  arrange(year, row_type) %>% 
+  select(
+    Year = year,
+    Treatment = treatment,
+    N = n,
+    `Mean ± SD` = display_mean,
+    Min = min,
+    Med = med,
+    Max = max
+  )
+
+# --- 3. RENDER TABLE WITH GT ---
+
+# Calculate Footnote Range first
+nitrate_range <- range(df_analysis$nitrate_prop, na.rm = TRUE)
+note_text <- glue("Nitrate ranged from {sprintf('%.1f', nitrate_range[1])} to {sprintf('%.1f', nitrate_range[2])}% of inorganic N (Figure S1).")
+
+final_df %>%
+  gt(groupname_col = "Year") %>%
+  cols_label(
+    Treatment = "Treatment",
+    `Mean ± SD` = "Mean ± SD"
+  ) %>%
+  # Format the numeric columns (Min/Med/Max) to 2 decimal places
+  fmt_number(columns = c(Min, Med, Max), decimals = 2) %>%
+  # Replace NA in N/Min/Med/Max with blank for the P-value row
+  sub_missing(columns = c(N, Min, Med, Max), missing_text = "") %>%
+  # Add the Header and Footnote
+  tab_header(
+    title = md("**Table 2. Soil salt-extractable inorganic nitrogen (ammonium + nitrate)**")
+  ) %>%
+  tab_footnote(footnote = note_text) %>%
+  # Style: Bold the P-value rows to make them stand out
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(rows = Treatment == "P-value")
+  ) %>%
+  # Style: Add a top border to P-value rows to separate them slightly from data
+  tab_style(
+    style = cell_borders(sides = "top", color = "gray", weight = px(1)),
+    locations = cells_body(rows = Treatment == "P-value")
+  )
+
+  # Save as RTF
+  gtsave("soil_inorganic_nitrogen_by_year.rtf")
+
+# table of min and max nitrate and ammonia values and associated information
+
+
