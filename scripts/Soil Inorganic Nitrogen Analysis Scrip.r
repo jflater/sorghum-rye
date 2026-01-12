@@ -35,279 +35,224 @@ clean_data <- data %>%
     year = as.character(year) # Ensure year is treated as a grouping category
   )
 
-# 3. Statistical Analysis Function (Kruskal-Wallis) -----------------------
-
-run_stats_kw <- function(df) {
-  # A. Global Test: Kruskal-Wallis
-  kw_res <- kruskal_test(df, ppm ~ treatment)
-  p_val <- kw_res$p
-
-  # B. Post-Hoc: Dunn's Test
-  letters_df <- tibble(treatment = unique(df$treatment), letter = "a")
-
-  if (!is.na(p_val) && p_val < 0.05) {
-    dunn_res <- dunn_test(df, ppm ~ treatment, p.adjust.method = "holm")
-
-    dunn_res <- dunn_res %>%
-      mutate(pair_name = paste(group1, group2, sep = "-"))
-
-    p_vec <- setNames(dunn_res$p.adj, dunn_res$pair_name)
-
-    # Generate letters (Compact Letter Display)
-    letters_list <- multcompLetters(p_vec, threshold = 0.05)
-
-    letters_df <- tibble(
-      treatment = names(letters_list$Letters),
-      letter = letters_list$Letters
-    )
-  } else {
-    letters_df <- tibble(
-      treatment = unique(df$treatment),
-      letter = ""
-    )
-  }
-
-  # D. Summary Stats (Mean, SE, Variance)
-  # We use type="common" to get variance (var) along with mean/se
-  stats_summary <- df %>%
-    group_by(treatment) %>%
-    get_summary_stats(ppm, type = "common") %>%
-    left_join(letters_df, by = "treatment") %>%
-    mutate(
-      kruskal_p = p_val,
-      test_method = "Kruskal-Wallis"
-    )
-
-  return(stats_summary)
-}
-
-# 4. Execute Analysis (Date Level AND Year Level) -------------------------
-
-# Run 1: Group by Date x Analyte
-results_date <- clean_data %>%
-  group_by(date, analyte) %>%
-  nest() %>%
-  mutate(stats = map(data, run_stats_kw)) %>%
-  unnest(stats) %>%
-  select(-data) %>%
-  mutate(group_type = "By Date")
-
-# Run 2: Group by Year x Analyte
-results_year <- clean_data %>%
-  group_by(year, analyte) %>%
-  nest() %>%
-  mutate(stats = map(data, run_stats_kw)) %>%
-  unnest(stats) %>%
-  select(-data) %>%
-  rename(date = year) %>% # Rename year to date column to stack them
-  mutate(group_type = "By Year")
-
-compare_df_cols(results_date, results_year)
-# Combine results
-results_combined <- bind_rows(results_date, results_year)
-
-
-# 5. Format for Publication -----------------------------------------------
-
-# Part A: The Means Rows
-means_table <- results_combined %>%
-  mutate(
-    # Create value string: Mean ± SE (Letter)
-    display_value = glue("{sprintf('%.2f', mean)} ± {sprintf('%.2f', se)} {letter}"),
-    display_value = str_trim(display_value)
-  ) %>%
-  select(group_type, date, treatment, analyte, display_value) %>%
-  pivot_wider(
-    names_from = analyte,
-    values_from = display_value
-  )
-
-# Part B: The Source of Variation (Kruskal-Wallis P-values)
-p_values_table <- results_combined %>%
-  distinct(group_type, date, analyte, kruskal_p) %>%
-  mutate(
-    display_value = case_when(
-      kruskal_p < 0.001 ~ "< 0.001",
-      TRUE ~ sprintf("%.3f", kruskal_p)
-    ),
-    treatment = "Source: Treatment (P-value)"
-  ) %>%
-  select(group_type, date, treatment, analyte, display_value) %>%
-  pivot_wider(
-    names_from = analyte,
-    values_from = display_value
-  )
-
-# Part C: Combine and Order
-final_table_data <- bind_rows(means_table, p_values_table) %>%
-  mutate(
-    # Sort order: Date groups first, then Year groups
-    # Within groups: Treatments first, then P-value row
-    type_rank = ifelse(group_type == "By Date", 1, 2),
-    row_rank = ifelse(treatment == "Source: Treatment (P-value)", 2, 1)
-  ) %>%
-  arrange(type_rank, date, row_rank, treatment) %>%
-  select(-type_rank, -row_rank, -group_type)
-
-# 6. Generate RTF ---------------------------------------------------------
-
-gt_tbl <- final_table_data %>%
-  group_by(date) %>%
-  gt() %>%
-  cols_label(treatment = "Treatment") %>%
-  tab_header(
-    title = "Soil Inorganic Nitrogen Response",
-    subtitle = "Analysis performed by Date and by Year. Values are Mean ± SE. Letters represent Dunn's Test (p < 0.05)."
-  ) %>%
-  # Style the P-value row
-  tab_style(
-    style = cell_text(weight = "bold", style = "italic"),
-    locations = cells_body(
-      columns = treatment,
-      rows = treatment == "Source: Treatment (P-value)"
-    )
-  ) %>%
-  # Add border above P-value row
-  tab_style(
-    style = cell_borders(sides = "top", color = "black", weight = px(1)),
-    locations = cells_body(
-      rows = treatment == "Source: Treatment (P-value)"
-    )
-  ) %>%
-  tab_style(
-    style = cell_text(weight = "bold"),
-    locations = cells_column_labels()
-  ) %>%
-  tab_options(
-    row_group.background.color = "#E0E0E0",
-    table.font.names = "Times New Roman"
-  )
-
-gtsave(gt_tbl, "soil_nitrogen_kruskal.rtf")
-
-# Save detailed CSV with Variance included
-write_csv(results_combined, "soil_nitrogen_kruskal_stats.csv")
-
-print("Analysis Complete. Table includes Date-level and Year-level analysis.")
 
 
 library(tidyverse)
 library(rstatix)
 library(multcompView)
 library(gt)
+library(patchwork)
 library(glue)
 
 # --- 1. PREPARE DATA ---
-# (Assuming 'data' is loaded)
+# (Assuming 'clean_data' is loaded from your CSV)
+# Ensure we have the calculated columns
 df_analysis <- data %>%
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>% 
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) %>%
   mutate(
     total_n = ammonia_mg_per_kg + nitrate_mg_per_kg,
-    nitrate_prop = nitrate_mg_per_kg / total_n * 100,
+    nitrate_prop = nitrate_mg_per_kg / total_n * 100, # Percentage
     year = as.character(year)
   )
 
-# --- 2. CALCULATE STATS & P-VALUES ---
+# --- 2. GENERATE TABLE 2 ---
 
+# Function to run Kruskal-Wallis & Get Letters per Year
 get_year_stats <- function(data, yr) {
+  # Filter year
   df_yr <- data %>% filter(year == yr)
   
-  # Global Kruskal-Wallis
+  # 1. Global P-value
   kw <- kruskal_test(df_yr, total_n ~ treatment)
   p_val <- kw$p
   
-  # Post-hoc Letters
+  # 2. Letters (Dunn's Test)
   if(p_val < 0.05) {
-    dunn <- dunn_test(df_yr, total_n ~ treatment, p.adjust.method = "holm") %>%
-      mutate(pair = paste(group1, group2, sep="-"))
-    lets <- multcompLetters(setNames(dunn$p.adj, dunn$pair))$Letters
+    dunn <- dunn_test(df_yr, total_n ~ treatment, p.adjust.method = "holm")
+    dunn <- dunn %>% mutate(pair = paste(group1, group2, sep="-"))
+    p_vec <- setNames(dunn$p.adj, dunn$pair)
+    lets <- multcompLetters(p_vec)$Letters
   } else {
     lets <- setNames(rep("", length(unique(df_yr$treatment))), unique(df_yr$treatment))
   }
   
-  # Summary Stats Row
+  # 3. Calculate Summary Stats
   stats <- df_yr %>%
     group_by(treatment) %>%
     summarise(
-      n = n(),
+      n_samples = n(),
       mean = mean(total_n, na.rm=TRUE),
       sd = sd(total_n, na.rm=TRUE),
       min = min(total_n, na.rm=TRUE),
-      med = median(total_n, na.rm=TRUE),
+      median = median(total_n, na.rm=TRUE),
       max = max(total_n, na.rm=TRUE)
     ) %>%
     mutate(
       letter = lets[treatment],
       year = yr,
-      row_type = "data",  # Helper for sorting
-      display_mean = glue("{sprintf('%.2f', mean)} ± {sprintf('%.2f', sd)}{letter}")
+      p_global = p_val
     )
   
-  # P-value Row (Created manually to fit the table structure)
-  p_row <- tibble(
-    year = yr,
-    treatment = "P-value",
-    n = NA,
-    min = NA, med = NA, max = NA,
-    row_type = "p_val",
-    display_mean = ifelse(p_val < 0.001, "< 0.001", sprintf("%.3f", p_val))
-  )
-  
-  bind_rows(stats, p_row)
+  return(stats)
 }
 
-# Run and Combine
+# Run for both years
 stats_2023 <- get_year_stats(df_analysis, "2023")
 stats_2024 <- get_year_stats(df_analysis, "2024")
+table_data <- bind_rows(stats_2023, stats_2024)
 
-final_df <- bind_rows(stats_2023, stats_2024) %>%
-  # SORTING LOGIC: Year (Ascending) -> Row Type (Data first, then P-value)
-  arrange(year, row_type) %>% 
+# Format for Display
+final_table_2 <- table_data %>%
+  mutate(
+    `Mean ± Standard Deviation` = glue("{sprintf('%.2f', mean)} ± {sprintf('%.2f', sd)}{letter}"),
+    `P-value` = ifelse(p_global < 0.001, "< 0.001", sprintf("%.3f", p_global))
+  ) %>%
   select(
-    Year = year,
-    Treatment = treatment,
-    N = n,
-    `Mean ± SD` = display_mean,
-    Min = min,
-    Med = med,
-    Max = max
+    Year = year, 
+    Treatment = treatment, 
+    `Number of Soil Samples` = n_samples, 
+    `Mean ± Standard Deviation`, 
+    Minimum = min, 
+    Median = median, 
+    Maximum = max,
+    p_val_raw = `P-value` # Keep for pivot logic
   )
 
-# --- 3. RENDER TABLE WITH GT ---
-
-# Calculate Footnote Range first
-nitrate_range <- range(df_analysis$nitrate_prop, na.rm = TRUE)
-note_text <- glue("Nitrate ranged from {sprintf('%.1f', nitrate_range[1])} to {sprintf('%.1f', nitrate_range[2])}% of inorganic N (Figure S1).")
-
-final_df %>%
-  gt(groupname_col = "Year") %>%
-  cols_label(
-    Treatment = "Treatment",
-    `Mean ± SD` = "Mean ± SD"
+# Create the "P-value Row" structure
+gt_prep <- final_table_2 %>%
+  group_by(Year) %>%
+  mutate(
+    # Create a p-value label only for the last row of the group to avoid duplication
+    p_row_label = ifelse(row_number() == n(), p_val_raw, NA) 
   ) %>%
-  # Format the numeric columns (Min/Med/Max) to 2 decimal places
-  fmt_number(columns = c(Min, Med, Max), decimals = 2) %>%
-  # Replace NA in N/Min/Med/Max with blank for the P-value row
-  sub_missing(columns = c(N, Min, Med, Max), missing_text = "") %>%
-  # Add the Header and Footnote
+  ungroup()
+
+# Generate GT Table
+# Note: GT handles the grouping nicely, so we don't need a literal separate row in data
+library(tidyverse)
+library(gt)
+library(glue)
+
+# 1. FIX THE P-VALUE LOGIC
+# We define the text strings explicitly before making the table to avoid the "TRUE" bug.
+p_val_2023 <- unique(stats_2023$p_global)
+year_label_23 <- ifelse(p_val_2023 < 0.001, 
+                        "2023\n(P < 0.001)", 
+                        paste0("2023\n(P = ", sprintf("%.3f", p_val_2023), ")"))
+
+p_val_2024 <- unique(stats_2024$p_global)
+year_label_24 <- ifelse(p_val_2024 < 0.001, 
+                        "2024\n(P < 0.001)", 
+                        paste0("2024\n(P = ", sprintf("%.3f", p_val_2024), ")"))
+
+# 2. PREPARE THE DATA WITH A DEDICATED YEAR COLUMN
+gt_ready <- bind_rows(stats_2023, stats_2024) %>%
+  mutate(
+    # Create the combined Mean ± SD string
+    `Mean ± Standard Deviation` = glue("{sprintf('%.2f', mean)} ± {sprintf('%.2f', sd)}{letter}"),
+    
+    # Create the Year Column with the P-value included
+    Year = case_when(
+      year == "2023" ~ year_label_23,
+      year == "2024" ~ year_label_24
+    )
+  ) %>%
+  select(
+    Year, 
+    Treatment = treatment, 
+    `Number of Soil Samples` = n_samples, 
+    `Mean ± Standard Deviation`, 
+    Minimum = min, 
+    Median = median, 
+    Maximum = max
+  )
+
+# 3. GENERATE THE TABLE (FLAT STYLE)
+table2_gt <- gt_ready %>%
+  gt() %>% # removed 'groupname_col' so Year stays as a column
+  
+  # Format the headers
+  cols_label(
+    Year = "Year",
+    Treatment = "Treatment",
+    `Number of Soil Samples` = "N",
+    `Mean ± Standard Deviation` = "Mean ± SD",
+    Minimum = "Min",
+    Median = "Med",
+    Maximum = "Max"
+  ) %>%
+  
+  # Format numbers
+  fmt_number(columns = c(Minimum, Median, Maximum), decimals = 2) %>%
+  
+  # Align columns for readability
+  cols_align(align = "center", columns = everything()) %>%
+  cols_align(align = "left", columns = c(Treatment)) %>%
+  
+  # Handle the line break in the Year column (2023 \n P=...)
+  fmt_markdown(columns = Year) %>%
+  
+  # Add Header
   tab_header(
     title = md("**Table 2. Soil salt-extractable inorganic nitrogen (ammonium + nitrate)**")
-  ) %>%
-  tab_footnote(footnote = note_text) %>%
-  # Style: Bold the P-value rows to make them stand out
-  tab_style(
-    style = cell_text(weight = "bold"),
-    locations = cells_body(rows = Treatment == "P-value")
-  ) %>%
-  # Style: Add a top border to P-value rows to separate them slightly from data
-  tab_style(
-    style = cell_borders(sides = "top", color = "gray", weight = px(1)),
-    locations = cells_body(rows = Treatment == "P-value")
-  )
+  ) 
 
-  # Save as RTF
-  gtsave("soil_inorganic_nitrogen_by_year.rtf")
+# 4. ADD FOOTNOTE
+nitrate_range <- range(df_analysis$nitrate_prop, na.rm = TRUE)
+footnote_text <- glue("Nitrate ranged from {sprintf('%.1f', nitrate_range[1])} to {sprintf('%.1f', nitrate_range[2])}% of inorganic N (Figure S1).")
 
-# table of min and max nitrate and ammonia values and associated information
+table2_gt <- table2_gt %>%
+  tab_footnote(footnote = footnote_text)
+
+# Save/Print
+print(table2_gt)
+
+# save .rtf
+gtsave(table2_gt, "Table_2_Soil_Inorganic_Nitrogen.rtf")
 
 
+# --- 3. GENERATE FIGURE S1 ---
+
+# Panel A: Boxplot of Total N concentrations
+p1 <- ggplot(df_analysis, aes(x = treatment, y = total_n, fill = treatment)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = 21) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 1) + # Show raw points behind
+  facet_wrap(~year) +
+  scale_fill_manual(values = c("Sorghum" = "grey70", "Sorghum + Rye" = "#5D9C59")) + # Custom colors
+  labs(
+    title = "A. Total Inorganic Nitrogen Distribution",
+    y = expression(Total~Inorganic~N~(mg~N~kg^{-1})),
+    x = NULL
+  ) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+# Panel B: Density Plot of Nitrate Proportion
+# This shows "How much of the N is Nitrate?"
+p2 <- ggplot(df_analysis, aes(x = nitrate_prop, fill = treatment)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~year) +
+  scale_fill_manual(values = c("Sorghum" = "grey70", "Sorghum + Rye" = "#5D9C59")) +
+  labs(
+    title = "B. Nitrate Proportion of Total Inorganic N",
+    x = "Nitrate Portion (%)",
+    y = "Density"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+# Combine
+fig_s1 <- p1 / p2 
+
+# Display
+print(fig_s1)
+ggsave("Figure_S1_Soil_Distributions.png", fig_s1, width = 7, height = 8)
+
+
+# Print the range in nitrate concenteration as text output
+nitrate_range <- range(df_analysis$nitrate_mg_per_kg, na.rm = TRUE)
+cat(glue("Nitrate concentration ranged from {sprintf('%.2f', nitrate_range[1])} to {sprintf('%.2f', nitrate_range[2])} mg/kg.\n"))
+
+# Print the range in ammonium concenteration as text output
+ammonium_range <- range(df_analysis$ammonia_mg_per_kg, na.rm = TRUE)
+cat(glue("Ammonium concentration ranged from {sprintf('%.2f', ammonium_range[1])} to {sprintf('%.2f', ammonium_range[2])} mg/kg.\n"))
