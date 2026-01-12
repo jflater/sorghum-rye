@@ -1655,7 +1655,9 @@ annual_leaching <- leaching_data |>
   summarise(
     # mg -> kg, then divide by hectares
     annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha, 
-    .groups = "drop"
+    .groups = "drop",
+    annual_drainage_l = max(cumulative_flow_l, na.rm = TRUE),
+    annual_drainage_mm = (annual_drainage_l / plot_area_ha) / 10000
   ) |>
   filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
 
@@ -2005,7 +2007,6 @@ final_table_data |>
   )
 ```
 
-
 ```{r}
 library(dplyr)
 library(tidyr)
@@ -2247,7 +2248,6 @@ assumptions_table <- bind_rows(
 print(assumptions_table)
 ```
 
-
 ```{r}
 library(dplyr)
 library(tidyr)
@@ -2400,7 +2400,6 @@ final_table |> gt() |>
   tab_footnote(footnote = "Values are arithmetic mean ± SD (3 sig figs). Letters indicate Tukey-adjusted groups derived from log-transformed data for leaching/costs and non-transformed data for N2O (α=0.05).")
 ```
 
-
 ```{r}
 # --- QUICK P-VALUE CHECKER (LEACHING) ---
 
@@ -2417,4 +2416,207 @@ contrasts <- emmeans(fit_leach, ~ treatment | year) |>
 
 # 3. Print the Result
 print(contrasts)
+```
+
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(patchwork) # For combining panels
+
+# --- 1. LOAD & CLEAN TEXTURE DATA (Your Code) ---
+# Note: Ensure the path to the Excel file is correct in your local environment
+texture_raw <- read_excel("data/PSA Report - AGRON-McDaniel-Potter-2024.xlsm",
+    sheet = "Main Data File format", n_max = 22
+)
+
+# Ensure leaching data is available (re-load if necessary)
+if (!exists("leaching_data")) {
+  leaching_data <- read_csv("data/clean_leaching.csv") |>
+    janitor::clean_names() |>
+    mutate(
+      date = as.Date(date),
+      year = year(date)
+    ) |>
+    filter(year %in% c(2023, 2024))
+}
+
+# Calculate annual cumulative nitrogen leaching per plot
+plot_area_ft2 <- 120 * 160
+plot_area_ha <- plot_area_ft2 / 107639.1041671
+
+annual_leaching <- leaching_data |>
+  mutate(plot = as.numeric(plot)) |>
+  group_by(plot, treatment, year) |>
+  summarise(
+    # mg -> kg, then divide by hectares
+    annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha, 
+    .groups = "drop",
+    annual_drainage_l = max(cumulative_flow_l, na.rm = TRUE),
+    annual_drainage_mm = (annual_drainage_l / plot_area_ha) / 10000
+  ) |>
+  filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
+
+print(annual_leaching)
+
+texture <- texture_raw %>%
+    select(Sample, Sand = S, Silt = T, Clay = C) %>%
+    separate(Sample, into = c("ID", "Plot"), sep = "_") %>%
+    mutate(Plot = as.numeric(Plot)) %>%
+    drop_na() %>%
+    mutate(
+        Sand = as.numeric(Sand),
+        Silt = as.numeric(Silt),
+        Clay = as.numeric(Clay)
+    ) %>%
+    select(Plot, Sand, Silt, Clay) # We only need Plot and Texture cols
+
+# --- 2. JOIN WITH DRAINAGE & LEACHING DATA ---
+# We use 'annual_leaching' from your previous analysis steps
+# Ensure 'drainage_mm' is the correct column name for water volume in your dataset
+plot_hydrology <- annual_leaching %>%
+  # Select key vars. IF YOUR DRAINAGE COL IS NAMED DIFFERENTLY, CHANGE 'drainage_mm' BELOW
+  select(year, plot, treatment, drainage_mm = annual_drainage_mm, leaching_kg_ha = annual_cumulative_leaching) %>% 
+  left_join(texture, by = c("plot" = "Plot")) %>%
+  mutate(
+    year = as.factor(year),
+    # Ensure treatment order for coloring
+    treatment = factor(treatment, levels = c("Corn", "Soy", "Sorghum", "Sorghum + Rye"))
+  )
+
+# --- 3. GENERATE PLOTS ---
+
+# PANEL A: Texture vs. Drainage (The "Site Characteristic" Check)
+# Does sandier soil drain more? (Expect positive slope)
+p_texture <- ggplot(plot_hydrology, aes(x = Sand, y = drainage_mm)) +
+  geom_smooth(method = "lm", color = "black", fill = "grey80", alpha = 0.5) +
+  geom_point(aes(fill = treatment), shape = 21, size = 3, color = "black", stroke = 0.5) +
+  scale_fill_manual(values = c("Corn" = "#E69F00", "Soy" = "#D55E00", 
+                               "Sorghum" = "grey70", "Sorghum + Rye" = "#009E73")) +
+  labs(
+    title = "A. Soil Texture vs. Drainage",
+    x = "Sand Content (%)",
+    y = "Annual Drainage (mm)"
+  ) +
+  theme_bw() +
+  theme(legend.position = "none") # Hide legend here, show in Panel B
+
+# PANEL B: Drainage vs. N Loss (The "Uncoupling" Effect)
+# Does WCC break the link between water flow and N loss?
+p_loss <- ggplot(plot_hydrology, aes(x = drainage_mm, y = leaching_kg_ha)) +
+  # Add global trend line (dashed) to show the general "Water = Leaching" rule
+  geom_smooth(method = "lm", se = FALSE, color = "grey60", linetype = "dashed") +
+  # Add points
+  geom_point(aes(fill = treatment, shape = treatment), size = 3.5, alpha = 0.9) +
+  # Custom Colors & Shapes
+  scale_fill_manual(values = c("Corn" = "#E69F00", "Soy" = "#D55E00", 
+                               "Sorghum" = "grey70", "Sorghum + Rye" = "#009E73")) +
+  scale_shape_manual(values = c(21, 24, 22, 21)) + # Circle, Triangle, Square, Circle
+  labs(
+    title = "B. Drainage vs. N Leaching Load",
+    x = "Annual Drainage (mm)",
+    y = expression(Annual~NO[3]-N~Leaching~(kg~N~ha^{-1})),
+    fill = "Treatment",
+    shape = "Treatment"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "right",
+    legend.box.background = element_rect(color = "black", linewidth = 0.5)
+  )
+
+# --- 4. COMBINE & SAVE ---
+figure_4 <- p_texture + p_loss + 
+  plot_layout(widths = c(1, 1.5)) # Give Panel B a bit more width
+
+print(figure_4)
+# ggsave("FigureS?_Hydrology.png", figure_4, width = 10, height = 5)
+```
+
+
+```{r}
+library(tidyverse)
+
+# 1. DEFINE CONSTANTS
+plot_area_ft2 <- 120 * 160
+plot_area_ha <- plot_area_ft2 / 107639.1041671
+
+# 2. PREPARE DATA
+# We use the raw 'leaching_data' (daily/weekly measurements)
+hydrograph_data <- leaching_data %>%
+  arrange(plot, date) %>%
+  group_by(plot, year) %>% # Reset calculation for each year/plot combo
+  mutate(
+    # Convert Cumulative Liters -> mm Depth
+    cumulative_mm = (cumulative_flow_l / plot_area_ha) / 10000,
+    
+    # Optional: If your data doesn't reset to 0 at Jan 1, create a "Yearly Cumulative"
+    # This ensures every line starts at 0 for the graph
+    cumulative_mm_reset = cumulative_mm - min(cumulative_mm, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(plot = as.factor(plot))
+
+# 3. PLOT CUMULATIVE HYDROGRAPH
+p_hydro <- ggplot(hydrograph_data, aes(x = date, y = cumulative_mm_reset, group = plot, color = treatment)) +
+  # Draw lines for each plot
+  geom_line(alpha = 0.8, size = 0.7) +
+  
+  # Split by Year to see seasonal differences clearly
+  facet_wrap(~year, scales = "free_x") +
+  
+  # Colors
+  scale_color_manual(values = c("Corn" = "#E69F00", 
+                                "Soy" = "#D55E00", 
+                                "Sorghum" = "grey70", 
+                                "Sorghum + Rye" = "#009E73")) +
+  
+  # Labels
+  labs(title = "Seasonal Cumulative Drainage Dynamics",
+       subtitle = "Steep slopes indicate active drainage periods; flat lines indicate dry periods.",
+       x = "Date",
+       y = "Cumulative Drainage (mm)",
+       color = "Treatment") +
+  
+  # Theme
+  theme_bw() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+print(p_hydro)
+```
+
+```{r}
+library(broom) # For nice summary tables
+
+# --- TEST 1: The "Texture Driver" (For Panel A) ---
+# Question: Does Sand % significantly predict Drainage?
+# We use a Linear Model (lm).
+tex_stats <- lm(drainage_mm ~ Sand, data = plot_hydrology)
+
+print("--- TEXTURE VS DRAINAGE STATISTICS ---")
+print(anova(tex_stats))
+print(summary(tex_stats))
+# Look for:
+# 1. Multiple R-squared (The strength of the link)
+# 2. P-value for 'Sand' (Is it significant?)
+
+
+# --- TEST 2: The "Uncoupling" Effect (For Panel B) ---
+# Question: Is the slope of Leaching vs. Drainage different for WCC?
+# We use ANCOVA. The key is the INTERACTION term (*).
+# Model: Leaching ~ Drainage + Treatment + (Drainage * Treatment)
+
+# First, set "Sorghum + Rye" as the reference group to see if others differ from IT
+plot_hydrology$treatment <- relevel(plot_hydrology$treatment, ref = "Sorghum + Rye")
+
+uncouple_stats <- lm(leaching_kg_ha ~ drainage_mm * treatment, data = plot_hydrology)
+
+print("--- UNCOUPLING STATISTICS (ANCOVA) ---")
+print(anova(uncouple_stats)) 
+
+# detailed coefficients to see specific slope differences
+print(summary(uncouple_stats))
 ```
