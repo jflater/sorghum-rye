@@ -13,6 +13,12 @@ pacman::p_load(
   glue, # String formatting
   janitor # Data cleaning
 )
+library(tidyverse)
+library(rstatix)
+library(multcompView)
+library(gt)
+library(patchwork)
+library(glue)
 
 # 2. Load and Preprocess --------------------------------------------------
 data <- read_csv("data/soils/cleaned_soil_data.csv", show_col_types = FALSE)
@@ -37,12 +43,7 @@ clean_data <- data %>%
 
 
 
-library(tidyverse)
-library(rstatix)
-library(multcompView)
-library(gt)
-library(patchwork)
-library(glue)
+
 
 # --- 1. PREPARE DATA ---
 # (Assuming 'clean_data' is loaded from your CSV)
