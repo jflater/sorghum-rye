@@ -1498,6 +1498,7 @@ create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
     # Significance stars
     geom_text(data = s_sub, aes(x = date, y = star_y, label = star_label), size = 5) +
     scale_color_manual(values = treatment_colors) +
+    guides(color = "none") +
     scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
     scale_y_continuous(
       name = if(!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" d"^-1*")") else "",
@@ -1587,7 +1588,8 @@ create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
 # 7. Assemble Figure
 fig_leaching <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
   plot_layout(guides = "collect") &
-  theme(legend.position = "top", legend.justification = "center")
+  theme(legend.position = "top", legend.justification = "center") &
+  labs(color = NULL, fill = NULL)
 
 fig_leaching
 
@@ -2462,7 +2464,6 @@ contrasts <- emmeans(fit_leach, ~ treatment | year) |>
 print(contrasts)
 ```
 
-
 ```{r}
 library(tidyverse)
 library(readxl)
@@ -2576,7 +2577,6 @@ figure_4 <- p_texture + p_loss +
 print(figure_4)
 # ggsave("FigureS?_Hydrology.png", figure_4, width = 10, height = 5)
 ```
-
 
 ```{r}
 library(tidyverse)
