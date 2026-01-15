@@ -445,7 +445,7 @@ sorghum_stats <- sorghum_stats |>
   dplyr::mutate(fill_key = factor(fill_key, levels = fill_levels))
 rye_overlay <- rye_overlay |>
   dplyr::mutate(fill_key = factor(fill_key, levels = fill_levels))
-
+library(ggpattern)
 # Use ggpattern for texture when available; fall back to semi-transparent fill.
 rye_layer <- if (requireNamespace("ggpattern", quietly = TRUE)) {
   ggpattern::geom_col_pattern(
@@ -508,7 +508,7 @@ final_biomass_plot <- ggplot2::ggplot() +
   ) +
   ggplot2::labs(
     x = "",
-    y = expression("Biomass (Mg ha"^-1*")")
+    y = expression("Dry Biomass (Mg ha"^-1*")")
   ) +
   theme_publication() +
   ggplot2::theme(
@@ -517,7 +517,7 @@ final_biomass_plot <- ggplot2::ggplot() +
   )
 
 print(final_biomass_plot)
-ggplot2::ggsave("figures/final_biomass_stacked.png", final_biomass_plot, width = 174, height = 174, units = "mm", dpi = 600)
+ggplot2::ggsave("SubmissionFiguresTables/final_biomass_stacked.png", final_biomass_plot, width = 174, height = 174, units = "mm", dpi = 600)
 
 # Statistical tests: treatments within each year and years within each treatment (sorghum biomass only).
 sorghum_tests_by_year <- combined_biomass |>
@@ -568,6 +568,11 @@ sorghum_tests_by_treatment <- combined_biomass |>
   }) |>
   dplyr::ungroup()
 
-print(sorghum_tests_by_year)
-print(sorghum_tests_by_treatment)
+sorghum_tests_by_year
+sorghum_tests_by_treatment
 
+rye_stats
+sorghum_stats
+
+# save rye_stats 
+write.csv(rye_stats, "SubmissionFiguresTables/rye_biomass_stats.rtf", row.names = FALSE)

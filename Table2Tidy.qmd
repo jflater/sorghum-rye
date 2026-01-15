@@ -14,13 +14,19 @@ execute:
 ---
 
 # Soil Inorganic Nitrogen Analysis Script
+
 # Approach: Adaptive Transformation based on Residual Normality
+
 # Author: Jared Flater
+
 # Soil Inorganic Nitrogen Analysis Script
+
 # Approach: Adaptive Transformation based on Residual Normality
+
 # Author: Agricultural Data Expert
 
 # 1. Setup ----------------------------------------------------------------
+
 ```{r setup, message=FALSE, warning=FALSE}
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(
@@ -34,8 +40,11 @@ pacman::p_load(
 )
 
 ```
+
 # 2. Load and Preprocess --------------------------------------------------
+
 # Ensure the file is in the working directory
+
 ```{r}
 data <- read_csv("cleaned_soil_data.csv", show_col_types = FALSE)
 
@@ -60,6 +69,7 @@ clean_data <- data %>%
 # 3. Statistical Analysis Function (Adaptive with Plotting) ---------------
 
 # Initialize PDF device for diagnostic plots
+
 ```{r}
 pdf("transformation_diagnostics.pdf", width = 10, height = 5)
 
@@ -154,7 +164,9 @@ run_stats <- function(df, date_val, analyte_val) {
 }
 
 ```
+
 # 4. Execute Analysis -----------------------------------------------------
+
 ```{r}
 # We use pmap to pass the data AND the labels (date, analyte) to the function
 results <- clean_data %>%
@@ -169,7 +181,9 @@ dev.off()
 print("Diagnostic plots saved to 'transformation_diagnostics.pdf'")
 
 ```
+
 # 5. Format for Publication -----------------------------------------------
+
 ```{r}
 # Part A: The Means Rows
 means_table <- results %>%
@@ -206,6 +220,7 @@ final_table_data <- bind_rows(means_table, p_values_table) %>%
   select(-sort_order)
 
 ```
+
 # 6. Generate RTF ---------------------------------------------------------
 
 ```{r}

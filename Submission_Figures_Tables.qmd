@@ -28,6 +28,7 @@ library(tidyverse)
 library(readxl)
 library(lubridate)
 library(patchwork)
+options(width = 80)
 ```
 
 # Theme
@@ -949,8 +950,11 @@ range_stats <- daily_flux_plot |>
 # 3. Check specific High Values (to verify the ">600" claim)
 top_fluxes <- daily_flux_plot |>
   arrange(desc(daily_flux)) |>
-  slice(1:5) |>
+  slice(1:20) |>
   select(year, Treatment, date, daily_flux)
+
+
+
 
 # Print results
 print(range_stats)
@@ -1001,6 +1005,68 @@ final_cum_values <- cum_flux_plot |>
 overall_range <- range(final_cum_values$total_cum)
 cat("Overall cumulative N2O flux range (kg N ha-1) across Sorghum, Sorghum + WCC, and Corn (2023-2024):",
     paste(round(overall_range, 2), collapse = " - "), "\n")
+```
+
+# Daily flux details
+
+```{r}
+library(gt)
+str(flux_data)
+daily_flux_stats <- flux_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye", "Corn", "Soy")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    year = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024)) |>
+  
+  # --- STEP 1: POOL ROW & INTERROW (The Fix) ---
+  group_by(date, plot, Treatment, year) |>
+  summarise(
+    plot_daily_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  
+  # --- STEP 2: CALCULATE STATS ON POOLED VALUES ---
+  group_by(Treatment, year) |>
+  summarise(
+    mean_flux = mean(plot_daily_flux, na.rm = TRUE), # In g N ha d
+    median_flux = median(plot_daily_flux, na.rm = TRUE),
+    min_flux = min(plot_daily_flux, na.rm = TRUE),
+    max_flux = max(plot_daily_flux, na.rm = TRUE),
+    .groups = "drop"
+  )
+daily_flux_stats |>
+  group_by(Treatment) |>
+  summarise(mean = mean(mean_flux))
+
+print(daily_flux_stats)
+# Create formatted table
+supp_table2 <- daily_flux_stats %>%
+  gt() %>%
+  cols_label(
+    Treatment = "Treatment",
+    year = "Year",
+    mean_flux = "Mean",
+    median_flux = "Median",
+    min_flux = "Min",
+    max_flux = "Max"
+  ) %>%
+  fmt_number(
+    columns = c(mean_flux, median_flux, min_flux, max_flux),
+    decimals = 1  # 1 decimal place is enough for grams (e.g., 16.6)
+  ) %>%
+  tab_header(
+    title = md("**Supplementary Table 2. Daily N₂O Flux Statistics**"),
+    subtitle = "Values represent plot-level averages (pooled row/interrow) in g N ha⁻¹ d⁻¹"
+  ) %>%
+  cols_align(align = "center", columns = everything()) %>%
+  cols_align(align = "left", columns = "Treatment")
+
+print(supp_table2)
+
+# save 
+
 ```
 
 ```{r}
@@ -1116,29 +1182,31 @@ print("--- Paired T-Test Results (Reviewer Check) ---")
 print(t_test_result)
 
 # 4. PLOT A: Absolute Fluxes (Your Request)
-p1_boxplot <- ggplot(row_interrow_comparison, aes(x = Treatment, y = gnha_day_no_negative, fill = rowvs_interrow)) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.7) + # Hide outliers to see the box better
-  geom_jitter(position = position_jitterdodge(), alpha = 0.1, size = 0.5) + # Show raw data points
+p1_boxplot <- ggplot(row_interrow_comparison, aes(x = Treatment, y = gnha_day_no_negative, color = rowvs_interrow)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(position = position_jitterdodge(), alpha = 0.5, size = 0.7) +
   facet_wrap(~ year) +
   labs(
-    title = "N2O Flux Distribution: Row vs. Interrow",
     y = expression("N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
-    fill = "Position"
+    color = "Row Position"
   ) +
-  scale_fill_manual(values = c("grey40", "grey80")) + # High contrast for paper
+  scale_color_manual(values = c("Interrow" = "grey40", "Row" = "grey80")) +
   theme_publication() +
-  theme(legend.position = "top")
+  theme(
+    legend.position = "top",
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.line.x = element_blank(),
+    axis.title.x = element_blank()
+  )
 
 # 5. PLOT B: The "Difference" Plot (For Reviewer MM2)
-# This shows if the Interrow is consistently higher (above 0) or lower (below 0)
 p2_diff <- ggplot(diff_analysis, aes(x = Treatment, y = Diff, fill = Treatment)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  geom_violin(alpha = 0.5) +
+  #geom_violin(alpha = 0.5) +
   geom_boxplot(width = 0.1, outlier.shape = NA) +
-  facet_wrap(~ year) +
+  facet_wrap(~ year, labeller = labeller(year = c())) +
   labs(
-    title = "Systematic Bias Check: (Interrow - Row)",
-    subtitle = "Centered on 0 (red line) justifies pooling data",
     y = expression("Difference (g N ha"^-1*" day"^-1*")")
   ) +
   scale_fill_manual(values = treatment_colors) +
@@ -1148,6 +1216,9 @@ p2_diff <- ggplot(diff_analysis, aes(x = Treatment, y = Diff, fill = Treatment))
 # Display Plots
 print(p1_boxplot)
 print(p2_diff)
+
+rowvsinterrow <- p1_boxplot / p2_diff
+rowvsinterrow
 
 
 # Generate Descriptive Stats for All Treatments
@@ -1171,202 +1242,6 @@ flux_summary_stats <- flux_data |>
 print(flux_summary_stats)
 ```
 
-# Figure X: Nitrogen Leaching
-
-```{r}
-# Figure 5: Nitrate Leaching and Precipitation
-
-
-# 1. Load and Process Leaching Data
-# Define plot area constants
-plot_area_ft2 <- 120 * 160
-plot_area_ha <- plot_area_ft2 / 107639.1041671
-
-leaching_data <- read_csv("data/clean_leaching.csv") |>
-  janitor::clean_names() |>
-  mutate(
-    date = as.Date(date),
-    year = year(date)
-  ) |>
-  filter(year %in% c(2023, 2024))
-
-# 2. Daily Leaching Calculation
-daily_leaching_summary <- leaching_data |>
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
-  mutate(
-    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
-  ) |>
-  group_by(Treatment, year, date) |>
-  summarise(
-    mean_loss = mean(daily_n_loss_kgha, na.rm = TRUE),
-    se_loss = sd(daily_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(daily_n_loss_kgha))),
-    .groups = "drop"
-  )
-
-# 3. Cumulative Leaching Calculation
-cum_leaching_summary <- leaching_data |>
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
-  mutate(
-    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
-  ) |>
-  group_by(Treatment, year, date) |>
-  summarise(
-    cum_loss_mean = mean(cum_loss_kgha, na.rm = TRUE),
-    cum_loss_sd = sd(cum_loss_kgha, na.rm = TRUE),
-    n = n(),
-    cum_loss_se = cum_loss_sd / sqrt(n),
-    # Calculate 95% CI
-    t_crit = qt(0.975, df = pmax(n - 1, 1)),
-    cum_loss_ci = t_crit * cum_loss_se,
-    .groups = "drop"
-  )
-
-# 4. Significance Testing (Daily)
-daily_leaching_sig <- leaching_data |>
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
-  mutate(
-    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
-  ) |>
-  group_by(year, date) |>
-  summarise(
-    p_value = {
-      sorg <- daily_n_loss_kgha[Treatment == "Sorghum"]
-      wcc  <- daily_n_loss_kgha[Treatment == "Sorghum + WCC"]
-      if (length(na.omit(sorg)) >= 3 && length(na.omit(wcc)) >= 3) {
-        tryCatch(wilcox.test(sorg, wcc)$p.value, error = function(e) NA)
-      } else NA
-    },
-    .groups = "drop"
-  ) |>
-  mutate(
-    star_label = if_else(!is.na(p_value) & p_value < 0.05, "*", "")
-  )
-
-# 5. Prepare Plot Data (Stars & Precip)
-leaching_stars <- daily_leaching_summary |>
-  group_by(year, date) |>
-  summarise(max_y = max(mean_loss + se_loss, na.rm = TRUE), .groups = "drop") |>
-  inner_join(daily_leaching_sig, by = c("year", "date")) |>
-  filter(star_label == "*") |>
-  mutate(star_y = max_y * 1.1)
-
-daily_precip_leaching <- rain |>
-  filter(year %in% c(2023, 2024)) |>
-  group_by(year) |>
-  filter(date >= min(leaching_data$date) & date <= max(leaching_data$date)) |>
-  ungroup()
-
-# Scaling factors
-max_leach <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
-max_precip_l <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
-scale_factor_l <- (max_leach * 0.4) / max_precip_l
-plot_top_l <- max_leach * 1.1
-max_cum_leach <- max(cum_leaching_summary$cum_loss_mean + cum_leaching_summary$cum_loss_ci, na.rm = TRUE)
-
-# 6. Plotting Function
-create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
-  # Data subsets
-  d_sub <- filter(daily_leaching_summary, year == year_val)
-  c_sub <- filter(cum_leaching_summary, year == year_val)
-  p_sub <- filter(daily_precip_leaching, year == year_val)
-  s_sub <- filter(leaching_stars, year == year_val)
-  
-  x_lims <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
-  
-  # Top Panel: Daily Leaching + Precip
-  p_daily <- ggplot() +
-    # Precip bars (inverted from top)
-    geom_rect(
-      data = p_sub,
-      aes(xmin = date - 0.5, xmax = date + 0.5, 
-          ymin = plot_top_l - (precipmm * scale_factor_l), ymax = plot_top_l),
-      fill = "#377EB8", alpha = 0.7
-    ) +
-    # Leaching points & errors
-    geom_point(data = d_sub, aes(x = date, y = mean_loss, color = Treatment), size = 1.5) +
-    geom_errorbar(
-      data = d_sub, 
-      aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = Treatment),
-      width = 0.2, alpha = 0.5
-    ) +
-    # Significance stars
-    geom_text(data = s_sub, aes(x = date, y = star_y, label = star_label), size = 5) +
-    scale_color_manual(values = treatment_colors) +
-    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
-    scale_y_continuous(
-      name = if(!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" d"^-1*")") else "",
-      limits = c(0, plot_top_l),
-      sec.axis = sec_axis(~ (plot_top_l - .) / scale_factor_l, 
-                          name = if(is_right_panel) "Precipitation (mm)" else "")
-    ) +
-    theme_publication(base_size = 10) +
-    theme(
-      axis.text.x = element_blank(),
-      axis.ticks.x = element_blank(),
-      legend.position = "none",
-      axis.line.x = element_blank(),
-      axis.title.y.right = element_text(color = "#377EB8"),
-      axis.text.y.right = element_text(color = "#377EB8")
-    )
-    
-  if(is_right_panel) {
-    p_daily <- p_daily + theme(
-      axis.text.y.left = element_blank(),
-      axis.ticks.y.left = element_blank(),
-      axis.line.y.left = element_blank()
-    )
-  } else {
-    p_daily <- p_daily + theme(
-      axis.text.y.right = element_blank(),
-      axis.ticks.y.right = element_blank()
-    )
-  }
-
-  # Bottom Panel: Cumulative Leaching
-  p_cum <- ggplot(c_sub, aes(x = date, y = cum_loss_mean, color = Treatment, fill = Treatment)) +
-    geom_ribbon(
-      aes(ymin = pmax(cum_loss_mean - cum_loss_ci, 0), ymax = cum_loss_mean + cum_loss_ci),
-      alpha = 0.15, linewidth = 0
-    ) +
-    geom_line(linewidth = 1) +
-    scale_color_manual(values = treatment_colors) +
-    scale_fill_manual(values = treatment_colors) +
-    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
-    scale_y_continuous(
-      name = if(!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1*")") else "",
-      limits = c(0, max_cum_leach)
-    ) +
-    labs(x = "Month") +
-    theme_publication(base_size = 10) +
-    theme(legend.position = "none")
-
-  if(is_right_panel) {
-    p_cum <- p_cum + theme(
-      axis.text.y = element_blank(),
-      axis.ticks.y = element_blank(), 
-      axis.line.y = element_blank()
-    )
-  }
-
-  p_daily / p_cum + plot_layout(heights = c(1.2, 1))
-}
-
-# 7. Assemble Figure
-fig_leaching <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "top", legend.justification = "center")
-
-fig_leaching
-
-ggsave("figures/figure3_leaching_precip.png", fig_leaching,
-       width = 174, height = 174, units = "mm", dpi = 600, bg = "white")
-```
-
-# Check Leaching error ribbons compared to figure3_dual_axis_leaching_precip.r
-
 # Figure 5: Nitrate Leaching and Precipitation
 
 ```{r}
@@ -1382,6 +1257,15 @@ leaching_data <- read_csv("data/clean_leaching.csv") |>
     year = year(date)
   ) |>
   filter(year %in% c(2023, 2024))
+
+# nitrate is in mg_l not mg_ml
+leaching_data |>
+  group_by(treatment, year, date) |>
+  summarise(
+    max_nitrate = max(nitrate_mg_ml, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  slice_max(max_nitrate, by = c(treatment, year))
 
 # 2. Daily Leaching Calculation
 daily_leaching_summary <- leaching_data |>
@@ -1595,6 +1479,83 @@ fig_leaching
 
 ggsave("figures/figure3_leaching_precip.png", fig_leaching,
        width = 174, height = 174, units = "mm", dpi = 600, bg = "white")
+```
+
+```{r}
+# Prepare concentration data
+conc_data <- leaching_data |>
+  filter(!is.na(nitrate_mg_ml), !is.na(ammonia_mg_l)) |>
+  mutate(
+    # Rename for clarity (nitrate_mg_ml is actually mg/L based on your earlier note)
+    nitrate_mg_l = nitrate_mg_ml,
+    total_inorganic_n = nitrate_mg_l + ammonia_mg_l,
+    prop_nitrate = nitrate_mg_l / total_inorganic_n
+  ) |>
+  filter(total_inorganic_n > 0) # Avoid division issues
+
+# Summary stats for annotation
+conc_stats <- conc_data |>
+  group_by(year) |>
+  summarise(
+    median_no3 = median(nitrate_mg_l, na.rm = TRUE),
+    q25 = quantile(nitrate_mg_l, 0.25, na.rm = TRUE),
+    q75 = quantile(nitrate_mg_l, 0.75, na.rm = TRUE),
+    max_no3 = max(nitrate_mg_l, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Panel A: Nitrate Concentration Density
+p_density <- ggplot(conc_data, aes(x = nitrate_mg_l, fill = as.factor(year))) +
+  geom_density(alpha = 0.5, color = "black", linewidth = 0.3) +
+  geom_vline(data = conc_stats, aes(xintercept = median_no3, color = as.factor(year)),
+             linetype = "dashed", linewidth = 0.8) +
+  scale_fill_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  labs(
+    x = expression(NO[3]^{"-"}*"-N Concentration (mg L"^{-1}*")"),
+    y = "Density",
+    fill = "Year",
+    color = "Year"
+  ) +
+  annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5, size = 3,
+           label = paste0(
+             "2023: Median = ", round(conc_stats$median_no3[1], 1), 
+             ", IQR = ", round(conc_stats$q25[1], 1), "-", round(conc_stats$q75[1], 1), "\n",
+             "2024: Median = ", round(conc_stats$median_no3[2], 1),
+             ", IQR = ", round(conc_stats$q25[2], 1), "-", round(conc_stats$q75[2], 1)
+           )) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = c(0.85, 0.7))
+
+# Panel B: Proportion NO3 by Treatment (boxplot + jitter)
+prop_data <- conc_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye", "Corn", "Soy")) |>
+  mutate(Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment))
+
+p_prop <- ggplot(prop_data, aes(x = Treatment, y = prop_nitrate, fill = Treatment)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.15, size = 0.8) +
+  geom_hline(yintercept = 0.9, linetype = "dotted", color = "grey40") +
+  scale_fill_manual(values = treatment_colors) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1.05)) +
+  labs(
+    x = "",
+    y = expression("Proportion of Inorganic N as NO"[3]^{"-"})
+  ) +
+  facet_wrap(~ year) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none")
+
+# Combine panels
+fig_n_speciation <- (p_density / p_prop) +
+  plot_annotation(tag_levels = "a") &
+  theme(plot.tag = element_text(face = "bold"))
+
+fig_n_speciation
+
+# Save
+ggsave("figures/figureX_nitrate_concentration_proportion.png", fig_n_speciation,
+       width = 174, height = 200, units = "mm", dpi = 600, bg = "white")
 ```
 
 # Table 3: Annual Nitrogen Losses
@@ -2500,10 +2461,12 @@ annual_leaching <- leaching_data |>
     annual_drainage_l = max(cumulative_flow_l, na.rm = TRUE),
     annual_drainage_mm = (annual_drainage_l / plot_area_ha) / 10000
   ) |>
-  filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
+  filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0) |>
+  arrange(desc(annual_cumulative_leaching))
 
-print(annual_leaching)
-
+# render whole table in .html
+annual_leaching 
+gt(annual_leaching)
 texture <- texture_raw %>%
     select(Sample, Sand = S, Silt = T, Clay = C) %>%
     separate(Sample, into = c("ID", "Plot"), sep = "_") %>%
@@ -2575,7 +2538,7 @@ figure_4 <- p_texture + p_loss +
   plot_layout(widths = c(1, 1.5)) # Give Panel B a bit more width
 
 print(figure_4)
-# ggsave("FigureS?_Hydrology.png", figure_4, width = 10, height = 5)
+ggsave("FigureS?_Hydrology.png", figure_4, width = 10, height = 5)
 ```
 
 ```{r}
@@ -2663,4 +2626,85 @@ print(anova(uncouple_stats))
 
 # detailed coefficients to see specific slope differences
 print(summary(uncouple_stats))
+```
+
+
+# Save Tables and Figures
+
+Save to SubmissionFiguresTables
+```{r}
+#| label: save-submission-materials
+
+# Create output directory
+
+# --- FIGURES ---
+# Figure 1: Weather
+ggsave(
+  "SubmissionFiguresTables/Figure1_Weather.png",
+  plot = six_panel_plot,
+  width = 84, height = 105, units = "mm", dpi = 600, bg = "white"
+)
+
+# Figure 2: Soil Moisture & Temperature
+ggsave(
+  "SubmissionFiguresTables/Figure2_Soil_Moisture_Temperature.png",
+  plot = soil_4panel,
+  width = 174, height = 174, units = "mm", dpi = 600, bg = "white"
+)
+
+# Figure 3: N2O Flux & Precipitation (Dual Axis)
+ggsave(
+  "SubmissionFiguresTables/Figure3_N2O_Flux_Precipitation.png",
+  plot = figure3_dual_axis,
+  width = 174, height = 174, units = "mm", dpi = 600, bg = "white"
+)
+
+# Figure 4: Leaching & Precipitation
+ggsave(
+  "SubmissionFiguresTables/Figure4_Leaching_Precipitation.png",
+  plot = fig_leaching,
+  width = 174, height = 174, units = "mm", dpi = 600, bg = "white"
+)
+
+# Figure 5: Nitrate Speciation
+ggsave(
+  "SubmissionFiguresTables/SuppFigurex_Nitrate_Concentration_Proportion.png",
+  plot = fig_n_speciation,
+  width = 174, height = 200, units = "mm", dpi = 600, bg = "white"
+)
+
+# Figure 6: Hydrology
+ggsave(
+  "SubmissionFiguresTables/Figure6_Hydrology.png",
+  plot = figure_4,
+  width = 174, height = 87, units = "mm", dpi = 600, bg = "white"
+)
+
+# Supp Figure row vs interrow
+ggsave(
+  "SubmissionFiguresTables/rowvsinterrow.png",
+  plot = rowvsinterrow,
+    width = 174, height = 200, units = "mm", dpi = 600, bg = "white"
+)
+
+# --- TABLES ---
+# Table 1: Daily Flux Statistics (Supplementary)
+gtsave(
+  supp_table2,
+  "SubmissionFiguresTables/Table_S1_Daily_Flux_Statistics.rtf"
+)
+
+# Table 2: Validation (Cumulative N2O)
+gtsave(
+  validation_table,
+  "SubmissionFiguresTables/Table_S2_Validation_Cumulative_N2O.png"
+)
+
+# Table 3: Annual Nitrogen Losses & Environmental Costs
+gtsave(
+  ft,
+  "SubmissionFiguresTables/Table3_Annual_Nitrogen_Losses.rtf"
+)
+
+cat("\n✓ All figures and tables saved to SubmissionFiguresTables/\n")
 ```
