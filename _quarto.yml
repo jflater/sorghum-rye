@@ -3,6 +3,7 @@ project:
   output-dir: docs
   render:
     - index.qmd
+    - Reproducible_Research_Companion.qmd
     - Final_Figures_Tables.qmd
     - notebooks/plot_flux.qmd
     - scripts/figures_walk_through.qmd
@@ -16,6 +17,8 @@ website:
     left:
       - href: index.qmd
         text: Overview
+      - href: Reproducible_Research_Companion.qmd
+        text: Reproducible Companion
       - href: Final_Figures_Tables.qmd
         text: Final Figures & Tables
       - href: notebooks/plot_flux.qmd
@@ -35,6 +38,8 @@ website:
         contents:
           - text: Overview
             href: index.qmd
+          - text: Reproducible Research Companion
+            href: Reproducible_Research_Companion.qmd
           - text: Final Figures & Tables
             href: Final_Figures_Tables.qmd
       - section: "Supporting Analyses"
