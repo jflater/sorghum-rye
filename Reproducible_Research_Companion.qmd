@@ -1140,7 +1140,12 @@ figure4
 
 **Scientific Context:** A critical question for cover crop adoption is whether the additional biomass production impacts the primary cash crop yield. We measured end-of-season biomass for both sorghum and cereal rye to determine if the cover crop caused a "yield drag" on sorghum production.
 
+**Note:** The sorghum biomass source files are stored in the researcher's Box folder and not included in this repository. The code below demonstrates the analysis workflow. Users with access to the complete dataset can update the file paths accordingly.
+
 ```{r figure5-biomass}
+#| eval: false
+#| echo: true
+
 # Constants
 plot_size_ha <- 0.145
 conversion_factor <- 0.907185 # US ton to metric ton
