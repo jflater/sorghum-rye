@@ -2628,10 +2628,10 @@ print(anova(uncouple_stats))
 print(summary(uncouple_stats))
 ```
 
-
 # Save Tables and Figures
 
 Save to SubmissionFiguresTables
+
 ```{r}
 #| label: save-submission-materials
 

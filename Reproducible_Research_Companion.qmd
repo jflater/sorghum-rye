@@ -25,12 +25,12 @@ This document serves as a reproducible companion to the manuscript titled **"Int
 
 The study compared biomass sorghum systems with and without winter cereal rye cover crops across two years (2023-2024), measuring:
 
-- Weather conditions and soil microclimate
-- Soil inorganic nitrogen concentrations
-- Nitrate leaching via tile drainage
-- Nitrous oxide (N₂O) emissions
-- Biomass yields
-- Environmental damage costs
+-   Weather conditions and soil microclimate
+-   Soil inorganic nitrogen concentrations
+-   Nitrate leaching via tile drainage
+-   Nitrous oxide (N₂O) emissions
+-   Biomass yields
+-   Environmental damage costs
 
 All code is shown by default to promote transparency and reproducibility.
 
@@ -476,7 +476,6 @@ figure2 <- (p3 | p4) / (p1 | p2) +
 figure2
 ```
 
-
 # Soil Inorganic Nitrogen (Table 2)
 
 **Scientific Context:** We analyzed soil ammonium (NH₄⁺-N) and nitrate (NO₃⁻-N) concentrations to determine whether the winter cover crop immobilized soil nitrogen, potentially reducing availability for the subsequent sorghum crop. Samples were collected from 0-30 cm depth at multiple time points during the growing season.
@@ -601,7 +600,8 @@ table2
 **Scientific Context:** Nitrate leaching via subsurface tile drainage represents a primary nitrogen loss pathway in agricultural systems. This figure shows daily and cumulative nitrogen losses through tile drainage, demonstrating the key finding that the winter cover crop substantially reduced nitrogen leaching compared to the no-cover control.
 
 ```{r figure3-leaching}
-# Load leaching data
+# 1. Load and Process Leaching Data
+# Define plot area constants
 plot_area_ft2 <- 120 * 160
 plot_area_ha <- plot_area_ft2 / 107639.1041671
 
@@ -613,7 +613,16 @@ leaching_data <- read_csv("data/clean_leaching.csv") |>
   ) |>
   filter(year %in% c(2023, 2024))
 
-# Daily leaching summary
+# nitrate is in mg_l not mg_ml
+leaching_data |>
+  group_by(treatment, year, date) |>
+  summarise(
+    max_nitrate = max(nitrate_mg_ml, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  slice_max(max_nitrate, by = c(treatment, year))
+
+# 2. Daily Leaching Calculation
 daily_leaching_summary <- leaching_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   mutate(
@@ -623,127 +632,95 @@ daily_leaching_summary <- leaching_data |>
   group_by(Treatment, year, date) |>
   summarise(
     mean_loss = mean(daily_n_loss_kgha, na.rm = TRUE),
-    se_loss = sd(daily_n_loss_kgha, na.rm = TRUE) / sqrt(n()),
+    se_loss = sd(daily_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(daily_n_loss_kgha))),
     .groups = "drop"
   )
 
-# Cumulative leaching with interpolation
-daily_leaching_plot <- leaching_data |>
+# 3. Cumulative Leaching Calculation
+# Updated to match Figure 3 R script logic (using SE for ribbons, not 95% CI)
+cum_leaching_summary <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    cum_loss_mean = mean(cum_loss_kgha, na.rm = TRUE),
+    cum_loss_sd = sd(cum_loss_kgha, na.rm = TRUE),
+    n = n(),
+    # Use standard error for ribbons
+    cum_loss_se = cum_loss_sd / sqrt(n), 
+    .groups = "drop"
+  )
+
+# 4. Significance Testing (Daily)
+daily_leaching_sig <- leaching_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   mutate(
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
     daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
   ) |>
-  group_by(Treatment, year, plot, date) |>
-  summarise(daily_loss = mean(daily_n_loss_kgha, na.rm = TRUE), .groups = "drop")
-
-# Interpolation function
-cum_leaching_plot <- daily_leaching_plot |>
-  arrange(Treatment, year, plot, date) |>
-  group_by(Treatment, year, plot) |>
-  group_modify(~ {
-    df <- .x |>
-      complete(date = seq(min(date), max(date), by = "day")) |>
-      arrange(date)
-    
-    non_na <- !is.na(df$daily_loss)
-    if (sum(non_na) == 0) return(tibble())
-    
-    loss_interp <- if (sum(non_na) >= 2) {
-      approx(
-        x = df$date[non_na],
-        y = df$daily_loss[non_na],
-        xout = df$date,
-        rule = 1,
-        ties = "ordered"
-      )$y
-    } else {
-      rep(df$daily_loss[non_na][1], nrow(df))
-    }
-    
-    df |>
-      mutate(
-        loss_interp = loss_interp,
-        cum_loss = cumsum(replace_na(loss_interp, 0))
-      ) |>
-      filter(!is.na(loss_interp))
-  }) |>
-  ungroup()
-
-# Cumulative summary
-cum_leaching_summary <- cum_leaching_plot |>
-  group_by(Treatment, year, date) |>
-  summarise(
-    cum_loss_mean = mean(cum_loss, na.rm = TRUE),
-    cum_loss_sd = sd(cum_loss, na.rm = TRUE),
-    n_plots = n(),
-    cum_loss_se = cum_loss_sd / sqrt(n_plots),
-    .groups = "drop"
-  )
-
-# Significance testing
-leaching_significance <- daily_leaching_plot |>
   group_by(year, date) |>
   summarise(
     p_value = {
-      sorghum_vals <- daily_loss[Treatment == "Sorghum"]
-      wcc_vals <- daily_loss[Treatment == "Sorghum + WCC"]
-      if (length(sorghum_vals) >= 2 && length(wcc_vals) >= 2) {
-        tryCatch(
-          wilcox.test(sorghum_vals, wcc_vals, exact = FALSE)$p.value,
-          error = function(e) NA_real_
-        )
-      } else NA_real_
+      sorg <- daily_n_loss_kgha[Treatment == "Sorghum"]
+      wcc  <- daily_n_loss_kgha[Treatment == "Sorghum + WCC"]
+      if (length(na.omit(sorg)) >= 3 && length(na.omit(wcc)) >= 3) {
+        tryCatch(wilcox.test(sorg, wcc)$p.value, error = function(e) NA)
+      } else NA
     },
     .groups = "drop"
   ) |>
-  filter(p_value < 0.05)
+  mutate(
+    star_label = if_else(!is.na(p_value) & p_value < 0.05, "*", "")
+  )
 
-# Star positions
-max_loss_by_date <- daily_leaching_summary |>
+# 5. Prepare Plot Data (Stars & Precip)
+leaching_stars <- daily_leaching_summary |>
   group_by(year, date) |>
-  summarise(max_loss = max(mean_loss + se_loss, na.rm = TRUE), .groups = "drop")
+  summarise(max_y = max(mean_loss + se_loss, na.rm = TRUE), .groups = "drop") |>
+  inner_join(daily_leaching_sig, by = c("year", "date")) |>
+  filter(star_label == "*") |>
+  mutate(star_y = max_y * 1.1)
 
-leaching_stars <- leaching_significance |>
-  left_join(max_loss_by_date, by = c("year", "date")) |>
-  mutate(star_y = max_loss * 1.1, star_label = "*")
-
-# Precipitation data
 daily_precip_leaching <- rain |>
-  select(date, year, precipmm) |>
-  filter(year %in% c(2023, 2024))
+  filter(year %in% c(2023, 2024)) |>
+  group_by(year) |>
+  filter(date >= min(leaching_data$date) & date <= max(leaching_data$date)) |>
+  ungroup()
 
-# Fertilizer events
-fert_events <- tibble(
-  year = c(2023, 2024),
-  fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
-)
-
-# Plotting constants
-max_loss_l <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
+# Scaling factors (match R script logic)
+max_leach <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
 max_precip_l <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
-max_cum_leach <- max(cum_leaching_summary$cum_loss_mean + cum_leaching_summary$cum_loss_se, na.rm = TRUE)
-scale_factor_l <- max_loss_l * 0.4 / max_precip_l
-plot_top_l <- max_loss_l * 1.1
+scale_factor_l <- (max_leach * 0.4) / max_precip_l
+plot_top_l <- max_leach * 1.1
 
-# Plot function
+# Updated scaling for ribbons using SE
+max_cum_leach <- max(cum_leaching_summary$cum_loss_mean + cum_leaching_summary$cum_loss_se, na.rm = TRUE)
+
+# 6. Plotting Function
 create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
+  # Data subsets
   d_sub <- filter(daily_leaching_summary, year == year_val)
   c_sub <- filter(cum_leaching_summary, year == year_val)
   p_sub <- filter(daily_precip_leaching, year == year_val)
   s_sub <- filter(leaching_stars, year == year_val)
   fert_year <- filter(fert_events, year == year_val)
+
   
   x_lims <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
   
   # Top Panel: Daily Leaching + Precip
   p_daily <- ggplot() +
+    # Precip bars
     geom_rect(
       data = p_sub,
       aes(xmin = date - 0.5, xmax = date + 0.5, 
           ymin = plot_top_l - (precipmm * scale_factor_l), ymax = plot_top_l),
       fill = "#377EB8", alpha = 0.7
     ) +
+    # Leaching points & errors
     geom_point(data = d_sub, aes(x = date, y = mean_loss, color = Treatment), size = 1.5) +
     geom_errorbar(
       data = d_sub, 
@@ -753,8 +730,11 @@ create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
     geom_vline(
       data = fert_year,
       aes(xintercept = fertilizer_date),
-      linetype = "dashed", color = "black", alpha = 0.7
+      linetype = "dashed",
+      color = "black",
+      alpha = 0.7
     ) +
+    # Significance stars
     geom_text(data = s_sub, aes(x = date, y = star_y, label = star_label), size = 5) +
     scale_color_manual(values = treatment_colors) +
     guides(color = "none") +
@@ -793,10 +773,24 @@ create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
     ) +
     labs(x = "") +
     geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
+    
+  if(is_right_panel) {
+    p_daily <- p_daily + theme(
+      axis.text.y.left = element_blank(),
+      axis.ticks.y.left = element_blank(),
+      axis.line.y.left = element_blank()
+    )
+  } else {
+    p_daily <- p_daily + theme(
+      axis.text.y.right = element_blank(),
+      axis.ticks.y.right = element_blank()
+    )
+  }
 
-  # Bottom Panel: Cumulative Leaching
+  # Bottom Panel: Cumulative Leaching (Updated)
   p_cum <- ggplot(c_sub, aes(x = date, y = cum_loss_mean, color = Treatment, fill = Treatment)) +
     geom_ribbon(
+      # CHANGED: Using SE instead of CI to match R script
       aes(ymin = pmax(cum_loss_mean - cum_loss_se, 0), ymax = cum_loss_mean + cum_loss_se),
       alpha = 0.15, linewidth = 0
     ) +
@@ -804,7 +798,9 @@ create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
     geom_vline(
       data = fert_year,
       aes(xintercept = fertilizer_date),
-      linetype = "dashed", color = "black", alpha = 0.7
+      linetype = "dashed",
+      color = "black",
+      alpha = 0.7
     ) +
     scale_color_manual(values = treatment_colors) +
     scale_fill_manual(values = treatment_colors) +
@@ -828,7 +824,7 @@ create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
   p_daily / p_cum + plot_layout(heights = c(1.2, 1))
 }
 
-# Assemble Figure
+# 7. Assemble Figure
 figure3 <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
   plot_layout(guides = "collect") &
   theme(legend.position = "top", legend.justification = "center") &
@@ -836,7 +832,6 @@ figure3 <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
 
 figure3
 ```
-
 
 # Nitrous Oxide Emissions (Figure 4)
 
@@ -1357,7 +1352,6 @@ figure5 <- ggplot() +
 figure5
 ```
 
-
 # Environmental Damage Costs (Table 3)
 
 **Scientific Context:** To evaluate the broader environmental implications of nitrogen losses, we calculated the "Environmental Damage Cost" (EDC) by monetizing N₂O emissions and nitrate leaching using damage cost values from Preza-Fontes et al. This provides an economic perspective on the environmental benefits of cover cropping.
@@ -1621,19 +1615,18 @@ This reproducible companion document has walked through the complete analytical 
 
 ## Key Findings Demonstrated:
 
-1. **Weather variability** between study years (2023 dry, 2024 near-normal)
-2. **Soil microclimate effects** of cover crops on temperature and moisture
-3. **No nitrogen immobilization** detected in soil inorganic N pools
-4. **Substantial reduction** in nitrate leaching with cover crops
-5. **Low N₂O emissions** with no consistent treatment effect
-6. **No yield penalty** from cover crop integration
-7. **Significant economic value** from reduced environmental damage costs
+1.  **Weather variability** between study years (2023 dry, 2024 near-normal)
+2.  **Soil microclimate effects** of cover crops on temperature and moisture
+3.  **No nitrogen immobilization** detected in soil inorganic N pools
+4.  **Substantial reduction** in nitrate leaching with cover crops
+5.  **Low N₂O emissions** with no consistent treatment effect
+6.  **No yield penalty** from cover crop integration
+7.  **Significant economic value** from reduced environmental damage costs
 
 All data processing steps, statistical analyses, and visualizations are shown explicitly, allowing readers to understand exactly how results were derived and to adapt methods for their own research.
 
----
+------------------------------------------------------------------------
 
 *Document generated: `r Sys.Date()`*
 
 *R version: `r R.version.string`*
-
