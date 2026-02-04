@@ -837,9 +837,9 @@ figure3 <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
 figure3
 ```
 
-# Explainer Figure: Why the ~90% Leaching Reduction Was Not Significant
+# Explainer Figure: Why the \~90% Leaching Reduction Was Not Significant
 
-**Scientific Context:** The cover crop treatment reduced mean annual leaching by roughly 90% in both years, but the test used log-transformed plot-level data (log10(leaching + 1)) and the sorghum treatment showed high plot-to-plot variability with only four plots per treatment. This figure shows the raw scale (large percent reduction) and the log scale used for inference (overlapping distributions and p > 0.05).
+**Scientific Context:** The cover crop treatment reduced mean annual leaching by roughly 90% in both years, but the test used log-transformed plot-level data (log10(leaching + 1)) and the sorghum treatment showed high plot-to-plot variability with only four plots per treatment. This figure shows the raw scale (large percent reduction) and the log scale used for inference (overlapping distributions and p \> 0.05).
 
 ```{r figure3-leaching-nonsig}
 # Ensure constants are available
