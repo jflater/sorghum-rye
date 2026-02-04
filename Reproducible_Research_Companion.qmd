@@ -604,6 +604,10 @@ table2
 # Define plot area constants
 plot_area_ft2 <- 120 * 160
 plot_area_ha <- plot_area_ft2 / 107639.1041671
+fert_events <- tibble(
+  year = c(2023, 2024),
+  fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
+)
 
 leaching_data <- read_csv("data/clean_leaching.csv") |>
   janitor::clean_names() |>
@@ -831,6 +835,133 @@ figure3 <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
   labs(color = NULL, fill = NULL)
 
 figure3
+```
+
+# Explainer Figure: Why the ~90% Leaching Reduction Was Not Significant
+
+**Scientific Context:** The cover crop treatment reduced mean annual leaching by roughly 90% in both years, but the test used log-transformed plot-level data (log10(leaching + 1)) and the sorghum treatment showed high plot-to-plot variability with only four plots per treatment. This figure shows the raw scale (large percent reduction) and the log scale used for inference (overlapping distributions and p > 0.05).
+
+```{r figure3-leaching-nonsig}
+# Ensure constants are available
+if (!exists("plot_area_ha")) {
+  plot_area_ft2 <- 120 * 160
+  plot_area_ha <- plot_area_ft2 / 107639.1041671
+}
+
+# Annual plot-level leaching for Sorghum vs Sorghum + WCC
+annual_leaching_sr <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(plot = as.numeric(plot)) |>
+  group_by(plot, treatment, year) |>
+  summarise(
+    leaching_kg_ha = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha,
+    .groups = "drop"
+  ) |>
+  filter(is.finite(leaching_kg_ha), leaching_kg_ha >= 0) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", "Sorghum"),
+    Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC"))
+  )
+
+# Percent reduction on arithmetic means
+pct_reduction <- annual_leaching_sr |>
+  group_by(year, Treatment) |>
+  summarise(mean_leach = mean(leaching_kg_ha), .groups = "drop") |>
+  tidyr::pivot_wider(names_from = Treatment, values_from = mean_leach) |>
+  mutate(pct_reduction = 100 * (1 - (`Sorghum + WCC` / Sorghum)))
+
+# p-values on the log10 scale used for inference
+pvals <- annual_leaching_sr |>
+  group_by(year) |>
+  summarise(
+    p_value = t.test(log10(leaching_kg_ha + 1) ~ Treatment)$p.value,
+    .groups = "drop"
+  ) |>
+  mutate(
+    p_label = if_else(p_value < 0.001, "p < 0.001", paste0("p = ", sprintf("%.3f", p_value)))
+  )
+
+# Plot data for raw and log scales
+plot_data <- annual_leaching_sr |>
+  mutate(
+    scale = "Arithmetic (kg N ha^-1)",
+    value = leaching_kg_ha
+  ) |>
+  bind_rows(
+    annual_leaching_sr |>
+      mutate(
+        scale = "Log10(kg N ha^-1 + 1)",
+        value = log10(leaching_kg_ha + 1)
+      )
+  )
+
+# Mean ± SD helper (avoids Hmisc dependency)
+mean_sd <- function(x) {
+  m <- mean(x, na.rm = TRUE)
+  s <- sd(x, na.rm = TRUE)
+  tibble::tibble(y = m, ymin = m - s, ymax = m + s)
+}
+
+# Annotation positions
+y_positions <- plot_data |>
+  group_by(year, scale) |>
+  summarise(y_max = max(value, na.rm = TRUE), .groups = "drop") |>
+  mutate(y = if_else(y_max == 0, 0.1, y_max * 1.15))
+
+anno_pct <- pct_reduction |>
+  left_join(
+    y_positions |> filter(scale == "Arithmetic (kg N ha^-1)"),
+    by = "year"
+  ) |>
+  mutate(
+    scale = "Arithmetic (kg N ha^-1)",
+    label = paste0("WCC mean is ", sprintf("%.0f", pct_reduction), "% lower"),
+    x = 1.5
+  )
+
+anno_p <- pvals |>
+  left_join(
+    y_positions |> filter(scale == "Log10(kg N ha^-1 + 1)"),
+    by = "year"
+  ) |>
+  mutate(
+    scale = "Log10(kg N ha^-1 + 1)",
+    label = p_label,
+    x = 1.5
+  )
+
+fig_leach_nonsig <- ggplot(plot_data, aes(x = Treatment, y = value, color = Treatment)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA, alpha = 0.2) +
+  geom_jitter(width = 0.1, size = 2.2, alpha = 0.9) +
+  stat_summary(fun = mean, geom = "point", shape = 21, size = 3, fill = "white", color = "black") +
+  stat_summary(
+    fun.data = mean_sd,
+    geom = "errorbar",
+    width = 0.15,
+    color = "black"
+  ) +
+  geom_text(data = anno_pct, aes(x = x, y = y, label = label), inherit.aes = FALSE, size = 3.2) +
+  geom_text(data = anno_p, aes(x = x, y = y, label = label), inherit.aes = FALSE, size = 3.2) +
+  facet_grid(scale ~ year, scales = "free_y") +
+  scale_color_treatments() +
+  scale_fill_treatments() +
+  labs(x = "", y = NULL) +
+  theme_publication(base_size = 10) +
+  theme(
+    legend.position = "none",
+    strip.background = element_rect(fill = "#F2F2F2", color = "gray50")
+  )
+
+fig_leach_nonsig
+
+ggsave(
+  "figures/figure3_leaching_nonsig_explainer.png",
+  fig_leach_nonsig,
+  width = 7.5,
+  height = 5,
+  dpi = 300,
+  bg = "white"
+)
 ```
 
 # Nitrous Oxide Emissions (Figure 4)
@@ -1138,134 +1269,393 @@ figure4
 **Note:** The sorghum biomass source files are stored in the researcher's Box folder and not included in this repository. The code below demonstrates the analysis workflow. Users with access to the complete dataset can update the file paths accordingly.
 
 ```{r figure5-biomass}
-#| eval: false
-#| echo: true
-
-# Constants
-plot_size_ha <- 0.145
-conversion_factor <- 0.907185 # US ton to metric ton
-
-# Load 2023 biomass data
-sorg_biomass_23 <- read_excel("data/BiomassData_Sorghum_2023.xlsx") |>
+sorg_biomass_23 <- read_excel("/Users/jaredflater/Library/CloudStorage/Box-Box/CABBI/Data/MeasuredData/SABR/SmallDrainagePlots/Biomass/2023GrowingSeason/DerivedDatasets/chopper_load_weights_yields.xlsx")
+#######
+sorg_biomass_23 <- sorg_biomass_23 |>
   group_by(Plot) |>
   mutate(total_biomass = sum(`Net Weight`)) |>
   select(`Harvest Date`, Plot, Treatment, total_biomass) |>
-  distinct() |>
-  mutate(
-    year = 2023,
-    Plot = as.character(Plot),
-    treatment = case_when(
-      Treatment == "No cover" ~ "Sorghum",
-      Treatment == "Cover" ~ "Sorghum + WCC",
-      TRUE ~ Treatment
-    )
+  distinct()
+
+sorg_biomass_23
+
+# Bar plot with total_biomass by treatment and with error bars showing sd
+library(ggplot2)
+library(dplyr)
+plot_size_ha <- 0.145
+
+sorg_biomass_23 |>
+  group_by(Treatment) |>
+  summarise(mean_biomass = mean(total_biomass / plot_size_ha), sd_biomass = sd(total_biomass / plot_size_ha)) |>
+  ggplot(aes(x = Treatment, y = mean_biomass)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean_biomass - sd_biomass, ymax = mean_biomass + sd_biomass), width = 0.2) +
+  labs(x = "Treatment", y = "Average Biomass (tons/ha)")
+
+sorg_biomass_23 |>
+  group_by(Treatment) |>
+  summarise(
+    mean_biomass = mean(total_biomass / plot_size_ha),
+    sd_biomass = sd(total_biomass / plot_size_ha),
+    se_biomass = sd_biomass / sqrt(n())
+  ) |>
+  ggplot(aes(x = Treatment, y = mean_biomass)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean_biomass - se_biomass, ymax = mean_biomass + se_biomass),
+    width = 0.2
+  ) +
+  labs(x = "Treatment", y = "Average Biomass (tons/ha) (SE)")
+
+sorg_biomass_23 |>
+  group_by(Treatment) |>
+  summarise(
+    mean_biomass = mean(total_biomass / plot_size_ha),
+    sd_biomass = sd(total_biomass / plot_size_ha),
+    n = n(),
+    se_biomass = sd_biomass / sqrt(n()),
+    ci = qt(0.975, df = n - 1) * se_biomass
+  ) |>
+  ggplot(aes(x = Treatment, y = mean_biomass)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci),
+    width = 0.2
+  ) +
+  labs(x = "Treatment", y = "Average Biomass (tons/ha) (95% CI)") +
+  theme_minimal()
+
+plot_size_ha <- 0.145 # make sure to use same value as final figure qmd
+conversion_factor <- 0.907185 # 1 US ton = 0.907185 metric tons (or megagrams)
+
+biomass_summary <- sorg_biomass_23 |>
+  group_by(Treatment) |>
+  summarise(
+    # Convert US tons to metric tons and divide by plot size (ha)
+    mean_biomass = mean((total_biomass * conversion_factor) / plot_size_ha),
+    sd_biomass = sd((total_biomass * conversion_factor) / plot_size_ha),
+    n = n(),
+    se_biomass = sd_biomass / sqrt(n()),
+    ci = qt(0.975, df = n - 1) * se_biomass,
+    .groups = "drop"
+  )
+# Custom color palette (matching your function earlier)
+treatment_colors <- c(
+  "No cover" = "#D2B48C",
+  "Cover" = "#8B4513"
+)
+
+# Plot with 95% CI error bars, using custom colors
+ggplot(biomass_summary, aes(x = Treatment, y = mean_biomass, fill = Treatment)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  geom_errorbar(aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci),
+    width = 0.2, color = "black"
+  ) +
+  labs(x = "Treatment", y = expression("Average Biomass 2023 (Mg ha"^-1 * ")")) +
+  scale_fill_manual(values = treatment_colors) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = 14),
+    axis.title = element_text(size = 16)
   )
 
-# Load 2024 biomass data
-sorg_biomass_24 <- read_excel("data/BiomassData_Sorghum_2024.xlsx") |>
-  filter(Study == "Drainage") |>
-  group_by(Plot) |>
-  mutate(total_biomass = sum(`Net Weight (t)`)) |>
-  select(Date, Plot, total_biomass) |>
-  distinct() |>
-  mutate(
-    year = 2024,
-    Plot = as.character(Plot),
-    treatment = case_when(
-      Plot %in% c("2", "3", "5", "15") ~ "Sorghum",
-      TRUE ~ "Sorghum + WCC"
-    )
-  )
-
-# Moisture correction
+ggsave("figures/sorghum_biomass_2023.png", width = 8, height = 6, dpi = 300)
 moisture_df <- data.frame(
   Plot = c(2, 7, 9, 15),
   Moisture = c(0.749262537, 0.766325316, 0.731502423, 0.767241379)
 )
+
+# Calculate average moisture
 avg_moisture <- mean(moisture_df$Moisture)
 
-# Standardize sorghum data
-sorg_biomass_23_std <- sorg_biomass_23 |>
+# Adjust biomass_summary by dividing mean_biomass and ci by avg_moisture
+biomass_summary <- biomass_summary |>
   mutate(
-    biomass_mg_ha = ((total_biomass * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
-  ) |>
-  select(year, Plot, treatment, biomass_mg_ha)
+    mean_biomass_corr = mean_biomass * (1 - avg_moisture),
+    ci_corr = ci * (1 - avg_moisture)
+  )
+# Plot corrected biomass with error bars
+ggplot(biomass_summary, aes(x = Treatment, y = mean_biomass_corr, fill = Treatment)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  geom_errorbar(aes(ymin = mean_biomass_corr - ci_corr, ymax = mean_biomass_corr + ci_corr),
+    width = 0.2, color = "black"
+  ) +
+  labs(x = "Treatment", y = expression("Average Biomass 2024 (Mg ha"^-1 * ")")) +
+  scale_fill_manual(values = treatment_colors) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = 14),
+    axis.title = element_text(size = 16)
+  )
 
+# Save the updated plot
+ggsave("figures/sorghum_biomass_2023_corrected.png", width = 8, height = 6, dpi = 300)
+###########
+##### 2024
+library(readxl)
+sorg_biomass_24 <- read_excel("/Users/jaredflater/Library/CloudStorage/Box-Box/CABBI/Data/MeasuredData/SABR/SmallDrainagePlots/Biomass/2024GrowingSeason/RecordingDataSheets/sorg_chopper_harvest_load_weights.xlsx")
+sorg_biomass_24 <- sorg_biomass_24 |>
+  dplyr::filter(Study == "Drainage") |>
+  group_by(Plot) |>
+  mutate(total_biomass = sum(`Net Weight (t)`)) |>
+  select(Date, Plot, total_biomass) |>
+  distinct() |>
+  mutate(treatment = case_when(
+    Plot %in% c("2", "3", "5", "15") ~ "No cover",
+    TRUE ~ "Cover",
+  ))
+
+# Figure of total_biomass by Plot
+sorg_biomass_24 |>
+  ggplot(aes(x = Plot, y = total_biomass, fill = treatment)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Plot", y = "Total Biomass (tons)")
+
+plot_size_ha <- 0.145
+conversion_factor <- 0.907185 # 1 US ton = 0.907185 metric tons (or megagrams)
+
+biomass_summary <- sorg_biomass_24 |>
+  group_by(treatment) |>
+  summarise(
+    # Convert US tons to metric tons and divide by plot size (ha)
+    mean_biomass = mean((total_biomass * conversion_factor) / plot_size_ha),
+    sd_biomass = sd((total_biomass * conversion_factor) / plot_size_ha),
+    n = n(),
+    se_biomass = sd_biomass / sqrt(n()),
+    ci = qt(0.975, df = n - 1) * se_biomass,
+    .groups = "drop"
+  )
+# Custom color palette (matching your function earlier)
+treatment_colors <- c(
+  "No cover" = "#D2B48C",
+  "Cover" = "#8B4513"
+)
+
+# Plot with 95% CI error bars, using custom colors
+ggplot(biomass_summary, aes(x = treatment, y = mean_biomass, fill = treatment)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  geom_errorbar(aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci),
+    width = 0.2, color = "black"
+  ) +
+  labs(x = "Treatment", y = expression("Average Biomass 2024 (Mg ha"^-1 * ")")) +
+  scale_fill_manual(values = treatment_colors) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = 14),
+    axis.title = element_text(size = 16)
+  )
+
+ggsave("figures/sorghum_biomass_2024.png", width = 8, height = 6, dpi = 300)
+
+moisture_df <- data.frame(
+  Plot = c(2, 7, 9, 15),
+  Moisture = c(0.749262537, 0.766325316, 0.731502423, 0.767241379)
+)
+# Calculate average moisture
+avg_moisture <- mean(moisture_df$Moisture)
+
+biomass_summary <- biomass_summary |>
+  mutate(
+    mean_biomass_corr = mean_biomass * (1 - avg_moisture),
+    ci_corr = ci * (1 - avg_moisture)
+  )
+
+# Plot corrected biomass with error bars
+ggplot(biomass_summary, aes(x = treatment, y = mean_biomass_corr, fill = treatment)) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  geom_errorbar(aes(ymin = mean_biomass_corr - ci_corr, ymax = mean_biomass_corr + ci_corr),
+    width = 0.2, color = "black"
+  ) +
+  labs(x = "Treatment", y = expression("Average Biomass 2024 (Mg ha"^-1 * ")")) +
+  scale_fill_manual(values = treatment_colors) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = 14),
+    axis.title = element_text(size = 16)
+  )
+
+# Save the updated plot
+ggsave("figures/sorghum_biomass_2024_corrected.png", width = 8, height = 6, dpi = 300)
+
+# combine data for a faceted plot (standardize columns and units)
+# Ensure common parameters
+plot_size_ha <- 0.145
+conversion_factor <- 0.907185 # US ton -> Mg
+
+# Moisture correction: reuse avg_moisture if already defined above; otherwise fallback to 0
+if (!exists("avg_moisture")) {
+  avg_moisture <- 0.0
+}
+
+# Standardize 2023 dataframe to have 'treatment' and Mg/ha
+sorg_biomass_23_std <- {
+  df <- sorg_biomass_23
+  if ("Treatment" %in% names(df) && !("treatment" %in% names(df))) {
+    df <- df |> dplyr::rename(treatment = Treatment)
+  }
+  df |>
+    dplyr::mutate(
+      year = 2023,
+      Plot = as.character(Plot),
+      biomass_mg_ha = ((total_biomass * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
+    ) |>
+    dplyr::select(year, Plot, treatment, biomass_mg_ha)
+}
+
+# Standardize 2024 dataframe to have Mg/ha (already has 'treatment')
 sorg_biomass_24_std <- sorg_biomass_24 |>
-  mutate(
+  dplyr::mutate(
+    year = 2024,
+    Plot = as.character(Plot),
     biomass_mg_ha = ((total_biomass * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
   ) |>
-  select(year, Plot, treatment, biomass_mg_ha)
+  dplyr::select(year, Plot, treatment, biomass_mg_ha)
 
-# Combine sorghum data
-combined_biomass_sorg <- bind_rows(sorg_biomass_23_std, sorg_biomass_24_std)
+# Combine and standardize treatment labels
+treatment_levels <- c("Sorghum", "Sorghum + WCC")
+combined_biomass <- dplyr::bind_rows(sorg_biomass_23_std, sorg_biomass_24_std) |>
+  dplyr::mutate(treatment = trimws(treatment)) |>
+  dplyr::mutate(treatment = dplyr::case_when(
+    treatment == "No cover" ~ "Sorghum",
+    treatment %in% c("Cover", "Sorghum + Rye") ~ "Sorghum + WCC",
+    TRUE ~ treatment
+  ))
 
-# Load rye biomass data
-rye_biomass_23 <- read_excel("data/BiomassData_Rye_20230522.xlsx") |> mutate(year = 2023)
-rye_biomass_24 <- read_excel("data/BiomassData_Rye_20240515.xlsx") |> mutate(year = 2024)
+# Summarize by treatment and year
+combined_biomass_summary <- combined_biomass |>
+  dplyr::group_by(year, treatment) |>
+  dplyr::summarise(
+    mean_biomass = mean(biomass_mg_ha, na.rm = TRUE),
+    sd_biomass = sd(biomass_mg_ha, na.rm = TRUE),
+    n = dplyr::n(),
+    se_biomass = sd_biomass / sqrt(n),
+    ci = stats::qt(0.975, df = pmax(n - 1, 1)) * se_biomass,
+    .groups = "drop"
+  )
 
-combined_biomass_rye <- bind_rows(rye_biomass_23, rye_biomass_24)
 
-# Process Rye Data (g/m² -> Mg/ha)
+# Faceted plot by year with 95% CI
+biomass_faceted <- ggplot2::ggplot(
+  combined_biomass_summary,
+  ggplot2::aes(x = treatment, y = mean_biomass, fill = treatment)
+) +
+  ggplot2::geom_col(color = "black", width = 0.7) +
+  ggplot2::geom_errorbar(ggplot2::aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci), width = 0.2, color = "black") +
+  ggplot2::facet_wrap(~year, nrow = 1) +
+  ggplot2::labs(x = "Treatment", y = expression("Moisture-corrected Biomass (Mg ha"^-1 * ")")) +
+  ggplot2::scale_fill_manual(values = treatment_colors) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    legend.position = "none",
+    text = ggplot2::element_text(size = 14),
+    axis.title = ggplot2::element_text(size = 16)
+  ) +
+  theme_publication() +
+  scale_fill_treatments() +
+  labs(fill = "Treatment") +
+  theme(legend.position = "none")
+
+print(biomass_faceted)
+ggplot2::ggsave("figures/sorghum_biomass_faceted_by_year_corrected.png", biomass_faceted, width = 10, height = 6, dpi = 300)
+
+mean(biomass_faceted$data$mean_biomass)
+# Now create a boxplot instead of a bar plot
+biomass_boxplot <- ggplot2::ggplot(
+  combined_biomass, # Use the individual data points instead of summary
+  ggplot2::aes(x = treatment, y = biomass_mg_ha, fill = treatment)
+) +
+  ggplot2::geom_boxplot(width = 0.7, color = "black", outlier.shape = 16) +
+  # Add individual data points with jitter for better visualization
+  ggplot2::geom_jitter(width = 0.2, alpha = 0.5, size = 2) +
+  ggplot2::facet_wrap(~year, nrow = 1) +
+  ggplot2::labs(x = "Treatment", y = expression("Moisture-corrected Biomass (Mg ha"^-1 * ")")) +
+  ggplot2::scale_fill_manual(values = treatment_colors) +
+  theme_publication() +
+  scale_fill_treatments() +
+  labs(fill = "Treatment") +
+  theme(legend.position = "none")
+
+print(biomass_boxplot)
+ggplot2::ggsave("figures/sorghum_biomass_boxplot_by_year.png", biomass_boxplot, width = 10, height = 6, dpi = 300)
+
+
+# Rye Biomass
+
+rye_biomass_23 <- read_excel("data/BiomassData_Rye_20230522.xlsx") |> dplyr::mutate(year = 2023)
+rye_biomass_24 <- read_excel("data/BiomassData_Rye_20240515.xlsx") |> dplyr::mutate(year = 2024)
+
+# Combine data
+combined_biomass_rye <- dplyr::bind_rows(rye_biomass_23, rye_biomass_24)
+
+# Process Rye Data to match Sorghum Data
+# Units: g/m^2 -> Mg/ha (multiply by 0.01)
 rye_processed <- combined_biomass_rye |>
-  mutate(
+  dplyr::mutate(
     dry_biomass_g = `Dry Mass + Dry Bag Mass` - `Dry Bag Mass`,
-    biomass_mg_ha = dry_biomass_g * 0.01,
+    biomass_mg_ha = dry_biomass_g * 0.01, # Convert g/m2 to Mg/ha
     treatment = "Sorghum + WCC",
     component = "Rye",
     Plot = as.character(`Plot ID`)
   ) |>
-  select(year, Plot, treatment, biomass_mg_ha, component)
+  dplyr::select(year, Plot, treatment, biomass_mg_ha, component)
 
-# Prepare Sorghum data
-sorghum_processed <- combined_biomass_sorg |>
-  mutate(component = "Sorghum") |>
-  select(year, Plot, treatment, biomass_mg_ha, component)
+# Prepare Sorghum data (from combined_biomass created above)
+sorghum_processed <- combined_biomass |>
+  dplyr::mutate(component = "Sorghum") |>
+  dplyr::select(year, Plot, treatment, biomass_mg_ha, component)
 
-# Calculate statistics for sorghum bars
-treatment_levels <- c("Sorghum", "Sorghum + WCC")
+# Combine all biomass
+all_biomass <- dplyr::bind_rows(sorghum_processed, rye_processed)
+
+# Summaries for sorghum-only bars and error bars (total should be sorghum).
 sorghum_stats <- sorghum_processed |>
-  filter(treatment %in% treatment_levels) |>
-  group_by(year, treatment) |>
-  summarise(
+  dplyr::filter(treatment %in% treatment_levels) |>
+  dplyr::group_by(year, treatment) |>
+  dplyr::summarise(
     mean_sorghum = mean(biomass_mg_ha, na.rm = TRUE),
     sd_sorghum = sd(biomass_mg_ha, na.rm = TRUE),
-    n = n(),
+    n = dplyr::n(),
     se_sorghum = sd_sorghum / sqrt(n),
-    ci_sorghum = qt(0.975, df = pmax(n - 1, 1)) * se_sorghum,
+    ci_sorghum = stats::qt(0.975, df = pmax(n - 1, 1)) * se_sorghum,
     .groups = "drop"
   ) |>
-  mutate(
+  dplyr::mutate(
     treatment = factor(treatment, levels = treatment_levels),
-    fill_key = treatment
+    fill_key = dplyr::case_when(
+      as.character(treatment) == "Sorghum" ~ "Sorghum",
+      as.character(treatment) == "Sorghum + WCC" ~ "Sorghum + WCC",
+      TRUE ~ as.character(treatment)
+    )
   )
 
-# Rye means for overlay
+# Rye means for textured overlay (does not add to bar height).
 rye_stats <- rye_processed |>
-  filter(treatment %in% treatment_levels) |>
-  group_by(year, treatment) |>
-  summarise(
+  dplyr::filter(treatment %in% treatment_levels) |>
+  dplyr::group_by(year, treatment) |>
+  dplyr::summarise(
     mean_rye = mean(biomass_mg_ha, na.rm = TRUE),
     sd_rye = sd(biomass_mg_ha, na.rm = TRUE),
-    n = n(),
+    n = dplyr::n(),
     se_rye = sd_rye / sqrt(n),
-    ci_rye = qt(0.975, df = pmax(n - 1, 1)) * se_rye,
+    ci_rye = stats::qt(0.975, df = pmax(n - 1, 1)) * se_rye,
     .groups = "drop"
   ) |>
-  mutate(treatment = factor(treatment, levels = treatment_levels))
+  dplyr::mutate(treatment = factor(treatment, levels = treatment_levels))
 
 rye_overlay <- rye_stats |>
-  left_join(
-    sorghum_stats |> select(year, treatment, mean_sorghum),
+  dplyr::left_join(
+    sorghum_stats |>
+      dplyr::select(year, treatment, mean_sorghum),
     by = c("year", "treatment")
   ) |>
-  mutate(
+  dplyr::mutate(
     rye_height = pmin(mean_rye, mean_sorghum),
     fill_key = "Rye"
   ) |>
-  filter(!is.na(rye_height))
+  dplyr::filter(!is.na(rye_height))
 
-# Define fill colors
 fill_levels <- c("Sorghum", "Sorghum + WCC", "Rye")
 fill_palette <- c(
   "Sorghum" = "#D8D97AFF",
@@ -1274,15 +1664,15 @@ fill_palette <- c(
 )
 
 sorghum_stats <- sorghum_stats |>
-  mutate(fill_key = factor(fill_key, levels = fill_levels))
+  dplyr::mutate(fill_key = factor(fill_key, levels = fill_levels))
 rye_overlay <- rye_overlay |>
-  mutate(fill_key = factor(fill_key, levels = fill_levels))
-
-# Create overlay layer (with or without pattern)
+  dplyr::mutate(fill_key = factor(fill_key, levels = fill_levels))
+library(ggpattern)
+# Use ggpattern for texture when available; fall back to semi-transparent fill.
 rye_layer <- if (requireNamespace("ggpattern", quietly = TRUE)) {
   ggpattern::geom_col_pattern(
     data = rye_overlay,
-    aes(x = treatment, y = rye_height, fill = fill_key),
+    ggplot2::aes(x = treatment, y = rye_height, fill = fill_key),
     pattern = "stripe",
     pattern_fill = "grey30",
     pattern_colour = "grey30",
@@ -1294,9 +1684,9 @@ rye_layer <- if (requireNamespace("ggpattern", quietly = TRUE)) {
     inherit.aes = FALSE
   )
 } else {
-  geom_col(
+  ggplot2::geom_col(
     data = rye_overlay,
-    aes(x = treatment, y = rye_height, fill = fill_key),
+    ggplot2::aes(x = treatment, y = rye_height, fill = fill_key),
     alpha = 0.4,
     color = "black",
     width = 0.7,
@@ -1304,18 +1694,17 @@ rye_layer <- if (requireNamespace("ggpattern", quietly = TRUE)) {
   )
 }
 
-# Create final biomass plot
-figure5 <- ggplot() +
-  geom_col(
+final_biomass_plot <- ggplot2::ggplot() +
+  ggplot2::geom_col(
     data = sorghum_stats,
-    aes(x = treatment, y = mean_sorghum, fill = fill_key),
+    ggplot2::aes(x = treatment, y = mean_sorghum, fill = fill_key),
     color = "black",
     width = 0.7
   ) +
   rye_layer +
-  geom_errorbar(
+  ggplot2::geom_errorbar(
     data = rye_stats,
-    aes(
+    ggplot2::aes(
       x = treatment,
       ymin = pmax(0, mean_rye - ci_rye),
       ymax = mean_rye + ci_rye
@@ -1323,33 +1712,91 @@ figure5 <- ggplot() +
     width = 0.15,
     inherit.aes = FALSE
   ) +
-  geom_errorbar(
+  ggplot2::geom_errorbar(
     data = sorghum_stats,
-    aes(
+    ggplot2::aes(
       x = treatment,
       ymin = mean_sorghum - ci_sorghum,
       ymax = mean_sorghum + ci_sorghum
     ),
     width = 0.2
   ) +
-  facet_wrap(~year, nrow = 1) +
-  scale_fill_manual(
+  ggplot2::facet_wrap(~year, nrow = 1) +
+  ggplot2::scale_fill_manual(
     values = fill_palette,
     breaks = fill_levels,
     name = "Biomass Component",
     drop = FALSE
   ) +
-  labs(
+  ggplot2::labs(
     x = "",
-    y = expression("Biomass (Mg ha"^-1*")")
+    y = expression("Dry Biomass (Mg ha"^-1*")")
   ) +
   theme_publication() +
-  theme(
+  ggplot2::theme(
     legend.position = "top",
     legend.justification = "center"
   )
 
-figure5
+print(final_biomass_plot)
+ggplot2::ggsave("SubmissionFiguresTables/final_biomass_stacked.png", final_biomass_plot, width = 174, height = 174, units = "mm", dpi = 600)
+
+# Statistical tests: treatments within each year and years within each treatment (sorghum biomass only).
+sorghum_tests_by_year <- combined_biomass |>
+  dplyr::filter(treatment %in% treatment_levels) |>
+  dplyr::group_by(year) |>
+  dplyr::group_modify(~{
+    if (dplyr::n_distinct(.x$treatment) < 2) {
+      return(dplyr::tibble(
+        comparison = "Sorghum vs Sorghum + WCC",
+        t = NA_real_,
+        df = NA_real_,
+        p_value = NA_real_,
+        note = "Only one treatment level in this year"
+      ))
+    }
+    tst <- stats::t.test(biomass_mg_ha ~ treatment, data = .x)
+    dplyr::tibble(
+      comparison = "Sorghum vs Sorghum + WCC",
+      t = unname(tst$statistic),
+      df = unname(tst$parameter),
+      p_value = tst$p.value,
+      note = NA_character_
+    )
+  }) |>
+  dplyr::ungroup()
+
+sorghum_tests_by_treatment <- combined_biomass |>
+  dplyr::filter(treatment %in% treatment_levels) |>
+  dplyr::group_by(treatment) |>
+  dplyr::group_modify(~{
+    if (dplyr::n_distinct(.x$year) < 2) {
+      return(dplyr::tibble(
+        comparison = "2023 vs 2024",
+        t = NA_real_,
+        df = NA_real_,
+        p_value = NA_real_,
+        note = "Only one year for this treatment"
+      ))
+    }
+    tst <- stats::t.test(biomass_mg_ha ~ factor(year), data = .x)
+    dplyr::tibble(
+      comparison = "2023 vs 2024",
+      t = unname(tst$statistic),
+      df = unname(tst$parameter),
+      p_value = tst$p.value,
+      note = NA_character_
+    )
+  }) |>
+  dplyr::ungroup()
+
+sorghum_tests_by_year
+sorghum_tests_by_treatment
+
+rye_stats
+sorghum_stats
+
+figure5 <- final_biomass_plot
 ```
 
 # Environmental Damage Costs (Table 3)
@@ -1409,6 +1856,7 @@ interpolate_daily_flux <- function(data) {
 
 # Summarize daily flux by plot/date
 daily_flux_summary <- flux_data |>
+  mutate(plot = as.numeric(plot)) |>
   group_by(plot, rowvs_interrow, treatment, year, date) |>
   summarise(mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), .groups = "drop") |>
   arrange(plot, rowvs_interrow, treatment, year, date)
@@ -1418,6 +1866,7 @@ interpolated_flux_data <- interpolate_daily_flux(daily_flux_summary)
 
 # Calculate plot-level N2O (average row/interrow, then sum for year)
 n2o_plot <- interpolated_flux_data |>
+  mutate(plot = as.numeric(plot)) |>
   group_by(plot, treatment, year, date) |>
   summarise(daily_plot_flux = mean(interpolated_flux, na.rm = TRUE), .groups = "drop") |>
   group_by(plot, treatment, year) |>
@@ -1492,6 +1941,7 @@ rotation_synthetic_plots <- rotation_2year_stats |>
       edc_dollars = make_dist(n_sim, .x$final_mu_edc, .x$final_sd_edc)
     )
   }) |>
+  mutate(plot = as.numeric(plot)) |>
   ungroup()
 
 # Combine real + synthetic

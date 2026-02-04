@@ -15,6 +15,16 @@ format:
     self-contained: true
     fig-width: 8
     fig-height: 6
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    fig-width: 8
+    fig-height: 6
+    keep-tex: false
+    documentclass: article
+    geometry:
+      - margin=1in
 execute:
   warning: false
   message: false
@@ -36,7 +46,7 @@ options(width = 80)
 ```{r}
 # Custom theme for consistency
 theme_publication <- function(base_size = 12) {
-  theme_minimal(base_size = base_size, base_family = "Arial") +
+  theme_minimal(base_size = base_size, base_family = "Helvetica") +
     theme(
       # Backgrounds
       panel.background = element_rect(fill = "#ffffffff", color = NA),
@@ -1495,7 +1505,7 @@ conc_data <- leaching_data |>
 
 # Summary stats for annotation
 conc_stats <- conc_data |>
-  group_by(year) |>
+  group_by(treatment) |>
   summarise(
     median_no3 = median(nitrate_mg_l, na.rm = TRUE),
     q25 = quantile(nitrate_mg_l, 0.25, na.rm = TRUE),
@@ -1505,27 +1515,18 @@ conc_stats <- conc_data |>
   )
 
 # Panel A: Nitrate Concentration Density
-p_density <- ggplot(conc_data, aes(x = nitrate_mg_l, fill = as.factor(year))) +
+p_density <- ggplot(conc_data, aes(x = nitrate_mg_l, fill = as.factor(treatment))) +
   geom_density(alpha = 0.5, color = "black", linewidth = 0.3) +
-  geom_vline(data = conc_stats, aes(xintercept = median_no3, color = as.factor(year)),
+  geom_vline(data = conc_stats, aes(xintercept = median_no3, color = as.factor(treatment)),
              linetype = "dashed", linewidth = 0.8) +
-  scale_fill_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
-  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
   labs(
     x = expression(NO[3]^{"-"}*"-N Concentration (mg L"^{-1}*")"),
     y = "Density",
-    fill = "Year",
-    color = "Year"
+    fill = "Treatment",
+    color = "Treatment"
   ) +
-  annotate("text", x = Inf, y = Inf, hjust = 1.1, vjust = 1.5, size = 3,
-           label = paste0(
-             "2023: Median = ", round(conc_stats$median_no3[1], 1), 
-             ", IQR = ", round(conc_stats$q25[1], 1), "-", round(conc_stats$q75[1], 1), "\n",
-             "2024: Median = ", round(conc_stats$median_no3[2], 1),
-             ", IQR = ", round(conc_stats$q25[2], 1), "-", round(conc_stats$q75[2], 1)
-           )) +
   theme_publication(base_size = 10) +
-  theme(legend.position = c(0.85, 0.7))
+  theme(legend.position = c(0.65, 0.9))
 
 # Panel B: Proportion NO3 by Treatment (boxplot + jitter)
 prop_data <- conc_data |>
