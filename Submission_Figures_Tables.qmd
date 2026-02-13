@@ -204,7 +204,7 @@ rain_plot_v2 <- ggplot() +
     labels = c("2023" = "2023", "2024" = "2024", "Mean" = "Mean (Historical)")
   ) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b") +
-  labs(x = "", y = "Cumulative Precipitation (mm)") +
+  labs(x = "Month", y = "Cumulative Precipitation (mm)") +
   theme_publication(base_size = 10)
 
 # GDD plot
@@ -230,7 +230,7 @@ gdd_plot_v2 <- ggplot() +
     labels = c("2023" = "2023", "2024" = "2024", "Mean" = "Mean (Historical)")
   ) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b") +
-  labs(x = "", y = "Cumulative Growing Degree Days (GDD)") +
+  labs(x = "Month", y = "Cumulative Growing Degree Days (GDD)") +
   theme_publication(base_size = 10)
 
 # Combine into pdplot with shared legend
@@ -1503,60 +1503,110 @@ conc_data <- leaching_data |>
   ) |>
   filter(total_inorganic_n > 0) # Avoid division issues
 
-# Summary stats for annotation
-conc_stats <- conc_data |>
-  group_by(treatment) |>
-  summarise(
-    median_no3 = median(nitrate_mg_l, na.rm = TRUE),
-    q25 = quantile(nitrate_mg_l, 0.25, na.rm = TRUE),
-    q75 = quantile(nitrate_mg_l, 0.75, na.rm = TRUE),
-    max_no3 = max(nitrate_mg_l, na.rm = TRUE),
-    .groups = "drop"
+# Sorghum vs Sorghum + WCC only
+conc_sr <- conc_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", "Sorghum"),
+    Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC"))
   )
 
-# Panel A: Nitrate Concentration Density
-p_density <- ggplot(conc_data, aes(x = nitrate_mg_l, fill = as.factor(treatment))) +
-  geom_density(alpha = 0.5, color = "black", linewidth = 0.3) +
-  geom_vline(data = conc_stats, aes(xintercept = median_no3, color = as.factor(treatment)),
+# Means for vertical lines
+conc_means <- conc_sr |>
+  group_by(Treatment) |>
+  summarise(mean_no3 = mean(nitrate_mg_l, na.rm = TRUE), .groups = "drop")
+
+# t-test on mean concentrations (table)
+ttest <- t.test(nitrate_mg_l ~ Treatment, data = conc_sr)
+ttest_table <- tibble(
+  comparison = "Sorghum vs Sorghum + WCC",
+  mean_sorghum = mean(conc_sr$nitrate_mg_l[conc_sr$Treatment == "Sorghum"], na.rm = TRUE),
+  mean_wcc = mean(conc_sr$nitrate_mg_l[conc_sr$Treatment == "Sorghum + WCC"], na.rm = TRUE),
+  diff_means = mean_sorghum - mean_wcc,
+  t_stat = unname(ttest$statistic),
+  df = unname(ttest$parameter),
+  p_value = ttest$p.value
+)
+
+# Density plot (y scaled to percent)
+p_density <- ggplot(conc_sr, aes(x = nitrate_mg_l, fill = Treatment, color = Treatment)) +
+  geom_density(aes(y = after_stat(density * 100)), alpha = 0.5, linewidth = 0.3) +
+  geom_vline(data = conc_means, aes(xintercept = mean_no3, color = Treatment),
              linetype = "dashed", linewidth = 0.8) +
   labs(
     x = expression(NO[3]^{"-"}*"-N Concentration (mg L"^{-1}*")"),
-    y = "Density",
+    y = "Proportion of Measurements (%)",
     fill = "Treatment",
     color = "Treatment"
   ) +
+  scale_fill_manual(values = treatment_colors) +
+  scale_color_manual(values = treatment_colors) +
   theme_publication(base_size = 10) +
   theme(legend.position = c(0.65, 0.9))
 
-# Panel B: Proportion NO3 by Treatment (boxplot + jitter)
-prop_data <- conc_data |>
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye", "Corn", "Soy")) |>
-  mutate(Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment))
+p_density
 
-p_prop <- ggplot(prop_data, aes(x = Treatment, y = prop_nitrate, fill = Treatment)) +
-  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
-  geom_jitter(width = 0.2, alpha = 0.15, size = 0.8) +
-  geom_hline(yintercept = 0.9, linetype = "dotted", color = "grey40") +
-  scale_fill_manual(values = treatment_colors) +
-  scale_y_continuous(labels = scales::percent, limits = c(0, 1.05)) +
-  labs(
-    x = "",
-    y = expression("Proportion of Inorganic N as NO"[3]^{"-"})
-  ) +
-  facet_wrap(~ year) +
-  theme_publication(base_size = 10) +
-  theme(legend.position = "none")
-
-# Combine panels
-fig_n_speciation <- (p_density / p_prop) +
-  plot_annotation(tag_levels = "a") &
-  theme(plot.tag = element_text(face = "bold"))
-
-fig_n_speciation
+# T-test table
+ttest_table |>
+  mutate(
+    mean_sorghum = round(mean_sorghum, 3),
+    mean_wcc = round(mean_wcc, 3),
+    diff_means = round(diff_means, 3),
+    t_stat = round(t_stat, 3),
+    df = round(df, 1),
+    p_value = ifelse(p_value < 0.001, "< 0.001", sprintf("%.3f", p_value))
+  ) |>
+  gt() |>
+  cols_label(
+    comparison = "Comparison",
+    mean_sorghum = "Mean NO3 (Sorghum)",
+    mean_wcc = "Mean NO3 (Sorghum + WCC)",
+    diff_means = "Mean Difference",
+    t_stat = "t",
+    df = "df",
+    p_value = "p"
+  )
 
 # Save
-ggsave("figures/figureX_nitrate_concentration_proportion.png", fig_n_speciation,
-       width = 174, height = 200, units = "mm", dpi = 600, bg = "white")
+ggsave("figures/figureX_nitrate_concentration_proportion.png", p_density,
+       width = 174, height = 110, units = "mm", dpi = 600, bg = "white")
+
+# Measurement counts by year and plot (concentration data only)
+# Ensure year exists
+if (!("year" %in% names(conc_data))) {
+  conc_data <- conc_data |>
+    mutate(date = as.Date(date), year = lubridate::year(date))
+}
+
+conc_counts_by_year_plot <- conc_data |>
+  group_by(year, treatment, plot) |>
+  summarise(n_measurements = n(), .groups = "drop") |>
+  arrange(year, treatment, plot)
+
+conc_counts_by_year_plot |>
+  gt() |>
+  cols_label(
+    year = "Year",
+    treatment = "Treatment",
+    plot = "Plot",
+    n_measurements = "N Measurements"
+  ) |>
+  cols_align(align = "center", columns = -treatment)
+
+# Summary counts by year and treatment
+conc_counts_by_year_treatment <- conc_data |>
+  group_by(year, treatment) |>
+  summarise(n_measurements = n(), .groups = "drop") |>
+  arrange(year, treatment)
+
+conc_counts_by_year_treatment |>
+  gt() |>
+  cols_label(
+    year = "Year",
+    treatment = "Treatment",
+    n_measurements = "N Measurements"
+  ) |>
+  cols_align(align = "center", columns = -treatment)
 ```
 
 # Table 3: Annual Nitrogen Losses

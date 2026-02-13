@@ -27,3 +27,32 @@ quarto render Reproducible_Research_Companion.qmd
 ```
 
 **Note:** Figure 5 (Biomass Yields) requires sorghum biomass data files that are stored externally. The code is provided with `eval: false` to show the complete workflow. Users with access to these files can update the paths and enable execution.
+
+## Data: `data/clean_leaching.csv`
+
+This file contains cleaned, plot‑level tile drainage data used for the nitrate leaching analyses (Figure 3 and related tables). Each row represents a date × plot observation with flow, concentration, and derived nitrogen loss fields.
+
+**Key columns (units):**
+- `date`: Sampling date (YYYY‑MM‑DD).
+- `year`: Year extracted from `date`.
+- `plot`: Plot identifier (string; leading zeros preserved in some plots).
+- `treatment`: Treatment label (e.g., `Sorghum`, `Sorghum + Rye`, `Corn`, `Soy`).
+- `flow_gallons`: Drain flow volume (gallons).
+- `flow_l`: Drain flow volume (liters).
+- `nitrate_mg_ml`: Nitrate concentration; **stored as mg/L** (naming legacy).
+- `ammonia_mg_l`: Ammonium concentration (mg/L).
+- `nitrate_loss_mg`: Nitrate‑N mass loss (mg).
+- `ammonia_loss_mg`: Ammonium‑N mass loss (mg).
+- `total_n_loss_mg`: Total inorganic N loss (mg) = nitrate + ammonium.
+- `cumulative_flow_l`: Cumulative flow by plot and year (liters).
+- `cumulative_n_loss_mg`: Cumulative total N loss by plot and year (mg).
+- `sample_y_n`, `approx_nitrate_mg_l`, `approx_ammonia_mg_l`: Sampling flags and imputed concentration fields used during cleaning.
+
+**Leaching loss calculation used in the manuscript:**
+
+1. **Per‑day N loss (kg N ha⁻¹ d⁻¹):** `daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha`
+2. **Annual cumulative leaching per plot (kg N ha⁻¹):** `annual_cumulative_leaching = (max(cumulative_n_loss_mg) / 1e6) / plot_area_ha`
+
+Where `plot_area_ft2 = 120 * 160` and `plot_area_ha = plot_area_ft2 / 107639.1041671`.
+
+These are the values used for annual treatment comparisons, statistical tests, and the leaching panels in the manuscript.
