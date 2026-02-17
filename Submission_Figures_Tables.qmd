@@ -38,6 +38,9 @@ library(tidyverse)
 library(readxl)
 library(lubridate)
 library(patchwork)
+library(gt)         # For table generation
+library(emmeans)    # For Tukey comparisons
+library(multcomp)   # For compact letter display
 options(width = 80)
 ```
 
@@ -92,6 +95,15 @@ treatment_colors <- c(
 
 scale_color_treatments <- function() scale_color_manual(values = treatment_colors)
 scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
+
+# Study constants
+STUDY_YEARS <- c(2023, 2024)
+PLOT_AREA_FT2 <- 120 * 160
+PLOT_AREA_HA <- PLOT_AREA_FT2 / 107639.1041671
+
+# Environmental costs from Preza-Fontes et al. (2023)
+COST_N2O_PER_KG <- 16.18   # Dollars per kg N2O-N
+COST_LEACH_PER_KG <- 18.54 # Dollars per kg leached N
 ```
 
 # Data loading
@@ -100,7 +112,10 @@ scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
 rain <- read_xlsx("data/rain/historical_rain.xlsx")
 gdd <- read_xlsx("data/rain/historical_rain.xlsx")
 flux_data <- read_csv("data/cleaned_flux_data.csv") |>
-  mutate(date = as.Date(date)) 
+  mutate(
+    date = as.Date(date),
+    plot = str_pad(as.character(plot), width = 2, pad = "0")  # Ensure leading zeros
+  )
 
 
 ```
@@ -111,30 +126,30 @@ flux_data <- read_csv("data/cleaned_flux_data.csv") |>
 # Precipitation and GDD plots with historical envelopes
 # Import historical rain and gdd data
 
-gdd <- gdd %>%
-  select(day, doy, gdd_50_86) %>%
+gdd <- gdd |>
+  select(day, doy, gdd_50_86) |>
   mutate(
     date = as.Date(day),
     year = year(date),
-  ) %>%
-  group_by(year) %>%
-  arrange(date) %>%
+  ) |>
+  group_by(year) |>
+  arrange(date) |>
   mutate(cumulative_gdd = cumsum(gdd_50_86))
 
-gdd <- gdd %>%
+gdd <- gdd |>
   mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
 
-rain <- rain %>%
-  select(day, doy, precipmm) %>%
+rain <- rain |>
+  select(day, doy, precipmm) |>
   mutate(
     date = as.Date(day),
     year = year(date),
-  ) %>%
-  group_by(year) %>%
-  arrange(date) %>%
+  ) |>
+  group_by(year) |>
+  arrange(date) |>
   mutate(cumulative_precip = cumsum(precipmm))
 
-rain <- rain %>%
+rain <- rain |>
   mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
 
 # Calculate historical envelope for RAIN (excluding 2023 and 2024)
@@ -247,7 +262,7 @@ six_panel_plot <- (rain_plot_v2 | gdd_plot_v2) +
   )
 
 ggsave("figures/figure1_weather.png", six_panel_plot, 
-       width = 84, height = 105, dpi = 600, bg = "white", units = "mm")
+       width = 174, height = 90, dpi = 600, bg = "white", units = "mm")
 six_panel_plot
 
 # Report date ranges used for historical means (excludes 2023, 2024)
@@ -294,6 +309,11 @@ raw_soil <- flux_data |>
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
     year = year(date)
   )
+
+# Statistical approach for soil measurements:
+# - t-tests used for daily treatment comparisons (reasonable with n=4 per treatment)
+# - Non-parametric alternatives (Wilcoxon) used for leaching data with more variability
+# - Tukey HSD for annual cumulative comparisons (controls family-wise error rate)
 
 get_date_pvals <- function(df, value_col) {
   df |>
@@ -920,7 +940,7 @@ figure3_dual_axis <- (create_dual_axis_plot(2023) |
 figure3_dual_axis
 
 ggsave(
-  filename = "figures/figure2_flux_precip_cumulative_2023_2024_plotlevelCI_dualaxis.png",
+  filename = "figures/figure3_n2o_flux_precipitation.png",
   plot = figure3_dual_axis,
   width = 174,
   height = 174,
@@ -1256,10 +1276,7 @@ print(flux_summary_stats)
 
 ```{r}
 # 1. Load and Process Leaching Data
-# Define plot area constants
-plot_area_ft2 <- 120 * 160
-plot_area_ha <- plot_area_ft2 / 107639.1041671
-
+# Use constants defined at top of document
 leaching_data <- read_csv("data/clean_leaching.csv") |>
   janitor::clean_names() |>
   mutate(
@@ -1297,7 +1314,7 @@ cum_leaching_summary <- leaching_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   mutate(
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
+    cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / PLOT_AREA_HA
   ) |>
   group_by(Treatment, year, date) |>
   summarise(
@@ -1309,6 +1326,10 @@ cum_leaching_summary <- leaching_data |>
     .groups = "drop"
   )
 
+# Using Wilcoxon rank-sum test (non-parametric) because:
+# 1. Leaching data shows high variability
+# 2. Robust to outliers and non-normal distributions
+# 3. Appropriate for small sample sizes (n=3-4 per treatment per date)
 # 4. Significance Testing (Daily)
 daily_leaching_sig <- leaching_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
@@ -1705,17 +1726,15 @@ if (!exists("leaching_data")) {
 }
 
 # Calculate annual cumulative nitrogen leaching per plot
-plot_area_ft2 <- 120 * 160
-plot_area_ha <- plot_area_ft2 / 107639.1041671
-
+# Use constants defined at top of document
 annual_leaching <- leaching_data |>
   group_by(plot, treatment, year) |>
   summarise(
     # mg -> kg, then divide by hectares
-    annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha, 
+    annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / PLOT_AREA_HA, 
     .groups = "drop",
     annual_drainage_l = max(cumulative_flow_l, na.rm = TRUE),
-    annual_drainage_mm = (annual_drainage_l / plot_area_ha) / 10000
+    annual_drainage_mm = (annual_drainage_l / PLOT_AREA_HA) / 10000
   ) |>
   filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
 
@@ -1784,13 +1803,14 @@ n2o_summary <- n2o_summary |>
   left_join(n2o_letters, by = c("treatment", "year")) |>
   mutate(n2o_result = sprintf("%.3f ± %.3f (%s)", mean_n2o, sd_n2o, letter))
 
-# Calculate 2-Year Totals (Sum of Means, SD via Quadrature)
+# Calculate 2-year totals using variance propagation (sum of means, quadrature for SD)
+# Assumes independence between years (reasonable given different weather conditions)
 n2o_two_year <- n2o_summary |>
   filter(year %in% c(2023, 2024)) |>
   group_by(treatment) |>
   summarise(
     mean_n2o = sum(mean_n2o, na.rm = TRUE),
-    sd_n2o = sqrt(sum(sd_n2o^2, na.rm = TRUE)),
+    sd_n2o = sqrt(sum(sd_n2o^2, na.rm = TRUE)),  # Propagation of uncertainty
     .groups = "drop"
   ) |>
   mutate(year = "2023-2024", n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))
@@ -1834,8 +1854,8 @@ combined_nitrogen_data <- bind_rows(
   left_join(leaching_means, by = c("year", "treatment")) |>
   mutate(
     year_order = case_when(year == "2023" ~ 1, year == "2024" ~ 2, year == "2023-2024" ~ 3),
-    # Preza-Fontes cost values
-    environmental_cost_dollars = (mean_n2o * 16.18) + (mean_leaching * 18.54),
+    # Environmental costs from Preza-Fontes et al. (2023)
+    environmental_cost_dollars = (mean_n2o * COST_N2O_PER_KG) + (mean_leaching * COST_LEACH_PER_KG),
     total_environmental_cost = sprintf("$%.2f", environmental_cost_dollars)
   )
 
@@ -2828,7 +2848,7 @@ leach_annual <- leaching_data |>
   mutate(Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment), year = year(date)) |>
   filter(year %in% c(2023, 2024), Treatment %in% c("Sorghum", "Sorghum + WCC")) |>
   group_by(year, Treatment, plot) |>
-  summarise(cum_leached_n = max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6 / first(plot_area_ha), .groups = "drop")
+  summarise(cum_leached_n = max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6 / PLOT_AREA_HA, .groups = "drop")
 
 anova_leach <- summary(aov(cum_leached_n ~ Treatment, data = leach_annual))[[1]][1, "Pr(>F)"]
 
