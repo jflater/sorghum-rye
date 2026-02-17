@@ -187,12 +187,12 @@ mean_cum_gdd <- gdd |>
 
 # Combine highlighted years with mean
 rain_highlight <- rain |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   mutate(year = as.character(year)) |>
   bind_rows(mean_cum_rain)
 
 gdd_highlight <- gdd |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   mutate(year = as.character(year)) |>
   bind_rows(mean_cum_gdd)
 
@@ -646,7 +646,7 @@ flux_subset <- flux_data |>
     ),
     year = year(date)
   ) |>
-  filter(year %in% c(2023, 2024))
+  filter(year %in% STUDY_YEARS)
 
 # 1. Daily Means and SE (for top panel)
 daily_flux <- flux_subset |>
@@ -768,11 +768,11 @@ flux_date_ranges <- daily_flux |>
   summarise(min_date = min(date), max_date = max(date), .groups = "drop")
 daily_precip_trimmed <- rain |>
   select(date, year, precipmm) |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   left_join(flux_date_ranges, by = "year") |>
   filter(date >= min_date, date <= max_date)
 fert_events <- tibble(
-  year = c(2023, 2024),
+  year = STUDY_YEARS,
   fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
 )
 
@@ -960,7 +960,7 @@ flux_range_data <- flux_data |>
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
     year = year(date)
   ) |>
-  filter(year %in% c(2023, 2024))
+  filter(year %in% STUDY_YEARS)
 
 # Calculate daily flux per plot (averaging row/interrow if present)
 daily_flux_plot <- flux_range_data |>
@@ -1048,7 +1048,7 @@ daily_flux_stats <- flux_data |>
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
     year = year(date)
   ) |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   
   # --- STEP 1: POOL ROW & INTERROW (The Fix) ---
   group_by(date, plot, Treatment, year) |>
@@ -1174,7 +1174,7 @@ row_interrow_comparison <- flux_data |>
     Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC")), # Locks order
     year = year(date)
   ) |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   select(year, date, Treatment, plot, rowvs_interrow, gnha_day_no_negative)
 
 # 2. Summary Statistics (Your Request)
@@ -1259,7 +1259,7 @@ flux_summary_stats <- flux_data |>
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
     year = year(date)
   ) |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   group_by(Treatment) |>
   summarise(
     min_flux = min(gnha_day_no_negative, na.rm = TRUE),
@@ -1283,7 +1283,7 @@ leaching_data <- read_csv("data/clean_leaching.csv") |>
     date = as.Date(date),
     year = year(date)
   ) |>
-  filter(year %in% c(2023, 2024))
+  filter(year %in% STUDY_YEARS)
 
 # nitrate is in mg_l not mg_ml
 leaching_data |>
@@ -1361,7 +1361,7 @@ leaching_stars <- daily_leaching_summary |>
   mutate(star_y = max_y * 1.1)
 
 daily_precip_leaching <- rain |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   group_by(year) |>
   filter(date >= min(leaching_data$date) & date <= max(leaching_data$date)) |>
   ungroup()
@@ -1722,7 +1722,7 @@ if (!exists("leaching_data")) {
       date = as.Date(date),
       year = year(date)
     ) |>
-    filter(year %in% c(2023, 2024))
+    filter(year %in% STUDY_YEARS)
 }
 
 # Calculate annual cumulative nitrogen leaching per plot
@@ -1806,7 +1806,7 @@ n2o_summary <- n2o_summary |>
 # Calculate 2-year totals using variance propagation (sum of means, quadrature for SD)
 # Assumes independence between years (reasonable given different weather conditions)
 n2o_two_year <- n2o_summary |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   group_by(treatment) |>
   summarise(
     mean_n2o = sum(mean_n2o, na.rm = TRUE),
@@ -1816,7 +1816,7 @@ n2o_two_year <- n2o_summary |>
   mutate(year = "2023-2024", n2o_result = sprintf("%.3f ± %.3f", mean_n2o, sd_n2o))
 
 leaching_two_year <- leaching_summary |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   group_by(treatment) |>
   summarise(
     mean_leaching = sum(mean_leaching, na.rm = TRUE),
@@ -1979,7 +1979,7 @@ plot_level_economics <- n2o_plot_clean |>
 
 # We sum the 2023 and 2024 values for each plot to test the "Combined" effect
 plot_level_2year <- plot_level_economics |>
-  filter(year %in% c(2023, 2024)) |>
+  filter(year %in% STUDY_YEARS) |>
   group_by(plot, treatment) |>
   summarise(
     n2o_kg_ha = sum(n2o_kg_ha, na.rm = TRUE),
@@ -2117,7 +2117,7 @@ plot_economics <- n2o_plot |>
 
 # A. Continuous Systems (Real Sums)
 continuous_2year <- plot_economics |>
-  filter(year %in% c(2023, 2024), treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  filter(year %in% STUDY_YEARS, treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   group_by(plot, treatment) |>
   summarise(
     n2o_kg_ha = sum(n2o_kg_ha, na.rm = TRUE),
@@ -2132,7 +2132,7 @@ continuous_2year <- plot_economics |>
 # B. Rotation Systems (Variance Propagation)
 # Annual stats (using all plots)
 rotation_annual_stats <- plot_economics |>
-  filter(year %in% c(2023, 2024), treatment %in% c("Corn", "Soy")) |>
+  filter(year %in% STUDY_YEARS, treatment %in% c("Corn", "Soy")) |>
   group_by(treatment, year) |>
   summarise(
     mu_n2o = mean(n2o_kg_ha, na.rm = TRUE), var_n2o = var(n2o_kg_ha, na.rm = TRUE),
@@ -2349,7 +2349,7 @@ plot_economics <- n2o_plot |>
 
 # --- 2. CALCULATE 2-YEAR TOTALS (Method of Moments) ---
 continuous_2year <- plot_economics |>
-  filter(year %in% c(2023, 2024), treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  filter(year %in% STUDY_YEARS, treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   group_by(plot, treatment) |>
   summarise(
     n2o_kg_ha = sum(n2o_kg_ha, na.rm = TRUE),
@@ -2359,7 +2359,7 @@ continuous_2year <- plot_economics |>
   ) |> filter(count == 2) |> select(-count)
 
 rotation_annual_stats <- plot_economics |>
-  filter(year %in% c(2023, 2024), treatment %in% c("Corn", "Soy")) |>
+  filter(year %in% STUDY_YEARS, treatment %in% c("Corn", "Soy")) |>
   group_by(treatment, year) |>
   summarise(
     mu_n2o = mean(n2o_kg_ha, na.rm = TRUE), var_n2o = var(n2o_kg_ha, na.rm = TRUE),
@@ -2515,7 +2515,7 @@ if (!exists("leaching_data")) {
       date = as.Date(date),
       year = year(date)
     ) |>
-    filter(year %in% c(2023, 2024))
+    filter(year %in% STUDY_YEARS)
 }
 
 # Calculate annual cumulative nitrogen leaching per plot
@@ -2846,7 +2846,7 @@ p_leach_diff <- ggplot(leach_daily_diff, aes(x = factor(year), y = diff)) +
 
 leach_annual <- leaching_data |>
   mutate(Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment), year = year(date)) |>
-  filter(year %in% c(2023, 2024), Treatment %in% c("Sorghum", "Sorghum + WCC")) |>
+  filter(year %in% STUDY_YEARS, Treatment %in% c("Sorghum", "Sorghum + WCC")) |>
   group_by(year, Treatment, plot) |>
   summarise(cum_leached_n = max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6 / PLOT_AREA_HA, .groups = "drop")
 
