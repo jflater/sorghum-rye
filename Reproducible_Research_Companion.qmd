@@ -103,6 +103,24 @@ treatment_colors <- c(
 
 scale_color_treatments <- function() scale_color_manual(values = treatment_colors)
 scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
+
+# Shared panel-label styling for figure consistency (Figs 1-5)
+panel_label_size <- 3.8
+panel_label_face <- "bold"
+panel_label_hjust <- -0.08
+panel_label_vjust <- 1.15
+
+add_panel_label <- function(p, label) {
+  p + annotate(
+    "text",
+    x = -Inf, y = Inf,
+    label = label,
+    hjust = panel_label_hjust,
+    vjust = panel_label_vjust,
+    fontface = panel_label_face,
+    size = panel_label_size
+  )
+}
 ```
 
 # Weather Conditions (Figure 1)
@@ -110,6 +128,8 @@ scale_fill_treatments <- function() scale_fill_manual(values = treatment_colors)
 **Scientific Context:** Weather conditions varied substantially between study years. The year 2023 was characterized by below-average precipitation, while 2024 experienced conditions closer to the historical mean. These differences influenced soil moisture dynamics, crop growth, and nitrogen cycling processes.
 
 ```{r figure1-weather}
+#| fig-width: 10
+#| fig-height: 4.5
 # Load weather data
 rain <- read_xlsx("data/rain/historical_rain.xlsx")
 gdd <- read_xlsx("data/rain/historical_rain.xlsx")
@@ -138,40 +158,41 @@ gdd <- gdd %>%
   mutate(cumulative_gdd = cumsum(gdd_50_86)) %>%
   mutate(doy_date = as.Date(doy - 1, origin = "2000-01-01"))
 
-# Calculate historical envelope for precipitation (excluding 2023 and 2024)
+# Historical envelopes (excluding 2023 and 2024)
 hist_env_rain <- rain |>
   filter(!(year %in% c(2023, 2024))) |>
   group_by(doy_date) |>
   summarize(
     min_cum = min(cumulative_precip, na.rm = TRUE),
-    max_cum = max(cumulative_precip, na.rm = TRUE)
+    max_cum = max(cumulative_precip, na.rm = TRUE),
+    .groups = "drop"
   )
 
-# Calculate historical envelope for GDD (excluding 2023 and 2024)
 hist_env_gdd <- gdd |>
   filter(!(year %in% c(2023, 2024))) |>
   group_by(doy_date) |>
   summarize(
     min_cum = min(cumulative_gdd, na.rm = TRUE),
-    max_cum = max(cumulative_gdd, na.rm = TRUE)
+    max_cum = max(cumulative_gdd, na.rm = TRUE),
+    .groups = "drop"
   )
 
-# Calculate historical mean
+# 34-year historical mean lines
 mean_cum_rain <- rain |>
   filter(!(year %in% c(2023, 2024))) |>
   group_by(doy_date) |>
-  summarize(cumulative_precip = mean(cumulative_precip, na.rm = TRUE)) |>
+  summarize(cumulative_precip = mean(cumulative_precip, na.rm = TRUE), .groups = "drop") |>
   mutate(year = "Mean") |>
   filter(doy_date != "2000-12-31")
 
 mean_cum_gdd <- gdd |>
   filter(!(year %in% c(2023, 2024))) |>
   group_by(doy_date) |>
-  summarize(cumulative_gdd = mean(cumulative_gdd, na.rm = TRUE)) |>
+  summarize(cumulative_gdd = mean(cumulative_gdd, na.rm = TRUE), .groups = "drop") |>
   mutate(year = "Mean") |>
   filter(doy_date != "2000-12-31")
 
-# Combine highlighted years with mean
+# Combine highlighted years with historical mean
 rain_highlight <- rain |>
   filter(year %in% c(2023, 2024)) |>
   mutate(year = as.character(year)) |>
@@ -182,7 +203,6 @@ gdd_highlight <- gdd |>
   mutate(year = as.character(year)) |>
   bind_rows(mean_cum_gdd)
 
-# Create precipitation plot
 rain_plot <- ggplot() +
   geom_ribbon(
     data = hist_env_rain,
@@ -192,23 +212,23 @@ rain_plot <- ggplot() +
   geom_line(
     data = rain_highlight,
     aes(x = doy_date, y = cumulative_precip, color = year, linetype = year),
-    linewidth = 0.6
+    linewidth = 0.7
   ) +
   scale_color_manual(
     name = "Year",
     values = c("2023" = "#E41A1C", "2024" = "#377EB8", "Mean" = "black"),
-    labels = c("2023" = "2023", "2024" = "2024", "Mean" = "Mean (Historical)")
+    labels = c("2023" = "2023", "2024" = "2024", "Mean" = "34-year Mean")
   ) +
   scale_linetype_manual(
     name = "Year",
     values = c("2023" = "solid", "2024" = "dashed", "Mean" = "dotdash"),
-    labels = c("2023" = "2023", "2024" = "2024", "Mean" = "Mean (Historical)")
+    labels = c("2023" = "2023", "2024" = "2024", "Mean" = "34-year Mean")
   ) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b") +
   labs(x = "", y = "Cumulative Precipitation (mm)") +
-  theme_publication(base_size = 10)
+  theme_publication(base_size = 10) |>
+  add_panel_label("a)")
 
-# Create GDD plot
 gdd_plot <- ggplot() +
   geom_ribbon(
     data = hist_env_gdd,
@@ -218,33 +238,35 @@ gdd_plot <- ggplot() +
   geom_line(
     data = gdd_highlight,
     aes(x = doy_date, y = cumulative_gdd, color = year, linetype = year),
-    linewidth = 0.6
+    linewidth = 0.7
   ) +
   scale_color_manual(
     name = "Year",
     values = c("2023" = "#E41A1C", "2024" = "#377EB8", "Mean" = "black"),
-    labels = c("2023" = "2023", "2024" = "2024", "Mean" = "Mean (Historical)")
+    labels = c("2023" = "2023", "2024" = "2024", "Mean" = "34-year Mean")
   ) +
   scale_linetype_manual(
     name = "Year",
     values = c("2023" = "solid", "2024" = "dashed", "Mean" = "dotdash"),
-    labels = c("2023" = "2023", "2024" = "2024", "Mean" = "Mean (Historical)")
+    labels = c("2023" = "2023", "2024" = "2024", "Mean" = "34-year Mean")
   ) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b") +
   labs(x = "", y = "Cumulative Growing Degree Days (GDD)") +
-  theme_publication(base_size = 10)
+  theme_publication(base_size = 10) |>
+  add_panel_label("b)")
 
-# Combine plots
 figure1 <- (rain_plot | gdd_plot) +
-  plot_layout(guides = "collect") &
+  plot_layout(guides = "collect", widths = c(1.05, 1.05)) &
   theme_publication(base_size = 10) &
   theme(
     legend.position = "top",
-    plot.margin = margin(t = 3, r = 4, b = 2, l = 4, unit = "pt")
+    legend.text = element_text(size = 9),
+    legend.key.width = unit(1.1, "cm"),
+    plot.margin = margin(t = 4, r = 6, b = 3, l = 6, unit = "pt")
   ) &
   guides(
-    color = guide_legend(nrow = 2, byrow = TRUE),
-    linetype = guide_legend(nrow = 2, byrow = TRUE)
+    color = guide_legend(nrow = 1, byrow = TRUE),
+    linetype = guide_legend(nrow = 1, byrow = TRUE)
   )
 
 figure1
@@ -257,12 +279,20 @@ figure1
 ```{r figure2-microclimate}
 # Load flux data (contains soil sensors)
 flux_data <- read_csv("data/cleaned_flux_data.csv") |>
-  mutate(date = as.Date(date))
+  mutate(
+    date = as.Date(date),
+    year = year(date)
+  )
 
-# Calculate summary statistics
-moist_temp <- flux_data |>
+raw_soil <- flux_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
-  mutate(Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment)) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC"))
+  )
+
+# Daily treatment means for time series and difference panels
+moist_temp <- raw_soil |>
   group_by(Treatment, year, date) |>
   summarise(
     mean_soil_moisture = mean(swc_2_mean, na.rm = TRUE),
@@ -270,209 +300,354 @@ moist_temp <- flux_data |>
     .groups = "drop"
   )
 
-# Per-date t-tests between treatments
-raw_soil <- flux_data |>
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+daily_diff <- moist_temp |>
+  mutate(trt_key = if_else(Treatment == "Sorghum + WCC", "WCC", "Sorghum")) |>
+  select(year, date, trt_key, mean_soil_temp, mean_soil_moisture) |>
+  pivot_wider(names_from = trt_key, values_from = c(mean_soil_temp, mean_soil_moisture)) |>
   mutate(
-    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    year = year(date)
+    temp_diff = mean_soil_temp_WCC - mean_soil_temp_Sorghum,
+    moist_diff = mean_soil_moisture_WCC - mean_soil_moisture_Sorghum
   )
 
-get_date_pvals <- function(df, value_col) {
+# Date-status bars: significant difference, no difference, or no data
+build_status_bars <- function(df, value_col) {
   df |>
     group_by(year, date) |>
     summarise(
-      p = {
-        vals <- .data[[value_col]]
-        trt  <- Treatment
-        has_two <- length(unique(na.omit(trt))) == 2
-        counts  <- table(trt[!is.na(vals)])
-        ok <- has_two && all(counts >= 1) && length(na.omit(vals)) >= 2
-        if (ok) {
-          out <- tryCatch(t.test(vals ~ trt)$p.value, error = function(e) NA_real_)
-          out
-        } else NA_real_
+      n_sorghum = sum(Treatment == "Sorghum" & !is.na(.data[[value_col]])),
+      n_wcc = sum(Treatment == "Sorghum + WCC" & !is.na(.data[[value_col]])),
+      mean_sorghum = mean(.data[[value_col]][Treatment == "Sorghum"], na.rm = TRUE),
+      mean_wcc = mean(.data[[value_col]][Treatment == "Sorghum + WCC"], na.rm = TRUE),
+      p_value = {
+        sorghum_vals <- .data[[value_col]][Treatment == "Sorghum"]
+        wcc_vals <- .data[[value_col]][Treatment == "Sorghum + WCC"]
+        sorghum_vals <- sorghum_vals[!is.na(sorghum_vals)]
+        wcc_vals <- wcc_vals[!is.na(wcc_vals)]
+        if (length(sorghum_vals) >= 2 && length(wcc_vals) >= 2) {
+          tryCatch(t.test(sorghum_vals, wcc_vals)$p.value, error = function(e) NA_real_)
+        } else {
+          NA_real_
+        }
       },
       .groups = "drop"
     ) |>
-    filter(!is.na(p) & p < 0.05)
+    mutate(
+      has_testable = n_sorghum >= 2 & n_wcc >= 2,
+      significant = has_testable & !is.na(p_value) & p_value < 0.05,
+      status = case_when(
+        significant ~ "Significant",
+        has_testable ~ "No difference",
+        TRUE ~ "No data"
+      ),
+      greater = case_when(
+        significant & mean_wcc > mean_sorghum ~ "Sorghum + WCC",
+        significant & mean_sorghum >= mean_wcc ~ "Sorghum",
+        TRUE ~ NA_character_
+      ),
+      x = date - 2,
+      xend = date + 2
+    )
 }
 
-pvals_moist <- get_date_pvals(raw_soil, "swc_2_mean")
-pvals_temp  <- get_date_pvals(raw_soil, "ts_2_mean")
+temp_status <- build_status_bars(raw_soil, "ts_2_mean")
+moist_status <- build_status_bars(raw_soil, "swc_2_mean")
 
-# Split data by year
+status_fill <- c(
+  "Significant" = "black",
+  "No difference" = "grey65",
+  "No data" = "grey90"
+)
+
 moist_temp_2023 <- filter(moist_temp, year == 2023)
 moist_temp_2024 <- filter(moist_temp, year == 2024)
 
-# Calculate global y-axis limits
 global_moisture_limits <- range(moist_temp$mean_soil_moisture, na.rm = TRUE)
-global_temp_limits <- range(moist_temp$mean_soil_temp, na.rm = TRUE)
+global_moisture_limits[2] <- global_moisture_limits[2] * 1.14
 
-global_moisture_limits[2] <- global_moisture_limits[2] * 1.12
-global_temp_limits[2] <- 40
+global_temp_limits <- range(moist_temp$mean_soil_temp, na.rm = TRUE)
+global_temp_limits[2] <- max(40, global_temp_limits[2] * 1.08)
 
 moisture_breaks <- pretty(global_moisture_limits, n = 5)
 temp_breaks <- pretty(global_temp_limits, n = 5)
 
-# Star positions for moisture
-moisture_stars <- moist_temp |>
-  group_by(year, date) |>
-  summarise(y_star = max(mean_soil_moisture, na.rm = TRUE) * 1.05, .groups = "drop") |>
-  inner_join(pvals_moist, by = c("year", "date")) |>
-  filter(is.finite(y_star))
+temp_bar_y <- global_temp_limits[2] - diff(global_temp_limits) * 0.035
+temp_bar_half <- diff(global_temp_limits) * 0.01
+moist_bar_y <- global_moisture_limits[2] - diff(global_moisture_limits) * 0.035
+moist_bar_half <- diff(global_moisture_limits) * 0.01
 
-moisture_segments <- moisture_stars |>
-  distinct(year, date) |>
-  left_join(moist_temp, by = c("year", "date")) |>
-  group_by(year, date) |>
-  slice_max(order_by = mean_soil_moisture, n = 1, with_ties = FALSE) |>
-  mutate(
-    x = date - 2,
-    xend = date + 2,
-    y = 0.5
-  ) |>
-  ungroup()
+# Shared one-sample t-test helper for difference panels
+one_sample_vs_zero <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) < 2) return(NA_real_)
+  tryCatch(t.test(x, mu = 0)$p.value, error = function(e) NA_real_)
+}
 
-# Star positions for temperature
-temp_stars <- moist_temp |>
-  group_by(year, date) |>
-  summarise(y_star = max(mean_soil_temp, na.rm = TRUE) * 1.05, .groups = "drop") |>
-  inner_join(pvals_temp, by = c("year", "date")) |>
-  filter(is.finite(y_star))
-
-temp_segments <- temp_stars |>
-  distinct(year, date) |>
-  left_join(moist_temp, by = c("year", "date")) |>
-  group_by(year, date) |>
-  slice_max(order_by = mean_soil_temp, n = 1, with_ties = FALSE) |>
-  mutate(
-    x = date - 2,
-    xend = date + 2,
-    y = 40 
-  ) |>
-  ungroup()
-
-# 2023 Soil Moisture (bottom left)
-p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Treatment, linetype = Treatment, shape = Treatment)) +
-  geom_line(linewidth = 0.6) +
-  geom_point(size = 1.5) +
-  scale_color_manual(values = treatment_colors) +
-  scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
-  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
-  scale_x_date(date_breaks = "2 months", date_labels = "%b",
-               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
-  scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks, 
-                     expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "Month", y = expression("Volumetric Soil Moisture (cm"^3*" "*"cm"^-3*")"),
-       color = "Treatment", linetype = "Treatment", shape = "Treatment") +
-  geom_hline(yintercept = 0.5, color = "black", linewidth = 7) +
-  geom_segment(
-    data = moisture_segments |> filter(year == 2023),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
-  ) +
-  annotate("text", x = as.Date("2023-01-15"), y = 0.47,
-           label = "c", size = 4, color = "black", fontface = "bold") +
-  theme_publication(base_size = 10) +
-  theme(legend.position = "none")
-
-# 2024 Soil Moisture (bottom right)
-p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Treatment, linetype = Treatment, shape = Treatment)) +
-  geom_line(linewidth = 0.6) +
-  geom_point(size = 1.5) +
-  scale_color_manual(values = treatment_colors) +
-  scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
-  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
-  scale_x_date(date_breaks = "2 months", date_labels = "%b",
-               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
-  scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks,
-                     expand = expansion(mult = c(0.02, 0.02))) +
-  labs(x = "Month", y = "", color = "Treatment", linetype = "Treatment", shape = "Treatment") +
-  geom_hline(yintercept = 0.5, color = "black", linewidth = 7) +
-  geom_segment(
-    data = moisture_segments |> filter(year == 2024),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
-  ) +
-  annotate("text", x = as.Date("2024-01-15"), y = 0.47,
-           label = "d", size = 4, color = "black", fontface = "bold") +
-  theme_publication(base_size = 10) +
-  theme(
-    axis.text.y = element_blank(),
-    axis.ticks.y = element_blank(),
-    axis.line.y = element_blank(),
-    legend.position = "none"
+temp_diff_stats <- daily_diff |>
+  group_by(year) |>
+  summarise(
+    n = sum(!is.na(temp_diff)),
+    mean_diff = mean(temp_diff, na.rm = TRUE),
+    p_value = one_sample_vs_zero(temp_diff),
+    significant = !is.na(p_value) & p_value < 0.05,
+    letter = if_else(significant, "a", NA_character_),
+    .groups = "drop"
   )
 
-# 2023 Soil Temperature (top left)
+moist_diff_stats <- daily_diff |>
+  group_by(year) |>
+  summarise(
+    n = sum(!is.na(moist_diff)),
+    mean_diff = mean(moist_diff, na.rm = TRUE),
+    p_value = one_sample_vs_zero(moist_diff),
+    significant = !is.na(p_value) & p_value < 0.05,
+    letter = if_else(significant, "a", NA_character_),
+    .groups = "drop"
+  )
+
+# Panel a) 2023 temperature
 p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatment, linetype = Treatment, shape = Treatment)) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.5) +
+  geom_rect(
+    data = temp_status |> filter(year == 2023),
+    aes(
+      xmin = x, xmax = xend,
+      ymin = temp_bar_y - temp_bar_half,
+      ymax = temp_bar_y + temp_bar_half,
+      fill = status
+    ),
+    inherit.aes = FALSE,
+    show.legend = FALSE
+  ) +
+  geom_segment(
+    data = temp_status |> filter(year == 2023, significant),
+    aes(x = x, xend = xend, y = temp_bar_y, yend = temp_bar_y, color = greater),
+    linewidth = 3,
+    inherit.aes = FALSE,
+    show.legend = FALSE
+  ) +
+  scale_fill_manual(values = status_fill) +
   scale_color_manual(values = treatment_colors) +
   scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
-  scale_x_date(date_breaks = "2 months", date_labels = "%b",
-               limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
-  scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks,
-                     expand = expansion(mult = c(0.05, 0.05))) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
+  scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks, expand = expansion(mult = c(0.04, 0.04))) +
   labs(x = "", y = "Soil Temperature (°C)", color = "Treatment", linetype = "Treatment", shape = "Treatment") +
-  geom_hline(yintercept = 40, color = "black", linewidth = 7) +
-  geom_segment(
-    data = temp_segments |> filter(year == 2023),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
-  ) +
-  annotate("text", x = as.Date("2023-01-15"), y = 37,
-           label = "a", size = 4, color = "black", fontface = "bold") +
   theme_publication(base_size = 10) +
   theme(
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
     axis.line.x = element_blank(),
     legend.position = "none"
-  )
+  ) |>
+  add_panel_label("a)")
 
-# 2024 Soil Temperature (top right)
+# Panel b) 2024 temperature
 p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatment, linetype = Treatment, shape = Treatment)) +
   geom_line(linewidth = 0.6) +
   geom_point(size = 1.5) +
+  geom_rect(
+    data = temp_status |> filter(year == 2024),
+    aes(
+      xmin = x, xmax = xend,
+      ymin = temp_bar_y - temp_bar_half,
+      ymax = temp_bar_y + temp_bar_half,
+      fill = status
+    ),
+    inherit.aes = FALSE,
+    show.legend = FALSE
+  ) +
+  geom_segment(
+    data = temp_status |> filter(year == 2024, significant),
+    aes(x = x, xend = xend, y = temp_bar_y, yend = temp_bar_y, color = greater),
+    linewidth = 3,
+    inherit.aes = FALSE,
+    show.legend = FALSE
+  ) +
+  scale_fill_manual(values = status_fill) +
   scale_color_manual(values = treatment_colors) +
   scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
   scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
-  scale_x_date(date_breaks = "2 months", date_labels = "%b",
-               limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
-  scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks,
-                     expand = expansion(mult = c(0.05, 0.05))) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
+  scale_y_continuous(limits = global_temp_limits, breaks = temp_breaks, expand = expansion(mult = c(0.04, 0.04))) +
   labs(x = "", y = "", color = "Treatment", linetype = "Treatment", shape = "Treatment") +
-  geom_hline(yintercept = 40, color = "black", linewidth = 7) +
-  geom_segment(
-    data = temp_segments |> filter(year == 2024),
-    aes(x = x, xend = xend, y = y, yend = y, color = Treatment),
-    linewidth = 7, inherit.aes = FALSE, show.legend = FALSE
-  ) +
-  annotate("text", x = as.Date("2024-01-15"), y = 37,
-           label = "b", size = 4, color = "black", fontface = "bold") +
   theme_publication(base_size = 10) +
   theme(
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
+    axis.line.x = element_blank(),
     axis.text.y = element_blank(),
     axis.ticks.y = element_blank(),
-    axis.line = element_blank(),
+    axis.line.y = element_blank(),
     legend.position = "none"
-  )
+  ) |>
+  add_panel_label("b)")
 
-# Combine panels
-figure2 <- (p3 | p4) / (p1 | p2) +
-  patchwork::plot_layout(guides = "collect", heights = c(1, 1)) &
+# Panel c) 2023 moisture
+p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Treatment, linetype = Treatment, shape = Treatment)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.5) +
+  geom_rect(
+    data = moist_status |> filter(year == 2023),
+    aes(
+      xmin = x, xmax = xend,
+      ymin = moist_bar_y - moist_bar_half,
+      ymax = moist_bar_y + moist_bar_half,
+      fill = status
+    ),
+    inherit.aes = FALSE,
+    show.legend = FALSE
+  ) +
+  geom_segment(
+    data = moist_status |> filter(year == 2023, significant),
+    aes(x = x, xend = xend, y = moist_bar_y, yend = moist_bar_y, color = greater),
+    linewidth = 3,
+    inherit.aes = FALSE,
+    show.legend = FALSE
+  ) +
+  scale_fill_manual(values = status_fill) +
+  scale_color_manual(values = treatment_colors) +
+  scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
+  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = c(as.Date("2023-01-01"), as.Date("2023-12-31"))) +
+  scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks, expand = expansion(mult = c(0.04, 0.04))) +
+  labs(
+    x = "Month",
+    y = expression("Volumetric Soil Moisture (cm"^3 * " " * "cm"^-3 * ")"),
+    color = "Treatment",
+    linetype = "Treatment",
+    shape = "Treatment"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none") |>
+  add_panel_label("c)")
+
+# Panel d) 2024 moisture
+p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Treatment, linetype = Treatment, shape = Treatment)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.5) +
+  geom_rect(
+    data = moist_status |> filter(year == 2024),
+    aes(
+      xmin = x, xmax = xend,
+      ymin = moist_bar_y - moist_bar_half,
+      ymax = moist_bar_y + moist_bar_half,
+      fill = status
+    ),
+    inherit.aes = FALSE,
+    show.legend = FALSE
+  ) +
+  geom_segment(
+    data = moist_status |> filter(year == 2024, significant),
+    aes(x = x, xend = xend, y = moist_bar_y, yend = moist_bar_y, color = greater),
+    linewidth = 3,
+    inherit.aes = FALSE,
+    show.legend = FALSE
+  ) +
+  scale_fill_manual(values = status_fill) +
+  scale_color_manual(values = treatment_colors) +
+  scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
+  scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = c(as.Date("2024-01-01"), as.Date("2024-12-31"))) +
+  scale_y_continuous(limits = global_moisture_limits, breaks = moisture_breaks, expand = expansion(mult = c(0.04, 0.04))) +
+  labs(x = "Month", y = "", color = "Treatment", linetype = "Treatment", shape = "Treatment") +
+  theme_publication(base_size = 10) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank(),
+    legend.position = "none"
+  ) |>
+  add_panel_label("d)")
+
+# Temperature difference panel (e)
+temp_span <- diff(range(daily_diff$temp_diff, na.rm = TRUE))
+if (!is.finite(temp_span) || temp_span == 0) temp_span <- 1
+temp_anno <- daily_diff |>
+  group_by(year) |>
+  summarise(y = max(temp_diff, na.rm = TRUE), .groups = "drop") |>
+  left_join(temp_diff_stats, by = "year") |>
+  filter(significant) |>
+  mutate(y = y + temp_span * 0.08)
+
+p5 <- ggplot(daily_diff, aes(x = factor(year), y = temp_diff)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_boxplot(width = 0.55, outlier.shape = NA, fill = "grey92", color = "black") +
+  geom_jitter(
+    aes(color = factor(year)),
+    width = 0.12,
+    height = 0,
+    alpha = 0.7,
+    size = 1.4,
+    show.legend = FALSE
+  ) +
+  geom_text(
+    data = temp_anno,
+    aes(x = factor(year), y = y, label = letter),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 3.8
+  ) +
+  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  labs(
+    x = "Year",
+    y = expression("Daily Temperature Difference (°C, WCC - Sorghum)")
+  ) +
+  theme_publication(base_size = 10) |>
+  add_panel_label("e)")
+
+# Moisture difference panel (f)
+moist_span <- diff(range(daily_diff$moist_diff, na.rm = TRUE))
+if (!is.finite(moist_span) || moist_span == 0) moist_span <- 0.01
+moist_anno <- daily_diff |>
+  group_by(year) |>
+  summarise(y = max(moist_diff, na.rm = TRUE), .groups = "drop") |>
+  left_join(moist_diff_stats, by = "year") |>
+  filter(significant) |>
+  mutate(y = y + moist_span * 0.08)
+
+p6 <- ggplot(daily_diff, aes(x = factor(year), y = moist_diff)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_boxplot(width = 0.55, outlier.shape = NA, fill = "grey92", color = "black") +
+  geom_jitter(
+    aes(color = factor(year)),
+    width = 0.12,
+    height = 0,
+    alpha = 0.7,
+    size = 1.4,
+    show.legend = FALSE
+  ) +
+  geom_text(
+    data = moist_anno,
+    aes(x = factor(year), y = y, label = letter),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 3.8
+  ) +
+  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  labs(
+    x = "Year",
+    y = expression("Daily Moisture Difference (cm"^3 * " " * "cm"^-3 * ", WCC - Sorghum)")
+  ) +
+  theme_publication(base_size = 10) |>
+  add_panel_label("f)")
+
+figure2 <- (p3 | p4) / (p1 | p2) / (p5 | p6) +
+  patchwork::plot_layout(guides = "collect", heights = c(1, 1, 0.95)) &
   theme(legend.position = "top") &
   guides(
-    color = guide_legend(nrow = 2, byrow = TRUE),
-    linetype = guide_legend(nrow = 2, byrow = TRUE),
-    shape = guide_legend(nrow = 2, byrow = TRUE)
+    color = guide_legend(nrow = 1, byrow = TRUE),
+    linetype = guide_legend(nrow = 1, byrow = TRUE),
+    shape = guide_legend(nrow = 1, byrow = TRUE)
   )
 
+figure2 <- figure2 +
+  patchwork::plot_annotation(
+    caption = "Status bars above time-series panels: black = significant treatment difference; gray = no difference; light gray = no data. Colored overlays indicate which treatment had the greater daily mean on significant dates."
+  )
+
+temp_diff_stats
+moist_diff_stats
 figure2
 ```
 
@@ -600,8 +775,7 @@ table2
 **Scientific Context:** Nitrate leaching via subsurface tile drainage represents a primary nitrogen loss pathway in agricultural systems. This figure shows daily and cumulative nitrogen losses through tile drainage, demonstrating the key finding that the winter cover crop substantially reduced nitrogen leaching compared to the no-cover control.
 
 ```{r figure3-leaching}
-# 1. Load and Process Leaching Data
-# Define plot area constants
+# 1. Load and process leaching data
 plot_area_ft2 <- 120 * 160
 plot_area_ha <- plot_area_ft2 / 107639.1041671
 fert_events <- tibble(
@@ -617,141 +791,200 @@ leaching_data <- read_csv("data/clean_leaching.csv") |>
   ) |>
   filter(year %in% c(2023, 2024))
 
-# nitrate is in mg_l not mg_ml
-leaching_data |>
-  group_by(treatment, year, date) |>
-  summarise(
-    max_nitrate = max(nitrate_mg_ml, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
-  slice_max(max_nitrate, by = c(treatment, year))
-
-# 2. Daily Leaching Calculation
+# 2. Daily and cumulative summaries (Sorghum vs Sorghum + WCC)
 daily_leaching_summary <- leaching_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   mutate(
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+    daily_leached_n_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
   ) |>
   group_by(Treatment, year, date) |>
   summarise(
-    mean_loss = mean(daily_n_loss_kgha, na.rm = TRUE),
-    se_loss = sd(daily_n_loss_kgha, na.rm = TRUE) / sqrt(sum(!is.na(daily_n_loss_kgha))),
+    mean_leached = mean(daily_leached_n_kgha, na.rm = TRUE),
+    se_leached = sd(daily_leached_n_kgha, na.rm = TRUE) / sqrt(sum(!is.na(daily_leached_n_kgha))),
     .groups = "drop"
   )
 
-# 3. Cumulative Leaching Calculation
-# Updated to match Figure 3 R script logic (using SE for ribbons, not 95% CI)
 cum_leaching_summary <- leaching_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   mutate(
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    cum_loss_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
+    cumulative_leached_n_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
   ) |>
   group_by(Treatment, year, date) |>
   summarise(
-    cum_loss_mean = mean(cum_loss_kgha, na.rm = TRUE),
-    cum_loss_sd = sd(cum_loss_kgha, na.rm = TRUE),
+    cum_leached_mean = mean(cumulative_leached_n_kgha, na.rm = TRUE),
+    cum_leached_sd = sd(cumulative_leached_n_kgha, na.rm = TRUE),
     n = n(),
-    # Use standard error for ribbons
-    cum_loss_se = cum_loss_sd / sqrt(n), 
+    cum_leached_se = cum_leached_sd / sqrt(n),
     .groups = "drop"
   )
 
-# 4. Significance Testing (Daily)
+# 3. Date-specific treatment tests (asterisks)
 daily_leaching_sig <- leaching_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   mutate(
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    daily_n_loss_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+    daily_leached_n_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
   ) |>
   group_by(year, date) |>
   summarise(
     p_value = {
-      sorg <- daily_n_loss_kgha[Treatment == "Sorghum"]
-      wcc  <- daily_n_loss_kgha[Treatment == "Sorghum + WCC"]
-      if (length(na.omit(sorg)) >= 3 && length(na.omit(wcc)) >= 3) {
-        tryCatch(wilcox.test(sorg, wcc)$p.value, error = function(e) NA)
-      } else NA
+      sorghum_vals <- daily_leached_n_kgha[Treatment == "Sorghum"]
+      wcc_vals <- daily_leached_n_kgha[Treatment == "Sorghum + WCC"]
+      sorghum_vals <- sorghum_vals[!is.na(sorghum_vals)]
+      wcc_vals <- wcc_vals[!is.na(wcc_vals)]
+      if (length(sorghum_vals) >= 3 && length(wcc_vals) >= 3) {
+        tryCatch(wilcox.test(sorghum_vals, wcc_vals)$p.value, error = function(e) NA_real_)
+      } else {
+        NA_real_
+      }
     },
     .groups = "drop"
   ) |>
-  mutate(
-    star_label = if_else(!is.na(p_value) & p_value < 0.05, "*", "")
-  )
+  mutate(significant = !is.na(p_value) & p_value < 0.05)
 
-# 5. Prepare Plot Data (Stars & Precip)
 leaching_stars <- daily_leaching_summary |>
   group_by(year, date) |>
-  summarise(max_y = max(mean_loss + se_loss, na.rm = TRUE), .groups = "drop") |>
-  inner_join(daily_leaching_sig, by = c("year", "date")) |>
-  filter(star_label == "*") |>
-  mutate(star_y = max_y * 1.1)
+  summarise(y_top = max(mean_leached + se_leached, na.rm = TRUE), .groups = "drop") |>
+  left_join(daily_leaching_sig, by = c("year", "date")) |>
+  filter(significant) |>
+  mutate(star_y = y_top * 1.1, star_label = "*")
+
+# 4. Precipitation trimmed to leaching measurement windows
+leach_date_ranges <- daily_leaching_summary |>
+  group_by(year) |>
+  summarise(min_date = min(date), max_date = max(date), .groups = "drop")
 
 daily_precip_leaching <- rain |>
+  select(date, year, precipmm) |>
   filter(year %in% c(2023, 2024)) |>
+  left_join(leach_date_ranges, by = "year") |>
+  filter(date >= min_date, date <= max_date)
+
+max_leached_daily <- max(daily_leaching_summary$mean_leached + daily_leaching_summary$se_leached, na.rm = TRUE)
+max_precip_leach <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
+leach_precip_scale <- (max_leached_daily * 0.4) / max_precip_leach
+leach_plot_top <- max_leached_daily * 1.12
+max_cum_leached <- max(cum_leaching_summary$cum_leached_mean + cum_leaching_summary$cum_leached_se, na.rm = TRUE)
+
+# 5. New daily-difference panel data (daily means, WCC - Sorghum)
+daily_leach_diff <- daily_leaching_summary |>
+  mutate(trt_key = if_else(Treatment == "Sorghum + WCC", "WCC", "Sorghum")) |>
+  select(year, date, trt_key, mean_leached) |>
+  pivot_wider(names_from = trt_key, values_from = mean_leached) |>
+  mutate(diff_wcc_minus_sorghum = WCC - Sorghum)
+
+one_sample_vs_zero <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) < 2) return(NA_real_)
+  tryCatch(t.test(x, mu = 0)$p.value, error = function(e) NA_real_)
+}
+
+leach_diff_stats <- daily_leach_diff |>
   group_by(year) |>
-  filter(date >= min(leaching_data$date) & date <= max(leaching_data$date)) |>
-  ungroup()
+  summarise(
+    n = sum(!is.na(diff_wcc_minus_sorghum)),
+    mean_diff = mean(diff_wcc_minus_sorghum, na.rm = TRUE),
+    p_value = one_sample_vs_zero(diff_wcc_minus_sorghum),
+    significant = !is.na(p_value) & p_value < 0.05,
+    letter = if_else(significant, "a", NA_character_),
+    .groups = "drop"
+  )
 
-# Scaling factors (match R script logic)
-max_leach <- max(daily_leaching_summary$mean_loss + daily_leaching_summary$se_loss, na.rm = TRUE)
-max_precip_l <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
-scale_factor_l <- (max_leach * 0.4) / max_precip_l
-plot_top_l <- max_leach * 1.1
+# 6. New annual panel data (combine years; one-way ANOVA by treatment)
+annual_leached <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    plot = as.character(plot)
+  ) |>
+  group_by(year, plot, Treatment) |>
+  summarise(
+    annual_leached_n = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha,
+    .groups = "drop"
+  ) |>
+  filter(is.finite(annual_leached_n), annual_leached_n >= 0)
 
-# Updated scaling for ribbons using SE
-max_cum_leach <- max(cum_leaching_summary$cum_loss_mean + cum_leaching_summary$cum_loss_se, na.rm = TRUE)
+anova_leached <- aov(annual_leached_n ~ Treatment, data = annual_leached)
+anova_leached_p <- summary(anova_leached)[[1]]["Treatment", "Pr(>F)"]
 
-# 6. Plotting Function
-create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
-  # Data subsets
+leached_letters <- tryCatch({
+  emm <- emmeans::emmeans(anova_leached, ~ Treatment)
+  out <- multcomp::cld(emm, adjust = "tukey", Letters = letters) |>
+    as_tibble() |>
+    transmute(
+      Treatment = as.character(Treatment),
+      letter = gsub("\\s+", "", .group)
+    )
+  out
+}, error = function(e) {
+  annual_leached |>
+    distinct(Treatment) |>
+    mutate(letter = "a")
+})
+
+# 7. Plot builders for daily and cumulative leaching panels
+create_leaching_daily_panel <- function(year_val, is_right_panel = FALSE, label_id) {
   d_sub <- filter(daily_leaching_summary, year == year_val)
-  c_sub <- filter(cum_leaching_summary, year == year_val)
   p_sub <- filter(daily_precip_leaching, year == year_val)
   s_sub <- filter(leaching_stars, year == year_val)
-  fert_year <- filter(fert_events, year == year_val)
-
-  
+  fert_sub <- filter(fert_events, year == year_val)
   x_lims <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
-  
-  # Top Panel: Daily Leaching + Precip
-  p_daily <- ggplot() +
-    # Precip bars
+
+  p <- ggplot() +
     geom_rect(
       data = p_sub,
-      aes(xmin = date - 0.5, xmax = date + 0.5, 
-          ymin = plot_top_l - (precipmm * scale_factor_l), ymax = plot_top_l),
-      fill = "#377EB8", alpha = 0.7
+      aes(
+        xmin = date - 0.5,
+        xmax = date + 0.5,
+        ymin = leach_plot_top - precipmm * leach_precip_scale,
+        ymax = leach_plot_top
+      ),
+      fill = "#377EB8",
+      alpha = 0.7
     ) +
-    # Leaching points & errors
-    geom_point(data = d_sub, aes(x = date, y = mean_loss, color = Treatment), size = 1.5) +
+    geom_point(
+      data = d_sub,
+      aes(x = date, y = mean_leached, color = Treatment),
+      size = 1.4
+    ) +
     geom_errorbar(
-      data = d_sub, 
-      aes(x = date, ymin = mean_loss - se_loss, ymax = mean_loss + se_loss, color = Treatment),
-      width = 0.2, alpha = 0.5
+      data = d_sub,
+      aes(
+        x = date,
+        ymin = pmax(mean_leached - se_leached, 0),
+        ymax = mean_leached + se_leached,
+        color = Treatment
+      ),
+      width = 0.2,
+      alpha = 0.5
     ) +
     geom_vline(
-      data = fert_year,
+      data = fert_sub,
       aes(xintercept = fertilizer_date),
       linetype = "dashed",
       color = "black",
       alpha = 0.7
     ) +
-    # Significance stars
-    geom_text(data = s_sub, aes(x = date, y = star_y, label = star_label), size = 5) +
+    geom_text(
+      data = s_sub,
+      aes(x = date, y = star_y, label = star_label),
+      size = 4.8
+    ) +
     scale_color_manual(values = treatment_colors) +
-    guides(color = "none") +
     scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
     scale_y_continuous(
-      name = if(!is_right_panel) expression("Daily N Loss (kg N ha"^-1*" d"^-1*")") else "",
-      limits = c(0, plot_top_l),
-      sec.axis = sec_axis(~ (plot_top_l - .) / scale_factor_l, 
-                          name = if(is_right_panel) "Precipitation (mm)" else "")
+      name = if (!is_right_panel) expression("Daily Leached N (kg N ha"^-1 * " d"^-1 * ")") else "",
+      limits = c(0, leach_plot_top),
+      sec.axis = sec_axis(
+        ~ (leach_plot_top - .) / leach_precip_scale,
+        name = if (is_right_panel) "Precipitation (mm)" else ""
+      )
     ) +
+    labs(x = "") +
     theme_publication(base_size = 10) +
     theme(
-      legend.position = "none",
       axis.text.x = element_blank(),
       axis.ticks.x = element_blank(),
       axis.line.x = element_blank(),
@@ -759,48 +992,33 @@ create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.line.y = if (is_right_panel) element_blank() else element_line(),
       axis.title.y = if (is_right_panel) element_blank() else element_text(),
-      axis.text.y.right = if (is_right_panel) {
-        element_text(color = "#377EB8")
-      } else {
-        element_blank()
-      },
-      axis.ticks.y.right = if (is_right_panel) {
-        element_line()
-      } else {
-        element_blank()
-      },
-      axis.title.y.right = if (is_right_panel) {
-        element_text(color = "#377EB8")
-      } else {
-        element_blank()
-      }
-    ) +
-    labs(x = "") +
-    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
-    
-  if(is_right_panel) {
-    p_daily <- p_daily + theme(
-      axis.text.y.left = element_blank(),
-      axis.ticks.y.left = element_blank(),
-      axis.line.y.left = element_blank()
-    )
-  } else {
-    p_daily <- p_daily + theme(
-      axis.text.y.right = element_blank(),
-      axis.ticks.y.right = element_blank()
-    )
-  }
+      axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
+      axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      legend.position = "none"
+    ) |>
+    add_panel_label(label_id)
 
-  # Bottom Panel: Cumulative Leaching (Updated)
-  p_cum <- ggplot(c_sub, aes(x = date, y = cum_loss_mean, color = Treatment, fill = Treatment)) +
+  p
+}
+
+create_leaching_cum_panel <- function(year_val, is_right_panel = FALSE, label_id) {
+  c_sub <- filter(cum_leaching_summary, year == year_val)
+  fert_sub <- filter(fert_events, year == year_val)
+  x_lims <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+
+  p <- ggplot(c_sub, aes(x = date, y = cum_leached_mean, color = Treatment, fill = Treatment)) +
     geom_ribbon(
-      # CHANGED: Using SE instead of CI to match R script
-      aes(ymin = pmax(cum_loss_mean - cum_loss_se, 0), ymax = cum_loss_mean + cum_loss_se),
-      alpha = 0.15, linewidth = 0
+      aes(
+        ymin = pmax(cum_leached_mean - cum_leached_se, 0),
+        ymax = cum_leached_mean + cum_leached_se
+      ),
+      alpha = 0.15,
+      linewidth = 0
     ) +
     geom_line(linewidth = 1) +
     geom_vline(
-      data = fert_year,
+      data = fert_sub,
       aes(xintercept = fertilizer_date),
       linetype = "dashed",
       color = "black",
@@ -810,30 +1028,106 @@ create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
     scale_fill_manual(values = treatment_colors) +
     scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
     scale_y_continuous(
-      name = if(!is_right_panel) expression("Cumulative N Loss (kg N ha"^-1*")") else "",
-      limits = c(0, max_cum_leach)
+      name = if (!is_right_panel) expression("Cumulative Leached N (kg N ha"^-1 * ")") else "",
+      limits = c(0, max_cum_leached)
     ) +
     labs(x = "Month") +
     theme_publication(base_size = 10) +
-    theme(legend.position = "none")
+    theme(
+      axis.text.y = if (is_right_panel) element_blank() else element_text(),
+      axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
+      axis.line.y = if (is_right_panel) element_blank() else element_line(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      legend.position = "none"
+    ) |>
+    add_panel_label(label_id)
 
-  if(is_right_panel) {
-    p_cum <- p_cum + theme(
-      axis.text.y = element_blank(),
-      axis.ticks.y = element_blank(), 
-      axis.line.y = element_blank()
-    )
-  }
-
-  p_daily / p_cum + plot_layout(heights = c(1.2, 1))
+  p
 }
 
-# 7. Assemble Figure
-figure3 <- (create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) +
-  plot_layout(guides = "collect") &
-  theme(legend.position = "top", legend.justification = "center") &
-  labs(color = NULL, fill = NULL)
+# 8. New panel c: daily treatment difference by year
+diff_span <- diff(range(daily_leach_diff$diff_wcc_minus_sorghum, na.rm = TRUE))
+if (!is.finite(diff_span) || diff_span == 0) diff_span <- 0.05
+leach_diff_anno <- daily_leach_diff |>
+  group_by(year) |>
+  summarise(y = max(diff_wcc_minus_sorghum, na.rm = TRUE), .groups = "drop") |>
+  left_join(leach_diff_stats, by = "year") |>
+  filter(significant) |>
+  mutate(y = y + diff_span * 0.08)
 
+p3c <- ggplot(daily_leach_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_boxplot(width = 0.55, outlier.shape = NA, fill = "grey92", color = "black") +
+  geom_jitter(
+    aes(color = factor(year)),
+    width = 0.12,
+    alpha = 0.7,
+    size = 1.4,
+    show.legend = FALSE
+  ) +
+  geom_text(
+    data = leach_diff_anno,
+    aes(x = factor(year), y = y, label = letter),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 3.8
+  ) +
+  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  labs(
+    x = "Year",
+    y = expression("Daily Leached N Difference (kg N ha"^-1 * " d"^-1 * ", WCC - Sorghum)")
+  ) +
+  theme_publication(base_size = 10) |>
+  add_panel_label("c)")
+
+# 9. New panel f: annual/cumulative by treatment with years combined + ANOVA
+letter_offset <- diff(range(annual_leached$annual_leached_n, na.rm = TRUE))
+if (!is.finite(letter_offset) || letter_offset == 0) letter_offset <- 0.05
+annual_letter_pos <- annual_leached |>
+  group_by(Treatment) |>
+  summarise(y = max(annual_leached_n, na.rm = TRUE), .groups = "drop") |>
+  left_join(leached_letters, by = "Treatment") |>
+  mutate(y = y + letter_offset * 0.08)
+
+p3f <- ggplot(annual_leached, aes(x = Treatment, y = annual_leached_n, fill = Treatment)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA, alpha = 0.5, color = "black") +
+  geom_jitter(
+    aes(shape = factor(year)),
+    width = 0.12,
+    size = 1.8,
+    alpha = 0.8,
+    show.legend = FALSE
+  ) +
+  geom_text(
+    data = annual_letter_pos,
+    aes(x = Treatment, y = y, label = letter),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 3.8
+  ) +
+  scale_fill_manual(values = treatment_colors) +
+  labs(
+    x = "",
+    y = expression("Annual Leached N (kg N ha"^-1 * ")"),
+    subtitle = paste0("One-way ANOVA p = ", ifelse(anova_leached_p < 0.001, "< 0.001", sprintf("%.3f", anova_leached_p)))
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none") |>
+  add_panel_label("f)")
+
+# 10. Assemble six-panel Figure 3
+p3a <- create_leaching_daily_panel(2023, is_right_panel = FALSE, label_id = "a)")
+p3b <- create_leaching_daily_panel(2024, is_right_panel = TRUE, label_id = "b)")
+p3d <- create_leaching_cum_panel(2023, is_right_panel = FALSE, label_id = "d)")
+p3e <- create_leaching_cum_panel(2024, is_right_panel = TRUE, label_id = "e)")
+
+figure3 <- (p3a | p3b | p3c) /
+  (p3d | p3e | p3f) +
+  patchwork::plot_layout(guides = "collect", widths = c(1, 1, 0.95)) &
+  theme(legend.position = "top", legend.justification = "center")
+
+leach_diff_stats
+anova_leached_p
 figure3
 ```
 
@@ -969,37 +1263,29 @@ ggsave(
 **Scientific Context:** Nitrous oxide (N₂O) is a potent greenhouse gas produced during soil nitrogen transformations. We measured N₂O fluxes using static chambers throughout the growing season to quantify emissions from sorghum systems with and without winter cover crops. Fluxes were generally low and episodic, with peak emissions often following fertilization or precipitation events.
 
 ```{r figure4-n2o}
-# Prepare Flux Data
+# Prepare N2O flux data (Sorghum vs Sorghum + WCC)
 flux_subset <- flux_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
   mutate(
-    Treatment = if_else(
-      treatment == "Sorghum + Rye",
-      "Sorghum + WCC",
-      treatment
-    ),
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC")),
     year = year(date)
   ) |>
   filter(year %in% c(2023, 2024))
 
-# Daily Means and SE
+# Daily means in g N ha^-1 d^-1 for readability
 daily_flux <- flux_subset |>
   group_by(Treatment, year, date) |>
   summarise(
-    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000,
-    se_flux = sd(gnha_day_no_negative, na.rm = TRUE) /
-      sqrt(sum(!is.na(gnha_day_no_negative))) /
-      1000,
+    mean_flux_g = mean(gnha_day_no_negative, na.rm = TRUE),
+    se_flux_g = sd(gnha_day_no_negative, na.rm = TRUE) / sqrt(sum(!is.na(gnha_day_no_negative))),
     .groups = "drop"
   )
 
-# Significance (Wilcoxon on plot means)
+# Date-specific treatment tests for asterisks
 daily_significance <- flux_subset |>
   group_by(year, date, Treatment, plot) |>
-  summarise(
-    plot_mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
-    .groups = "drop"
-  ) |>
+  summarise(plot_mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), .groups = "drop") |>
   group_by(year, date) |>
   summarise(
     p_value = {
@@ -1007,42 +1293,28 @@ daily_significance <- flux_subset |>
       wcc_vals <- plot_mean_flux[Treatment == "Sorghum + WCC"]
       sorghum_vals <- sorghum_vals[!is.na(sorghum_vals)]
       wcc_vals <- wcc_vals[!is.na(wcc_vals)]
-
       if (length(sorghum_vals) >= 3 && length(wcc_vals) >= 3) {
-        tryCatch(
-          wilcox.test(sorghum_vals, wcc_vals, exact = FALSE)$p.value,
-          error = function(e) NA_real_
-        )
+        tryCatch(wilcox.test(sorghum_vals, wcc_vals, exact = FALSE)$p.value, error = function(e) NA_real_)
       } else {
         NA_real_
       }
     },
     .groups = "drop"
   ) |>
-  mutate(
-    significant = p_value < 0.05,
-    star_label = if_else(significant & !is.na(p_value), "*", "")
-  )
+  mutate(significant = !is.na(p_value) & p_value < 0.05)
 
-# Star positions
-max_flux_by_date <- daily_flux |>
+star_data <- daily_flux |>
   group_by(year, date) |>
-  summarise(max_flux = max(mean_flux + se_flux, na.rm = TRUE), .groups = "drop")
+  summarise(y_top = max(mean_flux_g + se_flux_g, na.rm = TRUE), .groups = "drop") |>
+  left_join(daily_significance, by = c("year", "date")) |>
+  filter(significant) |>
+  mutate(star_y = y_top * 1.1, star_label = "*")
 
-star_data <- daily_significance |>
-  left_join(max_flux_by_date, by = c("year", "date")) |>
-  filter(star_label == "*") |>
-  mutate(star_y = max_flux * 1.1)
-
-# Cumulative Flux Calculation
+# Cumulative N2O in kg N ha^-1
 daily_flux_plot_level <- flux_subset |>
   group_by(Treatment, year, plot, date) |>
-  summarise(
-    daily_flux = mean(gnha_day_no_negative, na.rm = TRUE) / 1000,
-    .groups = "drop"
-  )
+  summarise(daily_flux_kg = mean(gnha_day_no_negative, na.rm = TRUE) / 1000, .groups = "drop")
 
-# Interpolate and Accumulate
 cum_flux_plot_level <- daily_flux_plot_level |>
   arrange(Treatment, year, plot, date) |>
   group_by(Treatment, year, plot) |>
@@ -1050,37 +1322,32 @@ cum_flux_plot_level <- daily_flux_plot_level |>
     df <- .x |>
       complete(date = seq(min(date), max(date), by = "day")) |>
       arrange(date)
-
-    non_na <- !is.na(df$daily_flux)
+    non_na <- !is.na(df$daily_flux_kg)
     if (sum(non_na) == 0) return(tibble())
 
     flux_interp <- if (sum(non_na) >= 2) {
       approx(
         x = df$date[non_na],
-        y = df$daily_flux[non_na],
+        y = df$daily_flux_kg[non_na],
         xout = df$date,
         rule = 1,
         ties = "ordered"
       )$y
     } else {
-      rep(df$daily_flux[non_na][1], nrow(df))
+      rep(df$daily_flux_kg[non_na][1], nrow(df))
     }
 
     df |>
-      mutate(
-        flux_interp = flux_interp,
-        cum_flux = cumsum(flux_interp)
-      ) |>
+      mutate(flux_interp = flux_interp, cum_flux_kg = cumsum(flux_interp)) |>
       filter(!is.na(flux_interp))
   }) |>
   ungroup()
 
-# Summary Statistics for Plotting
 cum_flux_summary <- cum_flux_plot_level |>
   group_by(Treatment, year, date) |>
   summarise(
-    cum_flux_mean = mean(cum_flux, na.rm = TRUE),
-    cum_flux_sd = sd(cum_flux, na.rm = TRUE),
+    cum_flux_mean = mean(cum_flux_kg, na.rm = TRUE),
+    cum_flux_sd = sd(cum_flux_kg, na.rm = TRUE),
     n_plots = n(),
     cum_flux_se = cum_flux_sd / sqrt(n_plots),
     t_crit = if_else(n_plots > 1, qt(0.975, df = n_plots - 1), NA_real_),
@@ -1088,61 +1355,100 @@ cum_flux_summary <- cum_flux_plot_level |>
     .groups = "drop"
   )
 
-# Precipitation
+# Precipitation trimmed to flux windows
 flux_date_ranges <- daily_flux |>
   group_by(year) |>
   summarise(min_date = min(date), max_date = max(date), .groups = "drop")
+
 daily_precip_trimmed <- rain |>
   select(date, year, precipmm) |>
   filter(year %in% c(2023, 2024)) |>
   left_join(flux_date_ranges, by = "year") |>
   filter(date >= min_date, date <= max_date)
 
-# Plotting Constants
-global_max_flux <- max(daily_flux$mean_flux + daily_flux$se_flux, na.rm = TRUE)
+# Scaling constants
+global_max_flux_g <- max(daily_flux$mean_flux_g + daily_flux$se_flux_g, na.rm = TRUE)
 global_max_precip <- max(daily_precip_trimmed$precipmm, na.rm = TRUE)
-global_max_cum_flux <- max(
-  cum_flux_summary$cum_flux_mean + cum_flux_summary$cum_flux_ci,
-  na.rm = TRUE
-)
-global_precip_scale_factor <- global_max_flux * 0.4 / global_max_precip
-global_plot_top <- global_max_flux * 1.1
+global_max_cum_flux <- max(cum_flux_summary$cum_flux_mean + cum_flux_summary$cum_flux_ci, na.rm = TRUE)
+precip_scale_factor <- global_max_flux_g * 0.4 / global_max_precip
+plot_top_flux <- global_max_flux_g * 1.12
 
-# Plot Function
-create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
+# New panel c: daily difference (WCC - Sorghum), one-sample t-test vs 0
+daily_n2o_diff <- daily_flux |>
+  mutate(trt_key = if_else(Treatment == "Sorghum + WCC", "WCC", "Sorghum")) |>
+  select(year, date, trt_key, mean_flux_g) |>
+  pivot_wider(names_from = trt_key, values_from = mean_flux_g) |>
+  mutate(diff_wcc_minus_sorghum = WCC - Sorghum)
+
+one_sample_vs_zero <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) < 2) return(NA_real_)
+  tryCatch(t.test(x, mu = 0)$p.value, error = function(e) NA_real_)
+}
+
+n2o_diff_stats <- daily_n2o_diff |>
+  group_by(year) |>
+  summarise(
+    n = sum(!is.na(diff_wcc_minus_sorghum)),
+    mean_diff = mean(diff_wcc_minus_sorghum, na.rm = TRUE),
+    p_value = one_sample_vs_zero(diff_wcc_minus_sorghum),
+    significant = !is.na(p_value) & p_value < 0.05,
+    letter = if_else(significant, "a", NA_character_),
+    .groups = "drop"
+  )
+
+# New panel f: annual cumulative N2O by treatment (combine years) + one-way ANOVA
+annual_n2o <- cum_flux_plot_level |>
+  group_by(year, plot, Treatment) |>
+  summarise(annual_cum_n2o = max(cum_flux_kg, na.rm = TRUE), .groups = "drop") |>
+  filter(is.finite(annual_cum_n2o), annual_cum_n2o >= 0)
+
+anova_n2o <- aov(annual_cum_n2o ~ Treatment, data = annual_n2o)
+anova_n2o_p <- summary(anova_n2o)[[1]]["Treatment", "Pr(>F)"]
+
+n2o_letters <- tryCatch({
+  emm <- emmeans::emmeans(anova_n2o, ~ Treatment)
+  out <- multcomp::cld(emm, adjust = "tukey", Letters = letters) |>
+    as_tibble() |>
+    transmute(
+      Treatment = as.character(Treatment),
+      letter = gsub("\\s+", "", .group)
+    )
+  out
+}, error = function(e) {
+  annual_n2o |>
+    distinct(Treatment) |>
+    mutate(letter = "a")
+})
+
+# Daily and cumulative panel builders
+create_n2o_daily_panel <- function(year_val, is_right_panel = FALSE, label_id) {
   flux_year <- filter(daily_flux, year == year_val)
   precip_year <- filter(daily_precip_trimmed, year == year_val)
   star_year <- filter(star_data, year == year_val)
   fert_year <- filter(fert_events, year == year_val)
-  cum_flux_year <- filter(cum_flux_summary, year == year_val)
-  year_start <- as.Date(paste0(year_val, "-01-01"))
-  year_end <- as.Date(paste0(year_val, "-12-31"))
+  x_lims <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
 
-  daily_plot <- ggplot() +
+  p <- ggplot() +
     geom_rect(
       data = precip_year,
       aes(
         xmin = date - 0.5,
         xmax = date + 0.5,
-        ymin = global_plot_top - precipmm * global_precip_scale_factor,
-        ymax = global_plot_top
+        ymin = plot_top_flux - precipmm * precip_scale_factor,
+        ymax = plot_top_flux
       ),
       fill = "#377EB8",
       alpha = 0.7
     ) +
     geom_point(
       data = flux_year,
-      aes(x = date, y = mean_flux, color = Treatment),
-      size = 1.5
+      aes(x = date, y = mean_flux_g, color = Treatment),
+      size = 1.4
     ) +
     geom_errorbar(
       data = flux_year,
-      aes(
-        x = date,
-        ymin = mean_flux - se_flux,
-        ymax = mean_flux + se_flux,
-        color = Treatment
-      ),
+      aes(x = date, ymin = pmax(mean_flux_g - se_flux_g, 0), ymax = mean_flux_g + se_flux_g, color = Treatment),
       width = 0.2,
       alpha = 0.5
     ) +
@@ -1156,31 +1462,21 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     geom_text(
       data = star_year,
       aes(x = date, y = star_y, label = star_label),
-      color = "black",
-      size = 5
+      size = 4.8
     ) +
-    guides(color = "none") +
     scale_color_manual(values = treatment_colors) +
-    scale_x_date(
-      date_breaks = "2 months",
-      date_labels = "%b",
-      limits = c(year_start, year_end)
-    ) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
     scale_y_continuous(
-      name = if (!is_right_panel) {
-        expression("Daily N"[2] * "O Flux (kg N ha"^-1 * " d"^-1 * ")")
-      } else {
-        ""
-      },
-      limits = c(0, global_plot_top),
+      name = if (!is_right_panel) expression("Daily N"[2] * "O Flux (g N ha"^-1 * " d"^-1 * ")") else "",
+      limits = c(0, plot_top_flux),
       sec.axis = sec_axis(
-        ~ (global_plot_top - .) / global_precip_scale_factor,
-        name = if (is_right_panel) "Daily Precipitation (mm)" else ""
+        ~ (plot_top_flux - .) / precip_scale_factor,
+        name = if (is_right_panel) "Precipitation (mm)" else ""
       )
     ) +
+    labs(x = "") +
     theme_publication(base_size = 10) +
     theme(
-      legend.position = "none",
       axis.text.x = element_blank(),
       axis.ticks.x = element_blank(),
       axis.line.x = element_blank(),
@@ -1188,29 +1484,22 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.line.y = if (is_right_panel) element_blank() else element_line(),
       axis.title.y = if (is_right_panel) element_blank() else element_text(),
-      axis.text.y.right = if (is_right_panel) {
-        element_text(color = "#377EB8")
-      } else {
-        element_blank()
-      },
-      axis.ticks.y.right = if (is_right_panel) {
-        element_line()
-      } else {
-        element_blank()
-      },
-      axis.title.y.right = if (is_right_panel) {
-        element_text(color = "#377EB8")
-      } else {
-        element_blank()
-      }
-    ) +
-    labs(x = "") +
-    geom_hline(yintercept = 0, linetype = "solid", alpha = 0.3)
+      axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
+      axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
+      legend.position = "none"
+    ) |>
+    add_panel_label(label_id)
 
-  cumulative_plot <- ggplot(
-    cum_flux_year,
-    aes(x = date, y = cum_flux_mean, color = Treatment, fill = Treatment)
-  ) +
+  p
+}
+
+create_n2o_cum_panel <- function(year_val, is_right_panel = FALSE, label_id) {
+  cum_flux_year <- filter(cum_flux_summary, year == year_val)
+  fert_year <- filter(fert_events, year == year_val)
+  x_lims <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+
+  p <- ggplot(cum_flux_year, aes(x = date, y = cum_flux_mean, color = Treatment, fill = Treatment)) +
     geom_ribbon(
       aes(
         ymin = pmax(cum_flux_mean - cum_flux_ci, 0),
@@ -1229,17 +1518,9 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
     ) +
     scale_color_manual(values = treatment_colors) +
     scale_fill_manual(values = treatment_colors) +
-    scale_x_date(
-      date_breaks = "2 months",
-      date_labels = "%b",
-      limits = c(year_start, year_end)
-    ) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
     scale_y_continuous(
-      name = if (!is_right_panel) {
-        expression("Cumulative N"[2] * "O Flux (kg N ha"^-1 * ")")
-      } else {
-        ""
-      },
+      name = if (!is_right_panel) expression("Cumulative N"[2] * "O Flux (kg N ha"^-1 * ")") else "",
       limits = c(0, global_max_cum_flux)
     ) +
     labs(x = "Month") +
@@ -1248,17 +1529,96 @@ create_dual_axis_plot <- function(year_val, is_right_panel = FALSE) {
       axis.text.y = if (is_right_panel) element_blank() else element_text(),
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.line.y = if (is_right_panel) element_blank() else element_line(),
-      axis.title.y = if (is_right_panel) element_blank() else element_text()
-    )
+      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      legend.position = "none"
+    ) |>
+    add_panel_label(label_id)
 
-  (daily_plot / cumulative_plot) + patchwork::plot_layout(heights = c(1.2, 1))
+  p
 }
 
-figure4 <- (create_dual_axis_plot(2023) |
-  create_dual_axis_plot(2024, TRUE)) +
-  patchwork::plot_layout(guides = "collect") &
+# Difference and annual summary panels
+n2o_diff_span <- diff(range(daily_n2o_diff$diff_wcc_minus_sorghum, na.rm = TRUE))
+if (!is.finite(n2o_diff_span) || n2o_diff_span == 0) n2o_diff_span <- 1
+n2o_diff_anno <- daily_n2o_diff |>
+  group_by(year) |>
+  summarise(y = max(diff_wcc_minus_sorghum, na.rm = TRUE), .groups = "drop") |>
+  left_join(n2o_diff_stats, by = "year") |>
+  filter(significant) |>
+  mutate(y = y + n2o_diff_span * 0.08)
+
+p4c <- ggplot(daily_n2o_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_boxplot(width = 0.55, outlier.shape = NA, fill = "grey92", color = "black") +
+  geom_jitter(
+    aes(color = factor(year)),
+    width = 0.12,
+    alpha = 0.7,
+    size = 1.4,
+    show.legend = FALSE
+  ) +
+  geom_text(
+    data = n2o_diff_anno,
+    aes(x = factor(year), y = y, label = letter),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 3.8
+  ) +
+  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  labs(
+    x = "Year",
+    y = expression("Daily N"[2] * "O Difference (g N ha"^-1 * " d"^-1 * ", WCC - Sorghum)")
+  ) +
+  theme_publication(base_size = 10) |>
+  add_panel_label("c)")
+
+n2o_letter_offset <- diff(range(annual_n2o$annual_cum_n2o, na.rm = TRUE))
+if (!is.finite(n2o_letter_offset) || n2o_letter_offset == 0) n2o_letter_offset <- 0.05
+n2o_letter_pos <- annual_n2o |>
+  group_by(Treatment) |>
+  summarise(y = max(annual_cum_n2o, na.rm = TRUE), .groups = "drop") |>
+  left_join(n2o_letters, by = "Treatment") |>
+  mutate(y = y + n2o_letter_offset * 0.08)
+
+p4f <- ggplot(annual_n2o, aes(x = Treatment, y = annual_cum_n2o, fill = Treatment)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA, alpha = 0.5, color = "black") +
+  geom_jitter(
+    aes(shape = factor(year)),
+    width = 0.12,
+    size = 1.8,
+    alpha = 0.8,
+    show.legend = FALSE
+  ) +
+  geom_text(
+    data = n2o_letter_pos,
+    aes(x = Treatment, y = y, label = letter),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 3.8
+  ) +
+  scale_fill_manual(values = treatment_colors) +
+  labs(
+    x = "",
+    y = expression("Annual Cumulative N"[2] * "O Flux (kg N ha"^-1 * ")"),
+    subtitle = paste0("One-way ANOVA p = ", ifelse(anova_n2o_p < 0.001, "< 0.001", sprintf("%.3f", anova_n2o_p)))
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none") |>
+  add_panel_label("f)")
+
+# Assemble six-panel Figure 4
+p4a <- create_n2o_daily_panel(2023, is_right_panel = FALSE, label_id = "a)")
+p4b <- create_n2o_daily_panel(2024, is_right_panel = TRUE, label_id = "b)")
+p4d <- create_n2o_cum_panel(2023, is_right_panel = FALSE, label_id = "d)")
+p4e <- create_n2o_cum_panel(2024, is_right_panel = TRUE, label_id = "e)")
+
+figure4 <- (p4a | p4b | p4c) /
+  (p4d | p4e | p4f) +
+  patchwork::plot_layout(guides = "collect", widths = c(1, 1, 0.95)) &
   theme(legend.position = "top", legend.justification = "center")
 
+n2o_diff_stats
+anova_n2o_p
 figure4
 ```
 
@@ -1267,535 +1627,242 @@ figure4
 **Scientific Context:** A critical question for cover crop adoption is whether the additional biomass production impacts the primary cash crop yield. We measured end-of-season biomass for both sorghum and cereal rye to determine if the cover crop caused a "yield drag" on sorghum production.
 
 **Note:** The sorghum biomass source files are stored in the researcher's Box folder and not included in this repository. The code below demonstrates the analysis workflow. Users with access to the complete dataset can update the file paths accordingly.
+Biomass is reported as oven-dried (0% moisture) equivalent dry matter.
 
 ```{r figure5-biomass}
-sorg_biomass_23 <- read_excel("/Users/jaredflater/Library/CloudStorage/Box-Box/CABBI/Data/MeasuredData/SABR/SmallDrainagePlots/Biomass/2023GrowingSeason/DerivedDatasets/chopper_load_weights_yields.xlsx")
-#######
-sorg_biomass_23 <- sorg_biomass_23 |>
-  group_by(Plot) |>
-  mutate(total_biomass = sum(`Net Weight`)) |>
-  select(`Harvest Date`, Plot, Treatment, total_biomass) |>
-  distinct()
+sorghum_2023_path <- "/Users/jaredflater/Library/CloudStorage/Box-Box/CABBI/Data/MeasuredData/SABR/SmallDrainagePlots/Biomass/2023GrowingSeason/DerivedDatasets/chopper_load_weights_yields.xlsx"
+sorghum_2024_path <- "/Users/jaredflater/Library/CloudStorage/Box-Box/CABBI/Data/MeasuredData/SABR/SmallDrainagePlots/Biomass/2024GrowingSeason/RecordingDataSheets/sorg_chopper_harvest_load_weights.xlsx"
 
-sorg_biomass_23
-
-# Bar plot with total_biomass by treatment and with error bars showing sd
-library(ggplot2)
-library(dplyr)
 plot_size_ha <- 0.145
+conversion_factor <- 0.907185
+treatment_levels <- c("Sorghum", "Sorghum + WCC")
 
-sorg_biomass_23 |>
-  group_by(Treatment) |>
-  summarise(mean_biomass = mean(total_biomass / plot_size_ha), sd_biomass = sd(total_biomass / plot_size_ha)) |>
-  ggplot(aes(x = Treatment, y = mean_biomass)) +
-  geom_bar(stat = "identity") +
-  geom_errorbar(aes(ymin = mean_biomass - sd_biomass, ymax = mean_biomass + sd_biomass), width = 0.2) +
-  labs(x = "Treatment", y = "Average Biomass (tons/ha)")
-
-sorg_biomass_23 |>
-  group_by(Treatment) |>
-  summarise(
-    mean_biomass = mean(total_biomass / plot_size_ha),
-    sd_biomass = sd(total_biomass / plot_size_ha),
-    se_biomass = sd_biomass / sqrt(n())
-  ) |>
-  ggplot(aes(x = Treatment, y = mean_biomass)) +
-  geom_bar(stat = "identity") +
-  geom_errorbar(aes(ymin = mean_biomass - se_biomass, ymax = mean_biomass + se_biomass),
-    width = 0.2
-  ) +
-  labs(x = "Treatment", y = "Average Biomass (tons/ha) (SE)")
-
-sorg_biomass_23 |>
-  group_by(Treatment) |>
-  summarise(
-    mean_biomass = mean(total_biomass / plot_size_ha),
-    sd_biomass = sd(total_biomass / plot_size_ha),
-    n = n(),
-    se_biomass = sd_biomass / sqrt(n()),
-    ci = qt(0.975, df = n - 1) * se_biomass
-  ) |>
-  ggplot(aes(x = Treatment, y = mean_biomass)) +
-  geom_bar(stat = "identity") +
-  geom_errorbar(aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci),
-    width = 0.2
-  ) +
-  labs(x = "Treatment", y = "Average Biomass (tons/ha) (95% CI)") +
-  theme_minimal()
-
-plot_size_ha <- 0.145 # make sure to use same value as final figure qmd
-conversion_factor <- 0.907185 # 1 US ton = 0.907185 metric tons (or megagrams)
-
-biomass_summary <- sorg_biomass_23 |>
-  group_by(Treatment) |>
-  summarise(
-    # Convert US tons to metric tons and divide by plot size (ha)
-    mean_biomass = mean((total_biomass * conversion_factor) / plot_size_ha),
-    sd_biomass = sd((total_biomass * conversion_factor) / plot_size_ha),
-    n = n(),
-    se_biomass = sd_biomass / sqrt(n()),
-    ci = qt(0.975, df = n - 1) * se_biomass,
-    .groups = "drop"
-  )
-# Custom color palette (matching your function earlier)
-treatment_colors <- c(
-  "No cover" = "#D2B48C",
-  "Cover" = "#8B4513"
-)
-
-# Plot with 95% CI error bars, using custom colors
-ggplot(biomass_summary, aes(x = Treatment, y = mean_biomass, fill = Treatment)) +
-  geom_bar(stat = "identity", color = "black", width = 0.7) +
-  geom_errorbar(aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci),
-    width = 0.2, color = "black"
-  ) +
-  labs(x = "Treatment", y = expression("Average Biomass 2023 (Mg ha"^-1 * ")")) +
-  scale_fill_manual(values = treatment_colors) +
-  theme_minimal() +
-  theme(
-    legend.position = "none",
-    text = element_text(size = 14),
-    axis.title = element_text(size = 16)
-  )
-
-ggsave("figures/sorghum_biomass_2023.png", width = 8, height = 6, dpi = 300)
-moisture_df <- data.frame(
+# Moisture-adjustment factor used to report dry-equivalent sorghum biomass
+moisture_df <- tibble(
   Plot = c(2, 7, 9, 15),
   Moisture = c(0.749262537, 0.766325316, 0.731502423, 0.767241379)
 )
+avg_moisture <- mean(moisture_df$Moisture, na.rm = TRUE)
 
-# Calculate average moisture
-avg_moisture <- mean(moisture_df$Moisture)
-
-# Adjust biomass_summary by dividing mean_biomass and ci by avg_moisture
-biomass_summary <- biomass_summary |>
-  mutate(
-    mean_biomass_corr = mean_biomass * (1 - avg_moisture),
-    ci_corr = ci * (1 - avg_moisture)
-  )
-# Plot corrected biomass with error bars
-ggplot(biomass_summary, aes(x = Treatment, y = mean_biomass_corr, fill = Treatment)) +
-  geom_bar(stat = "identity", color = "black", width = 0.7) +
-  geom_errorbar(aes(ymin = mean_biomass_corr - ci_corr, ymax = mean_biomass_corr + ci_corr),
-    width = 0.2, color = "black"
-  ) +
-  labs(x = "Treatment", y = expression("Average Biomass 2024 (Mg ha"^-1 * ")")) +
-  scale_fill_manual(values = treatment_colors) +
-  theme_minimal() +
-  theme(
-    legend.position = "none",
-    text = element_text(size = 14),
-    axis.title = element_text(size = 16)
-  )
-
-# Save the updated plot
-ggsave("figures/sorghum_biomass_2023_corrected.png", width = 8, height = 6, dpi = 300)
-###########
-##### 2024
-library(readxl)
-sorg_biomass_24 <- read_excel("/Users/jaredflater/Library/CloudStorage/Box-Box/CABBI/Data/MeasuredData/SABR/SmallDrainagePlots/Biomass/2024GrowingSeason/RecordingDataSheets/sorg_chopper_harvest_load_weights.xlsx")
-sorg_biomass_24 <- sorg_biomass_24 |>
-  dplyr::filter(Study == "Drainage") |>
+sorghum_2023 <- read_excel(sorghum_2023_path) |>
   group_by(Plot) |>
-  mutate(total_biomass = sum(`Net Weight (t)`)) |>
-  select(Date, Plot, total_biomass) |>
-  distinct() |>
-  mutate(treatment = case_when(
-    Plot %in% c("2", "3", "5", "15") ~ "No cover",
-    TRUE ~ "Cover",
-  ))
-
-# Figure of total_biomass by Plot
-sorg_biomass_24 |>
-  ggplot(aes(x = Plot, y = total_biomass, fill = treatment)) +
-  geom_bar(stat = "identity") +
-  labs(x = "Plot", y = "Total Biomass (tons)")
-
-plot_size_ha <- 0.145
-conversion_factor <- 0.907185 # 1 US ton = 0.907185 metric tons (or megagrams)
-
-biomass_summary <- sorg_biomass_24 |>
-  group_by(treatment) |>
-  summarise(
-    # Convert US tons to metric tons and divide by plot size (ha)
-    mean_biomass = mean((total_biomass * conversion_factor) / plot_size_ha),
-    sd_biomass = sd((total_biomass * conversion_factor) / plot_size_ha),
-    n = n(),
-    se_biomass = sd_biomass / sqrt(n()),
-    ci = qt(0.975, df = n - 1) * se_biomass,
-    .groups = "drop"
-  )
-# Custom color palette (matching your function earlier)
-treatment_colors <- c(
-  "No cover" = "#D2B48C",
-  "Cover" = "#8B4513"
-)
-
-# Plot with 95% CI error bars, using custom colors
-ggplot(biomass_summary, aes(x = treatment, y = mean_biomass, fill = treatment)) +
-  geom_bar(stat = "identity", color = "black", width = 0.7) +
-  geom_errorbar(aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci),
-    width = 0.2, color = "black"
-  ) +
-  labs(x = "Treatment", y = expression("Average Biomass 2024 (Mg ha"^-1 * ")")) +
-  scale_fill_manual(values = treatment_colors) +
-  theme_minimal() +
-  theme(
-    legend.position = "none",
-    text = element_text(size = 14),
-    axis.title = element_text(size = 16)
-  )
-
-ggsave("figures/sorghum_biomass_2024.png", width = 8, height = 6, dpi = 300)
-
-moisture_df <- data.frame(
-  Plot = c(2, 7, 9, 15),
-  Moisture = c(0.749262537, 0.766325316, 0.731502423, 0.767241379)
-)
-# Calculate average moisture
-avg_moisture <- mean(moisture_df$Moisture)
-
-biomass_summary <- biomass_summary |>
+  summarise(total_biomass_ton = sum(`Net Weight`, na.rm = TRUE), .groups = "drop") |>
   mutate(
-    mean_biomass_corr = mean_biomass * (1 - avg_moisture),
-    ci_corr = ci * (1 - avg_moisture)
-  )
+    year = 2023,
+    Plot = as.character(Plot),
+    treatment = case_when(
+      Plot %in% c("2", "3", "5", "15") ~ "Sorghum",
+      TRUE ~ "Sorghum + WCC"
+    ),
+    biomass_mg_ha = ((total_biomass_ton * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
+  ) |>
+  select(year, Plot, treatment, biomass_mg_ha)
 
-# Plot corrected biomass with error bars
-ggplot(biomass_summary, aes(x = treatment, y = mean_biomass_corr, fill = treatment)) +
-  geom_bar(stat = "identity", color = "black", width = 0.7) +
-  geom_errorbar(aes(ymin = mean_biomass_corr - ci_corr, ymax = mean_biomass_corr + ci_corr),
-    width = 0.2, color = "black"
-  ) +
-  labs(x = "Treatment", y = expression("Average Biomass 2024 (Mg ha"^-1 * ")")) +
-  scale_fill_manual(values = treatment_colors) +
-  theme_minimal() +
-  theme(
-    legend.position = "none",
-    text = element_text(size = 14),
-    axis.title = element_text(size = 16)
-  )
-
-# Save the updated plot
-ggsave("figures/sorghum_biomass_2024_corrected.png", width = 8, height = 6, dpi = 300)
-
-# combine data for a faceted plot (standardize columns and units)
-# Ensure common parameters
-plot_size_ha <- 0.145
-conversion_factor <- 0.907185 # US ton -> Mg
-
-# Moisture correction: reuse avg_moisture if already defined above; otherwise fallback to 0
-if (!exists("avg_moisture")) {
-  avg_moisture <- 0.0
-}
-
-# Standardize 2023 dataframe to have 'treatment' and Mg/ha
-sorg_biomass_23_std <- {
-  df <- sorg_biomass_23
-  if ("Treatment" %in% names(df) && !("treatment" %in% names(df))) {
-    df <- df |> dplyr::rename(treatment = Treatment)
-  }
-  df |>
-    dplyr::mutate(
-      year = 2023,
-      Plot = as.character(Plot),
-      biomass_mg_ha = ((total_biomass * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
-    ) |>
-    dplyr::select(year, Plot, treatment, biomass_mg_ha)
-}
-
-# Standardize 2024 dataframe to have Mg/ha (already has 'treatment')
-sorg_biomass_24_std <- sorg_biomass_24 |>
-  dplyr::mutate(
+sorghum_2024 <- read_excel(sorghum_2024_path) |>
+  filter(Study == "Drainage") |>
+  group_by(Plot) |>
+  summarise(total_biomass_ton = sum(`Net Weight (t)`, na.rm = TRUE), .groups = "drop") |>
+  mutate(
     year = 2024,
     Plot = as.character(Plot),
-    biomass_mg_ha = ((total_biomass * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
+    treatment = case_when(
+      Plot %in% c("2", "3", "5", "15") ~ "Sorghum",
+      TRUE ~ "Sorghum + WCC"
+    ),
+    biomass_mg_ha = ((total_biomass_ton * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
   ) |>
-  dplyr::select(year, Plot, treatment, biomass_mg_ha)
+  select(year, Plot, treatment, biomass_mg_ha)
 
-# Combine and standardize treatment labels
-treatment_levels <- c("Sorghum", "Sorghum + WCC")
-combined_biomass <- dplyr::bind_rows(sorg_biomass_23_std, sorg_biomass_24_std) |>
-  dplyr::mutate(treatment = trimws(treatment)) |>
-  dplyr::mutate(treatment = dplyr::case_when(
-    treatment == "No cover" ~ "Sorghum",
-    treatment %in% c("Cover", "Sorghum + Rye") ~ "Sorghum + WCC",
-    TRUE ~ treatment
-  ))
-
-# Summarize by treatment and year
-combined_biomass_summary <- combined_biomass |>
-  dplyr::group_by(year, treatment) |>
-  dplyr::summarise(
-    mean_biomass = mean(biomass_mg_ha, na.rm = TRUE),
-    sd_biomass = sd(biomass_mg_ha, na.rm = TRUE),
-    n = dplyr::n(),
-    se_biomass = sd_biomass / sqrt(n),
-    ci = stats::qt(0.975, df = pmax(n - 1, 1)) * se_biomass,
-    .groups = "drop"
+sorghum_plot_data <- bind_rows(sorghum_2023, sorghum_2024) |>
+  mutate(
+    year = factor(year, levels = c(2023, 2024)),
+    treatment = factor(treatment, levels = treatment_levels)
   )
 
-
-# Faceted plot by year with 95% CI
-biomass_faceted <- ggplot2::ggplot(
-  combined_biomass_summary,
-  ggplot2::aes(x = treatment, y = mean_biomass, fill = treatment)
-) +
-  ggplot2::geom_col(color = "black", width = 0.7) +
-  ggplot2::geom_errorbar(ggplot2::aes(ymin = mean_biomass - ci, ymax = mean_biomass + ci), width = 0.2, color = "black") +
-  ggplot2::facet_wrap(~year, nrow = 1) +
-  ggplot2::labs(x = "Treatment", y = expression("Moisture-corrected Biomass (Mg ha"^-1 * ")")) +
-  ggplot2::scale_fill_manual(values = treatment_colors) +
-  ggplot2::theme_minimal() +
-  ggplot2::theme(
-    legend.position = "none",
-    text = ggplot2::element_text(size = 14),
-    axis.title = ggplot2::element_text(size = 16)
-  ) +
-  theme_publication() +
-  scale_fill_treatments() +
-  labs(fill = "Treatment") +
-  theme(legend.position = "none")
-
-print(biomass_faceted)
-ggplot2::ggsave("figures/sorghum_biomass_faceted_by_year_corrected.png", biomass_faceted, width = 10, height = 6, dpi = 300)
-
-mean(biomass_faceted$data$mean_biomass)
-# Now create a boxplot instead of a bar plot
-biomass_boxplot <- ggplot2::ggplot(
-  combined_biomass, # Use the individual data points instead of summary
-  ggplot2::aes(x = treatment, y = biomass_mg_ha, fill = treatment)
-) +
-  ggplot2::geom_boxplot(width = 0.7, color = "black", outlier.shape = 16) +
-  # Add individual data points with jitter for better visualization
-  ggplot2::geom_jitter(width = 0.2, alpha = 0.5, size = 2) +
-  ggplot2::facet_wrap(~year, nrow = 1) +
-  ggplot2::labs(x = "Treatment", y = expression("Moisture-corrected Biomass (Mg ha"^-1 * ")")) +
-  ggplot2::scale_fill_manual(values = treatment_colors) +
-  theme_publication() +
-  scale_fill_treatments() +
-  labs(fill = "Treatment") +
-  theme(legend.position = "none")
-
-print(biomass_boxplot)
-ggplot2::ggsave("figures/sorghum_biomass_boxplot_by_year.png", biomass_boxplot, width = 10, height = 6, dpi = 300)
-
-
-# Rye Biomass
-
-rye_biomass_23 <- read_excel("data/BiomassData_Rye_20230522.xlsx") |> dplyr::mutate(year = 2023)
-rye_biomass_24 <- read_excel("data/BiomassData_Rye_20240515.xlsx") |> dplyr::mutate(year = 2024)
-
-# Combine data
-combined_biomass_rye <- dplyr::bind_rows(rye_biomass_23, rye_biomass_24)
-
-# Process Rye Data to match Sorghum Data
-# Units: g/m^2 -> Mg/ha (multiply by 0.01)
-rye_processed <- combined_biomass_rye |>
-  dplyr::mutate(
-    dry_biomass_g = `Dry Mass + Dry Bag Mass` - `Dry Bag Mass`,
-    biomass_mg_ha = dry_biomass_g * 0.01, # Convert g/m2 to Mg/ha
-    treatment = "Sorghum + WCC",
-    component = "Rye",
-    Plot = as.character(`Plot ID`)
+rye_data <- bind_rows(
+  read_excel("data/BiomassData_Rye_20230522.xlsx") |> mutate(year = 2023),
+  read_excel("data/BiomassData_Rye_20240515.xlsx") |> mutate(year = 2024)
+) |>
+  mutate(
+    year = factor(year, levels = c(2023, 2024)),
+    Plot = as.character(`Plot ID`),
+    treatment = factor("Sorghum + WCC", levels = treatment_levels),
+    biomass_mg_ha = (`Dry Mass + Dry Bag Mass` - `Dry Bag Mass`) * 0.01
   ) |>
-  dplyr::select(year, Plot, treatment, biomass_mg_ha, component)
+  select(year, Plot, treatment, biomass_mg_ha)
 
-# Prepare Sorghum data (from combined_biomass created above)
-sorghum_processed <- combined_biomass |>
-  dplyr::mutate(component = "Sorghum") |>
-  dplyr::select(year, Plot, treatment, biomass_mg_ha, component)
-
-# Combine all biomass
-all_biomass <- dplyr::bind_rows(sorghum_processed, rye_processed)
-
-# Summaries for sorghum-only bars and error bars (total should be sorghum).
-sorghum_stats <- sorghum_processed |>
-  dplyr::filter(treatment %in% treatment_levels) |>
-  dplyr::group_by(year, treatment) |>
-  dplyr::summarise(
+sorghum_stats <- sorghum_plot_data |>
+  group_by(year, treatment) |>
+  summarise(
     mean_sorghum = mean(biomass_mg_ha, na.rm = TRUE),
     sd_sorghum = sd(biomass_mg_ha, na.rm = TRUE),
-    n = dplyr::n(),
+    n = n(),
     se_sorghum = sd_sorghum / sqrt(n),
-    ci_sorghum = stats::qt(0.975, df = pmax(n - 1, 1)) * se_sorghum,
+    ci_sorghum = qt(0.975, df = pmax(n - 1, 1)) * se_sorghum,
     .groups = "drop"
-  ) |>
-  dplyr::mutate(
-    treatment = factor(treatment, levels = treatment_levels),
-    fill_key = dplyr::case_when(
-      as.character(treatment) == "Sorghum" ~ "Sorghum",
-      as.character(treatment) == "Sorghum + WCC" ~ "Sorghum + WCC",
-      TRUE ~ as.character(treatment)
-    )
   )
 
-# Rye means for textured overlay (does not add to bar height).
-rye_stats <- rye_processed |>
-  dplyr::filter(treatment %in% treatment_levels) |>
-  dplyr::group_by(year, treatment) |>
-  dplyr::summarise(
+rye_stats <- rye_data |>
+  group_by(year, treatment) |>
+  summarise(
     mean_rye = mean(biomass_mg_ha, na.rm = TRUE),
     sd_rye = sd(biomass_mg_ha, na.rm = TRUE),
-    n = dplyr::n(),
+    n = n(),
     se_rye = sd_rye / sqrt(n),
-    ci_rye = stats::qt(0.975, df = pmax(n - 1, 1)) * se_rye,
+    ci_rye = qt(0.975, df = pmax(n - 1, 1)) * se_rye,
     .groups = "drop"
+  )
+
+sorghum_tests_by_year <- sorghum_plot_data |>
+  group_by(year) |>
+  summarise(
+    p_value = {
+      if (n_distinct(treatment) < 2) {
+        NA_real_
+      } else {
+        tryCatch(t.test(biomass_mg_ha ~ treatment)$p.value, error = function(e) NA_real_)
+      }
+    },
+    .groups = "drop"
+  )
+
+sorghum_letters <- sorghum_stats |>
+  left_join(sorghum_tests_by_year, by = "year") |>
+  group_by(year) |>
+  mutate(
+    letter = case_when(
+      is.na(p_value) ~ "a",
+      p_value >= 0.05 ~ "a",
+      mean_sorghum == max(mean_sorghum, na.rm = TRUE) ~ "a",
+      TRUE ~ "b"
+    )
   ) |>
-  dplyr::mutate(treatment = factor(treatment, levels = treatment_levels))
+  ungroup()
+
+letter_offsets <- sorghum_letters |>
+  group_by(year) |>
+  summarise(offset = max(mean_sorghum + ci_sorghum, na.rm = TRUE) * 0.08, .groups = "drop")
+
+sorghum_letters <- sorghum_letters |>
+  left_join(letter_offsets, by = "year") |>
+  mutate(y_label = mean_sorghum + ci_sorghum + offset)
+
+sorghum_stats <- sorghum_stats |>
+  mutate(fill_key = as.character(treatment))
 
 rye_overlay <- rye_stats |>
-  dplyr::left_join(
-    sorghum_stats |>
-      dplyr::select(year, treatment, mean_sorghum),
-    by = c("year", "treatment")
-  ) |>
-  dplyr::mutate(
-    rye_height = pmin(mean_rye, mean_sorghum),
-    fill_key = "Rye"
-  ) |>
-  dplyr::filter(!is.na(rye_height))
+  mutate(fill_key = "Rye overlay")
 
-fill_levels <- c("Sorghum", "Sorghum + WCC", "Rye")
 fill_palette <- c(
   "Sorghum" = "#D8D97AFF",
   "Sorghum + WCC" = "#95C36EFF",
-  "Rye" = "#F5DEB3"
+  "Rye overlay" = "#F5DEB3"
 )
 
-sorghum_stats <- sorghum_stats |>
-  dplyr::mutate(fill_key = factor(fill_key, levels = fill_levels))
-rye_overlay <- rye_overlay |>
-  dplyr::mutate(fill_key = factor(fill_key, levels = fill_levels))
-library(ggpattern)
-# Use ggpattern for texture when available; fall back to semi-transparent fill.
 rye_layer <- if (requireNamespace("ggpattern", quietly = TRUE)) {
   ggpattern::geom_col_pattern(
     data = rye_overlay,
-    ggplot2::aes(x = treatment, y = rye_height, fill = fill_key),
+    aes(x = treatment, y = mean_rye, fill = fill_key),
     pattern = "stripe",
-    pattern_fill = "grey30",
-    pattern_colour = "grey30",
+    pattern_fill = "grey35",
+    pattern_colour = "grey35",
     pattern_angle = 45,
-    pattern_density = 0.4,
-    alpha = 0.4,
+    pattern_density = 0.45,
+    alpha = 0.95,
     color = "black",
-    width = 0.7,
+    width = 0.32,
     inherit.aes = FALSE
   )
 } else {
-  ggplot2::geom_col(
+  geom_col(
     data = rye_overlay,
-    ggplot2::aes(x = treatment, y = rye_height, fill = fill_key),
-    alpha = 0.4,
+    aes(x = treatment, y = mean_rye, fill = fill_key),
+    alpha = 0.95,
     color = "black",
-    width = 0.7,
+    width = 0.32,
     inherit.aes = FALSE
   )
 }
 
-final_biomass_plot <- ggplot2::ggplot() +
-  ggplot2::geom_col(
+facet_panel_labels <- tibble(
+  year = factor(c(2023, 2024), levels = c(2023, 2024)),
+  treatment = factor("Sorghum", levels = treatment_levels),
+  y = Inf,
+  label = c("a)", "b)")
+)
+
+final_biomass_plot <- ggplot() +
+  geom_col(
     data = sorghum_stats,
-    ggplot2::aes(x = treatment, y = mean_sorghum, fill = fill_key),
+    aes(x = treatment, y = mean_sorghum, fill = fill_key),
     color = "black",
     width = 0.7
   ) +
+  geom_errorbar(
+    data = sorghum_stats,
+    aes(
+      x = treatment,
+      ymin = pmax(0, mean_sorghum - ci_sorghum),
+      ymax = mean_sorghum + ci_sorghum
+    ),
+    width = 0.18,
+    inherit.aes = FALSE
+  ) +
   rye_layer +
-  ggplot2::geom_errorbar(
-    data = rye_stats,
-    ggplot2::aes(
+  geom_errorbar(
+    data = rye_overlay,
+    aes(
       x = treatment,
       ymin = pmax(0, mean_rye - ci_rye),
       ymax = mean_rye + ci_rye
     ),
-    width = 0.15,
+    width = 0.1,
     inherit.aes = FALSE
   ) +
-  ggplot2::geom_errorbar(
-    data = sorghum_stats,
-    ggplot2::aes(
-      x = treatment,
-      ymin = mean_sorghum - ci_sorghum,
-      ymax = mean_sorghum + ci_sorghum
-    ),
-    width = 0.2
+  geom_text(
+    data = sorghum_letters,
+    aes(x = treatment, y = y_label, label = letter),
+    inherit.aes = FALSE,
+    fontface = "bold",
+    size = 3.8
   ) +
-  ggplot2::facet_wrap(~year, nrow = 1) +
-  ggplot2::scale_fill_manual(
+  geom_text(
+    data = facet_panel_labels,
+    aes(x = treatment, y = y, label = label),
+    inherit.aes = FALSE,
+    hjust = panel_label_hjust,
+    vjust = panel_label_vjust,
+    fontface = panel_label_face,
+    size = panel_label_size
+  ) +
+  facet_wrap(~year, nrow = 1) +
+  scale_fill_manual(
     values = fill_palette,
-    breaks = fill_levels,
-    name = "Biomass Component",
-    drop = FALSE
+    breaks = c("Sorghum", "Sorghum + WCC", "Rye overlay"),
+    name = "Biomass component"
   ) +
-  ggplot2::labs(
+  labs(
     x = "",
-    y = expression("Dry Biomass (Mg ha"^-1*")")
+    y = expression("Oven-dried Biomass (Mg ha"^-1 * ")")
   ) +
-  theme_publication() +
-  ggplot2::theme(
+  theme_publication(base_size = 10) +
+  theme(
     legend.position = "top",
     legend.justification = "center"
   )
 
 print(final_biomass_plot)
-ggplot2::ggsave("SubmissionFiguresTables/final_biomass_stacked.png", final_biomass_plot, width = 174, height = 174, units = "mm", dpi = 600)
-
-# Statistical tests: treatments within each year and years within each treatment (sorghum biomass only).
-sorghum_tests_by_year <- combined_biomass |>
-  dplyr::filter(treatment %in% treatment_levels) |>
-  dplyr::group_by(year) |>
-  dplyr::group_modify(~{
-    if (dplyr::n_distinct(.x$treatment) < 2) {
-      return(dplyr::tibble(
-        comparison = "Sorghum vs Sorghum + WCC",
-        t = NA_real_,
-        df = NA_real_,
-        p_value = NA_real_,
-        note = "Only one treatment level in this year"
-      ))
-    }
-    tst <- stats::t.test(biomass_mg_ha ~ treatment, data = .x)
-    dplyr::tibble(
-      comparison = "Sorghum vs Sorghum + WCC",
-      t = unname(tst$statistic),
-      df = unname(tst$parameter),
-      p_value = tst$p.value,
-      note = NA_character_
-    )
-  }) |>
-  dplyr::ungroup()
-
-sorghum_tests_by_treatment <- combined_biomass |>
-  dplyr::filter(treatment %in% treatment_levels) |>
-  dplyr::group_by(treatment) |>
-  dplyr::group_modify(~{
-    if (dplyr::n_distinct(.x$year) < 2) {
-      return(dplyr::tibble(
-        comparison = "2023 vs 2024",
-        t = NA_real_,
-        df = NA_real_,
-        p_value = NA_real_,
-        note = "Only one year for this treatment"
-      ))
-    }
-    tst <- stats::t.test(biomass_mg_ha ~ factor(year), data = .x)
-    dplyr::tibble(
-      comparison = "2023 vs 2024",
-      t = unname(tst$statistic),
-      df = unname(tst$parameter),
-      p_value = tst$p.value,
-      note = NA_character_
-    )
-  }) |>
-  dplyr::ungroup()
+ggsave(
+  "SubmissionFiguresTables/final_biomass_stacked.png",
+  final_biomass_plot,
+  width = 174,
+  height = 174,
+  units = "mm",
+  dpi = 600,
+  bg = "white"
+)
 
 sorghum_tests_by_year
-sorghum_tests_by_treatment
-
-rye_stats
-sorghum_stats
-
 figure5 <- final_biomass_plot
 ```
 
