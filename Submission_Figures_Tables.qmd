@@ -2720,7 +2720,7 @@ ggsave(
 # Figure 5: Nitrate Speciation
 ggsave(
   "SubmissionFiguresTables/SuppFigurex_Nitrate_Concentration_Proportion.png",
-  plot = fig_n_speciation,
+  plot = p_density,
   width = 174, height = 200, units = "mm", dpi = 600, bg = "white"
 )
 

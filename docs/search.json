@@ -16,7 +16,7 @@
     "href": "Reproducible_Research_Companion.html#key-findings-demonstrated",
     "title": "Reproducible Research Companion: Sorghum & Cover Crops",
     "section": "11.1 Key Findings Demonstrated:",
-    "text": "11.1 Key Findings Demonstrated:\n\nWeather variability between study years (2023 dry, 2024 near-normal)\nSoil microclimate effects of cover crops on temperature and moisture\nNo nitrogen immobilization detected in soil inorganic N pools\nSubstantial reduction in nitrate leaching with cover crops\nLow N₂O emissions with no consistent treatment effect\nNo yield penalty from cover crop integration\nSignificant economic value from reduced environmental damage costs\n\nAll data processing steps, statistical analyses, and visualizations are shown explicitly, allowing readers to understand exactly how results were derived and to adapt methods for their own research.\n\nDocument generated: 2026-02-04\nR version: R version 4.5.0 (2025-04-11)",
+    "text": "11.1 Key Findings Demonstrated:\n\nWeather variability between study years (2023 dry, 2024 near-normal)\nSoil microclimate effects of cover crops on temperature and moisture\nNo nitrogen immobilization detected in soil inorganic N pools\nSubstantial reduction in nitrate leaching with cover crops\nLow N₂O emissions with no consistent treatment effect\nNo yield penalty from cover crop integration\nSignificant economic value from reduced environmental damage costs\n\nAll data processing steps, statistical analyses, and visualizations are shown explicitly, allowing readers to understand exactly how results were derived and to adapt methods for their own research.\n\nDocument generated: 2026-02-19\nR version: R version 4.5.2 (2025-10-31)",
     "crumbs": [
       "Overview",
       "Core Reports",

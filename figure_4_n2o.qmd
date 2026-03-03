@@ -1,0 +1,476 @@
+---
+title: "Figure 4: Nitrous Oxide Emissions"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 12
+    fig-height: 8
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Scientific Context
+
+Nitrous oxide (N~2~O) is a potent greenhouse gas produced during soil nitrogen
+transformations. We measured N~2~O fluxes using static chambers throughout the
+growing season to quantify emissions from sorghum systems with and without
+winter cover crops. Fluxes were generally low and episodic, with peak emissions
+often following fertilization or precipitation events.
+
+The figure has six panels arranged in a 2 x 3 grid:
+
+- **(a--b)** Daily N~2~O flux with precipitation overlay (2023, 2024)
+- **(c)** Daily treatment difference boxplot (WCC minus Sorghum) by year
+- **(d--e)** Cumulative N~2~O flux (2023, 2024)
+- **(f)** Annual cumulative N~2~O by treatment (years combined)
+
+# Setup
+
+```{r setup}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(readxl)
+library(patchwork)
+library(lubridate)
+library(emmeans)
+library(multcomp)
+
+# ── Publication theme ──────────────────────────────────────────────────────
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Arial") +
+    theme(
+      panel.background   = element_rect(fill = "#ffffffff", color = NA),
+      plot.background    = element_rect(fill = "#ffffffff", color = NA),
+      strip.background   = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major   = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor   = element_blank(),
+      panel.spacing      = unit(3, "lines"),
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 1),
+      text               = element_text(color = "#000000ff"),
+      axis.text          = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title         = element_text(size = base_size),
+      axis.title.x       = element_text(margin = margin(t = 8)),
+      axis.title.y       = element_text(margin = margin(r = 8)),
+      axis.text.x        = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line          = element_line(color = "black", linewidth = 0.5),
+      axis.ticks         = element_line(color = "black", linewidth = 0.5),
+      legend.position    = "top",
+      legend.justification = "center",
+      legend.direction   = "horizontal",
+      legend.box         = "horizontal",
+      legend.margin      = margin(b = 1, unit = "pt"),
+      legend.box.margin  = margin(b = 1, unit = "pt"),
+      legend.text        = element_text(size = base_size * 0.9),
+      legend.title       = element_text(size = base_size),
+      legend.key.width   = unit(0.8, "cm"),
+      legend.key.height  = unit(0.3, "cm")
+    )
+}
+
+treatment_colors <- c(
+  "Sorghum"       = "#D8D97AFF",
+  "Sorghum + Rye" = "#95C36EFF",
+  "Sorghum + WCC" = "#95C36EFF"
+)
+```
+
+# Statistical Approach
+
+**Current methods:**
+
+1. **Per-date Wilcoxon rank-sum tests** (*p* < 0.05) for asterisks on dates
+   with significant treatment differences in daily N~2~O flux. Plot-level
+   means are used as replicates (averaging row/interrow within a plot first).
+2. **One-sample t-test** of daily differences (WCC minus Sorghum) against zero
+   for the boxplot panel (c).
+3. **One-way ANOVA** with Tukey-adjusted comparisons on annual cumulative
+   N~2~O (pooling years) for panel (f).
+
+**Assessment:**
+
+- **Per-date Wilcoxon tests:** N~2~O fluxes are notoriously zero-inflated and
+  right-skewed (many near-zero measurements, occasional spikes). The Wilcoxon
+  test handles non-normality but with n = 4 per treatment the test has
+  extremely low power; only perfect separation can achieve *p* < 0.05. The
+  asterisks should be interpreted cautiously.
+
+- **Cumulative calculation via linear interpolation:** Interpolating between
+  measurement days is standard for chamber-based N~2~O studies, but it can
+  miss short-lived emission pulses between sampling events. This is a known
+  limitation of manual chamber methods.
+
+- **Annual ANOVA (panel f):** Same concern as Figure 3 — pooling years
+  without accounting for year structure.
+
+**Suggested alternatives:**
+
+- **Generalized linear mixed model:** For daily fluxes, a GLMM with Gamma or
+  Tweedie family and a log link
+  (`glmmTMB(flux ~ Treatment + (1|plot) + (1|date), family = Tweedie)`) would
+  better handle the skewed, zero-inflated distribution while accounting for
+  repeated measures.
+- **Trapezoidal integration:** Replace linear interpolation with the
+  trapezoidal rule for cumulative N~2~O calculation. In practice the two
+  methods give very similar results for irregularly spaced data, but
+  trapezoidal is the more standard approach in the soil science literature.
+- **Panel f:** Same recommendation as Figure 3 — include year as a term.
+
+# Data Processing
+
+```{r load-data}
+flux_data <- read_csv("data/cleaned_flux_data.csv", show_col_types = FALSE) |>
+  mutate(date = as.Date(date), year = year(date))
+
+rain <- read_xlsx("data/rain/historical_rain.xlsx") |>
+  select(day, doy, precipmm) |>
+  mutate(date = as.Date(day), year = year(date))
+
+fert_events <- tibble(
+  year            = c(2023, 2024),
+  fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
+)
+
+# Filter to sorghum treatments
+flux_subset <- flux_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC"))
+  ) |>
+  filter(year %in% c(2023, 2024))
+```
+
+```{r daily-flux}
+# Daily means in g N ha⁻¹ d⁻¹
+daily_flux <- flux_subset |>
+  summarise(
+    mean_flux_g = mean(gnha_day_no_negative, na.rm = TRUE),
+    se_flux_g   = sd(gnha_day_no_negative, na.rm = TRUE) /
+                  sqrt(sum(!is.na(gnha_day_no_negative))),
+    .by = c(Treatment, year, date)
+  )
+```
+
+```{r significance-tests}
+# Per-date Wilcoxon tests (plot-level means as replicates)
+daily_significance <- flux_subset |>
+  summarise(plot_mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+            .by = c(year, date, Treatment, plot)) |>
+  summarise(
+    p_value = {
+      s <- plot_mean_flux[Treatment == "Sorghum"]       |> na.omit()
+      w <- plot_mean_flux[Treatment == "Sorghum + WCC"] |> na.omit()
+      if (length(s) >= 3 && length(w) >= 3)
+        tryCatch(wilcox.test(s, w, exact = FALSE)$p.value, error = \(e) NA_real_)
+      else NA_real_
+    },
+    .by = c(year, date)
+  ) |>
+  mutate(significant = !is.na(p_value) & p_value < 0.05)
+
+star_data <- daily_flux |>
+  summarise(y_top = max(mean_flux_g + se_flux_g, na.rm = TRUE), .by = c(year, date)) |>
+  left_join(daily_significance, by = c("year", "date")) |>
+  filter(significant) |>
+  mutate(star_y = y_top * 1.1, star_label = "*")
+```
+
+```{r cumulative-flux}
+# Plot-level cumulative N2O via linear interpolation
+daily_flux_plot_level <- flux_subset |>
+  summarise(daily_flux_kg = mean(gnha_day_no_negative, na.rm = TRUE) / 1000,
+            .by = c(Treatment, year, plot, date))
+
+cum_flux_plot_level <- daily_flux_plot_level |>
+  arrange(Treatment, year, plot, date) |>
+  group_by(Treatment, year, plot) |>
+  group_modify(\(df, keys) {
+    df <- df |>
+      complete(date = seq(min(date), max(date), by = "day")) |>
+      arrange(date)
+    non_na <- !is.na(df$daily_flux_kg)
+    if (sum(non_na) == 0) return(tibble())
+
+    flux_interp <- if (sum(non_na) >= 2) {
+      approx(df$date[non_na], df$daily_flux_kg[non_na],
+             xout = df$date, rule = 1, ties = "ordered")$y
+    } else {
+      rep(df$daily_flux_kg[non_na][1], nrow(df))
+    }
+
+    df |>
+      mutate(flux_interp = flux_interp, cum_flux_kg = cumsum(flux_interp)) |>
+      filter(!is.na(flux_interp))
+  }) |>
+  ungroup()
+
+cum_flux_summary <- cum_flux_plot_level |>
+  summarise(
+    cum_flux_mean = mean(cum_flux_kg, na.rm = TRUE),
+    cum_flux_sd   = sd(cum_flux_kg, na.rm = TRUE),
+    n_plots       = n(),
+    cum_flux_se   = cum_flux_sd / sqrt(n_plots),
+    t_crit        = if_else(n_plots > 1, qt(0.975, df = n_plots - 1), NA_real_),
+    cum_flux_ci   = t_crit * cum_flux_se,
+    .by = c(Treatment, year, date)
+  )
+```
+
+```{r diff-and-annual}
+# ── Daily difference (WCC - Sorghum) ──────────────────────────────────────
+daily_n2o_diff <- daily_flux |>
+  mutate(trt_key = if_else(Treatment == "Sorghum + WCC", "WCC", "Sorghum")) |>
+  select(year, date, trt_key, mean_flux_g) |>
+  pivot_wider(names_from = trt_key, values_from = mean_flux_g) |>
+  mutate(diff_wcc_minus_sorghum = WCC - Sorghum)
+
+one_sample_vs_zero <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) < 2) return(NA_real_)
+  tryCatch(t.test(x, mu = 0)$p.value, error = \(e) NA_real_)
+}
+
+n2o_diff_stats <- daily_n2o_diff |>
+  summarise(
+    n          = sum(!is.na(diff_wcc_minus_sorghum)),
+    mean_diff  = mean(diff_wcc_minus_sorghum, na.rm = TRUE),
+    p_value    = one_sample_vs_zero(diff_wcc_minus_sorghum),
+    significant = !is.na(p_value) & p_value < 0.05,
+    letter     = if_else(significant, "a", NA_character_),
+    .by = year
+  )
+
+# ── Annual cumulative N2O + one-way ANOVA ─────────────────────────────────
+annual_n2o <- cum_flux_plot_level |>
+  summarise(annual_cum_n2o = max(cum_flux_kg, na.rm = TRUE),
+            .by = c(year, plot, Treatment)) |>
+  filter(is.finite(annual_cum_n2o), annual_cum_n2o >= 0)
+
+anova_n2o   <- aov(annual_cum_n2o ~ Treatment, data = annual_n2o)
+anova_n2o_p <- summary(anova_n2o)[[1]]["Treatment", "Pr(>F)"]
+
+n2o_letters <- tryCatch({
+  emmeans(anova_n2o, ~ Treatment) |>
+    cld(adjust = "tukey", Letters = letters) |>
+    as_tibble() |>
+    transmute(Treatment = as.character(Treatment),
+              letter    = gsub("\\s+", "", .group))
+}, error = \(e) {
+  annual_n2o |> distinct(Treatment) |> mutate(letter = "a")
+})
+```
+
+# Figure 4
+
+```{r figure4}
+#| fig-width: 12
+#| fig-height: 8
+#| fig-dpi: 300
+
+# ── Precipitation trimmed to flux windows ──────────────────────────────────
+flux_date_ranges <- daily_flux |>
+  summarise(min_date = min(date), max_date = max(date), .by = year)
+
+daily_precip_trimmed <- rain |>
+  select(date, year, precipmm) |>
+  filter(year %in% c(2023, 2024)) |>
+  left_join(flux_date_ranges, by = "year") |>
+  filter(date >= min_date, date <= max_date)
+
+# ── Scaling constants ─────────────────────────────────────────────────────
+global_max_flux_g     <- max(daily_flux$mean_flux_g + daily_flux$se_flux_g, na.rm = TRUE)
+global_max_precip     <- max(daily_precip_trimmed$precipmm, na.rm = TRUE)
+global_max_cum_flux   <- max(cum_flux_summary$cum_flux_mean + cum_flux_summary$cum_flux_ci, na.rm = TRUE)
+precip_scale_factor   <- global_max_flux_g * 0.4 / global_max_precip
+plot_top_flux         <- global_max_flux_g * 1.12
+
+# ── Panel builder: daily N2O ──────────────────────────────────────────────
+create_n2o_daily_panel <- function(year_val, is_right, tag_label) {
+  flux_year   <- filter(daily_flux, year == year_val)
+  precip_year <- filter(daily_precip_trimmed, year == year_val)
+  star_year   <- filter(star_data, year == year_val)
+  fert_year   <- filter(fert_events, year == year_val)
+  x_lims      <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+
+  p <- ggplot() +
+    geom_rect(
+      data = precip_year,
+      aes(xmin = date - 0.5, xmax = date + 0.5,
+          ymin = plot_top_flux - precipmm * precip_scale_factor,
+          ymax = plot_top_flux),
+      fill = "#377EB8", alpha = 0.7
+    ) +
+    geom_point(data = flux_year,
+               aes(x = date, y = mean_flux_g, color = Treatment), size = 1.4) +
+    geom_errorbar(
+      data = flux_year,
+      aes(x = date,
+          ymin = pmax(mean_flux_g - se_flux_g, 0),
+          ymax = mean_flux_g + se_flux_g,
+          color = Treatment),
+      width = 0.2, alpha = 0.5
+    ) +
+    geom_vline(data = fert_year, aes(xintercept = fertilizer_date),
+               linetype = "dashed", color = "black", alpha = 0.7) +
+    geom_text(data = star_year,
+              aes(x = date, y = star_y, label = star_label), size = 4.8) +
+    scale_color_manual(values = treatment_colors) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(
+      name = if (!is_right) expression("Daily N"[2] * "O Flux (g N ha"^-1 * " d"^-1 * ")") else "",
+      limits = c(0, plot_top_flux),
+      sec.axis = sec_axis(
+        ~ (plot_top_flux - .) / precip_scale_factor,
+        name = if (is_right) "Precipitation (mm)" else ""
+      )
+    ) +
+    labs(x = "", tag = tag_label) +
+    theme_publication(base_size = 10) +
+    theme(
+      axis.text.x      = element_blank(),
+      axis.ticks.x     = element_blank(),
+      axis.line.x      = element_blank(),
+      legend.position  = "none",
+      plot.tag          = element_text(face = "bold", size = 11),
+      plot.tag.position = "topleft"
+    )
+
+  if (is_right) {
+    p <- p + theme(
+      axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+      axis.line.y = element_blank(), axis.title.y = element_blank(),
+      axis.text.y.right  = element_text(color = "#377EB8"),
+      axis.ticks.y.right = element_line(),
+      axis.title.y.right = element_text(color = "#377EB8")
+    )
+  } else {
+    p <- p + theme(
+      axis.text.y.right = element_blank(), axis.ticks.y.right = element_blank(),
+      axis.title.y.right = element_blank()
+    )
+  }
+  p
+}
+
+# ── Panel builder: cumulative N2O ─────────────────────────────────────────
+create_n2o_cum_panel <- function(year_val, is_right, tag_label) {
+  cum_year  <- filter(cum_flux_summary, year == year_val)
+  fert_year <- filter(fert_events, year == year_val)
+  x_lims    <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+
+  p <- ggplot(cum_year, aes(x = date, y = cum_flux_mean,
+                             color = Treatment, fill = Treatment)) +
+    geom_ribbon(aes(ymin = pmax(cum_flux_mean - cum_flux_ci, 0),
+                    ymax = cum_flux_mean + cum_flux_ci),
+                alpha = 0.15, linewidth = 0) +
+    geom_line(linewidth = 1) +
+    geom_vline(data = fert_year, aes(xintercept = fertilizer_date),
+               linetype = "dashed", color = "black", alpha = 0.7) +
+    scale_color_manual(values = treatment_colors) +
+    scale_fill_manual(values = treatment_colors) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(
+      name = if (!is_right) expression("Cumulative N"[2] * "O Flux (kg N ha"^-1 * ")") else "",
+      limits = c(0, global_max_cum_flux)
+    ) +
+    labs(x = "Month", tag = tag_label) +
+    theme_publication(base_size = 10) +
+    theme(legend.position = "none",
+          plot.tag = element_text(face = "bold", size = 11),
+          plot.tag.position = "topleft")
+
+  if (is_right) {
+    p <- p + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+                   axis.line.y = element_blank(), axis.title.y = element_blank())
+  }
+  p
+}
+
+# ── Panel (c): daily difference boxplot ────────────────────────────────────
+n2o_diff_span <- diff(range(daily_n2o_diff$diff_wcc_minus_sorghum, na.rm = TRUE))
+if (!is.finite(n2o_diff_span) || n2o_diff_span == 0) n2o_diff_span <- 1
+
+n2o_diff_anno <- daily_n2o_diff |>
+  summarise(y = max(diff_wcc_minus_sorghum, na.rm = TRUE), .by = year) |>
+  left_join(n2o_diff_stats, by = "year") |>
+  filter(significant) |>
+  mutate(y = y + n2o_diff_span * 0.08)
+
+p4c <- ggplot(daily_n2o_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_boxplot(width = 0.55, outlier.shape = NA, fill = "grey92", color = "black") +
+  geom_jitter(aes(color = factor(year)), width = 0.12, alpha = 0.7,
+              size = 1.4, show.legend = FALSE) +
+  geom_text(data = n2o_diff_anno,
+            aes(x = factor(year), y = y, label = letter),
+            inherit.aes = FALSE, fontface = "bold", size = 3.8) +
+  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  labs(
+    x = "Year",
+    y = expression("Daily N"[2] * "O Difference (g N ha"^-1 * " d"^-1 * ", WCC - Sorghum)"),
+    tag = "(c)"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft")
+
+# ── Panel (f): annual cumulative by treatment ──────────────────────────────
+n2o_letter_offset <- diff(range(annual_n2o$annual_cum_n2o, na.rm = TRUE))
+if (!is.finite(n2o_letter_offset) || n2o_letter_offset == 0) n2o_letter_offset <- 0.05
+
+n2o_letter_pos <- annual_n2o |>
+  summarise(y = max(annual_cum_n2o, na.rm = TRUE), .by = Treatment) |>
+  left_join(n2o_letters, by = "Treatment") |>
+  mutate(y = y + n2o_letter_offset * 0.08)
+
+p4f <- ggplot(annual_n2o, aes(x = Treatment, y = annual_cum_n2o, fill = Treatment)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA, alpha = 0.5, color = "black") +
+  geom_jitter(aes(shape = factor(year)), width = 0.12, size = 1.8,
+              alpha = 0.8, show.legend = FALSE) +
+  geom_text(data = n2o_letter_pos,
+            aes(x = Treatment, y = y, label = letter),
+            inherit.aes = FALSE, fontface = "bold", size = 3.8) +
+  scale_fill_manual(values = treatment_colors) +
+  labs(
+    x = "",
+    y = expression("Annual Cumulative N"[2] * "O Flux (kg N ha"^-1 * ")"),
+    subtitle = paste0("One-way ANOVA p = ",
+                      ifelse(anova_n2o_p < 0.001, "< 0.001",
+                             sprintf("%.3f", anova_n2o_p))),
+    tag = "(f)"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft")
+
+# ── Build panels ──────────────────────────────────────────────────────────
+p4a <- create_n2o_daily_panel(2023, is_right = FALSE, "(a)")
+p4b <- create_n2o_daily_panel(2024, is_right = TRUE,  "(b)")
+p4d <- create_n2o_cum_panel(2023, is_right = FALSE, "(d)")
+p4e <- create_n2o_cum_panel(2024, is_right = TRUE,  "(e)")
+
+# ── Assemble ──────────────────────────────────────────────────────────────
+figure4 <- (p4a | p4b | p4c) / (p4d | p4e | p4f) +
+  plot_layout(guides = "collect", widths = c(1, 1, 0.95)) &
+  theme(legend.position = "top", legend.justification = "center")
+
+figure4
+```
+
+```{r print-stats}
+#| echo: false
+cat("Daily difference stats:\n")
+n2o_diff_stats
+cat("\nANOVA p-value:", anova_n2o_p, "\n")
+```

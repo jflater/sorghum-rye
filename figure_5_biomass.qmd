@@ -1,0 +1,329 @@
+---
+title: "Figure 5: Biomass Yields"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 8
+    fig-height: 5
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Scientific Context
+
+A critical question for cover crop adoption is whether the additional biomass
+production impacts the primary cash crop yield. We measured end-of-season
+biomass for both sorghum and cereal rye to determine if the cover crop caused a
+"yield drag" on sorghum production.
+
+Biomass is reported as oven-dried (0% moisture) equivalent dry matter.
+
+**Note:** The sorghum biomass source files are stored in the researcher's Box
+folder and not included in this repository. The code below demonstrates the
+analysis workflow. Users with access to the complete dataset can update the file
+paths accordingly.
+
+# Setup
+
+```{r setup}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(readxl)
+library(patchwork)
+
+# ── Publication theme ──────────────────────────────────────────────────────
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Arial") +
+    theme(
+      panel.background   = element_rect(fill = "#ffffffff", color = NA),
+      plot.background    = element_rect(fill = "#ffffffff", color = NA),
+      strip.background   = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major   = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor   = element_blank(),
+      panel.spacing      = unit(3, "lines"),
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 1),
+      text               = element_text(color = "#000000ff"),
+      axis.text          = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title         = element_text(size = base_size),
+      axis.title.x       = element_text(margin = margin(t = 8)),
+      axis.title.y       = element_text(margin = margin(r = 8)),
+      axis.text.x        = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line          = element_line(color = "black", linewidth = 0.5),
+      axis.ticks         = element_line(color = "black", linewidth = 0.5),
+      legend.position    = "top",
+      legend.justification = "center",
+      legend.direction   = "horizontal",
+      legend.box         = "horizontal",
+      legend.margin      = margin(b = 1, unit = "pt"),
+      legend.box.margin  = margin(b = 1, unit = "pt"),
+      legend.text        = element_text(size = base_size * 0.9),
+      legend.title       = element_text(size = base_size),
+      legend.key.width   = unit(0.8, "cm"),
+      legend.key.height  = unit(0.3, "cm")
+    )
+}
+
+treatment_levels <- c("Sorghum", "Sorghum + WCC")
+```
+
+# Statistical Approach
+
+**Current method:** Welch's two-sample t-test comparing sorghum biomass
+between treatments within each year. Compact letter display (CLD) marks groups
+that differ significantly at *p* < 0.05.
+
+**Assessment:** With only 4 plots per treatment per year, the t-test has low
+power to detect moderate yield differences. The approach is appropriate given
+the design (two groups, continuous outcome) but has limitations:
+
+1. **Small sample size (n = 4):** The t-test relies on normality assumptions
+   that are hard to verify with only 4 observations. The Welch correction for
+   unequal variances helps, but the test has power to detect only very large
+   effect sizes.
+2. **Year treated independently:** Running separate t-tests per year loses
+   the ability to borrow information across years and increases the risk of
+   inconsistent conclusions.
+
+**Suggested alternatives:**
+
+- **Two-way ANOVA or mixed model:** `lm(biomass ~ Treatment * year)` or
+  `lmer(biomass ~ Treatment + (1|year))` to jointly analyze both years. This
+  pools error variance, giving better power estimates and a single treatment
+  p-value.
+- **Non-parametric alternative:** With n = 4, a Wilcoxon rank-sum test avoids
+  normality assumptions but sacrifices even more power. Given the small sample,
+  the t-test is pragmatically the better choice.
+- **Equivalence testing (TOST):** If the goal is to demonstrate *no yield
+  penalty*, a two-one-sided-t-test (TOST) procedure with a practically
+  meaningful equivalence margin (e.g., +/- 2 Mg ha^-1^) would provide a
+  stronger argument than simply "failing to reject H0."
+
+# Data Processing
+
+```{r load-sorghum-data}
+# ── File paths (Box cloud — update as needed) ─────────────────────────────
+sorghum_2023_path <- "/Users/jaredflater/Library/CloudStorage/Box-Box/CABBI/Data/MeasuredData/SABR/SmallDrainagePlots/Biomass/2023GrowingSeason/DerivedDatasets/chopper_load_weights_yields.xlsx"
+sorghum_2024_path <- "/Users/jaredflater/Library/CloudStorage/Box-Box/CABBI/Data/MeasuredData/SABR/SmallDrainagePlots/Biomass/2024GrowingSeason/RecordingDataSheets/sorg_chopper_harvest_load_weights.xlsx"
+
+# ── Constants ─────────────────────────────────────────────────────────────
+plot_size_ha      <- 0.145
+conversion_factor <- 0.907185  # short ton → metric ton
+
+# Moisture-adjustment factor (oven-dry equivalent)
+moisture_df  <- tibble(
+  Plot     = c(2, 7, 9, 15),
+  Moisture = c(0.749262537, 0.766325316, 0.731502423, 0.767241379)
+)
+avg_moisture <- mean(moisture_df$Moisture, na.rm = TRUE)
+
+# ── 2023 sorghum ──────────────────────────────────────────────────────────
+sorghum_2023 <- read_excel(sorghum_2023_path) |>
+  summarise(total_biomass_ton = sum(`Net Weight`, na.rm = TRUE), .by = Plot) |>
+  mutate(
+    year      = 2023,
+    Plot      = as.character(Plot),
+    treatment = if_else(Plot %in% c("2", "3", "5", "15"), "Sorghum", "Sorghum + WCC"),
+    biomass_mg_ha = ((total_biomass_ton * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
+  ) |>
+  select(year, Plot, treatment, biomass_mg_ha)
+
+# ── 2024 sorghum ──────────────────────────────────────────────────────────
+sorghum_2024 <- read_excel(sorghum_2024_path) |>
+  filter(Study == "Drainage") |>
+  summarise(total_biomass_ton = sum(`Net Weight (t)`, na.rm = TRUE), .by = Plot) |>
+  mutate(
+    year      = 2024,
+    Plot      = as.character(Plot),
+    treatment = if_else(Plot %in% c("2", "3", "5", "15"), "Sorghum", "Sorghum + WCC"),
+    biomass_mg_ha = ((total_biomass_ton * conversion_factor) / plot_size_ha) * (1 - avg_moisture)
+  ) |>
+  select(year, Plot, treatment, biomass_mg_ha)
+
+sorghum_plot_data <- bind_rows(sorghum_2023, sorghum_2024) |>
+  mutate(
+    year      = factor(year, levels = c(2023, 2024)),
+    treatment = factor(treatment, levels = treatment_levels)
+  )
+```
+
+```{r load-rye-data}
+# ── Rye cover crop biomass ────────────────────────────────────────────────
+rye_data <- bind_rows(
+  read_excel("data/BiomassData_Rye_20230522.xlsx") |> mutate(year = 2023),
+  read_excel("data/BiomassData_Rye_20240515.xlsx") |> mutate(year = 2024)
+) |>
+  mutate(
+    year          = factor(year, levels = c(2023, 2024)),
+    Plot          = as.character(`Plot ID`),
+    treatment     = factor("Sorghum + WCC", levels = treatment_levels),
+    biomass_mg_ha = (`Dry Mass + Dry Bag Mass` - `Dry Bag Mass`) * 0.01
+  ) |>
+  select(year, Plot, treatment, biomass_mg_ha)
+```
+
+```{r compute-stats}
+# ── Summary statistics ────────────────────────────────────────────────────
+sorghum_stats <- sorghum_plot_data |>
+  summarise(
+    mean_sorghum = mean(biomass_mg_ha, na.rm = TRUE),
+    sd_sorghum   = sd(biomass_mg_ha, na.rm = TRUE),
+    n            = n(),
+    se_sorghum   = sd_sorghum / sqrt(n),
+    ci_sorghum   = qt(0.975, df = pmax(n - 1, 1)) * se_sorghum,
+    .by = c(year, treatment)
+  )
+
+rye_stats <- rye_data |>
+  summarise(
+    mean_rye = mean(biomass_mg_ha, na.rm = TRUE),
+    sd_rye   = sd(biomass_mg_ha, na.rm = TRUE),
+    n        = n(),
+    se_rye   = sd_rye / sqrt(n),
+    ci_rye   = qt(0.975, df = pmax(n - 1, 1)) * se_rye,
+    .by = c(year, treatment)
+  )
+
+# ── Per-year t-tests ──────────────────────────────────────────────────────
+sorghum_tests_by_year <- sorghum_plot_data |>
+  summarise(
+    p_value = if (n_distinct(treatment) < 2) NA_real_
+              else tryCatch(t.test(biomass_mg_ha ~ treatment)$p.value,
+                            error = \(e) NA_real_),
+    .by = year
+  )
+
+# ── Compact letter display ────────────────────────────────────────────────
+sorghum_letters <- sorghum_stats |>
+  left_join(sorghum_tests_by_year, by = "year") |>
+  group_by(year) |>
+  mutate(
+    letter = case_when(
+      is.na(p_value) | p_value >= 0.05 ~ "a",
+      mean_sorghum == max(mean_sorghum, na.rm = TRUE) ~ "a",
+      TRUE ~ "b"
+    )
+  ) |>
+  ungroup()
+
+letter_offsets <- sorghum_letters |>
+  summarise(offset = max(mean_sorghum + ci_sorghum, na.rm = TRUE) * 0.08, .by = year)
+
+sorghum_letters <- sorghum_letters |>
+  left_join(letter_offsets, by = "year") |>
+  mutate(y_label = mean_sorghum + ci_sorghum + offset)
+```
+
+# Figure 5
+
+```{r figure5}
+#| fig-width: 8
+#| fig-height: 5
+#| fig-dpi: 300
+
+# ── Fill keys for layered bars ────────────────────────────────────────────
+sorghum_stats <- sorghum_stats |> mutate(fill_key = as.character(treatment))
+rye_overlay   <- rye_stats |> mutate(fill_key = "Rye overlay")
+
+fill_palette <- c(
+  "Sorghum"       = "#D8D97AFF",
+  "Sorghum + WCC" = "#95C36EFF",
+  "Rye overlay"   = "#F5DEB3"
+)
+
+# ── Rye layer (striped if ggpattern available) ────────────────────────────
+rye_layer <- if (requireNamespace("ggpattern", quietly = TRUE)) {
+  ggpattern::geom_col_pattern(
+    data = rye_overlay,
+    aes(x = treatment, y = mean_rye, fill = fill_key),
+    pattern = "stripe", pattern_fill = "grey35", pattern_colour = "grey35",
+    pattern_angle = 45, pattern_density = 0.45,
+    alpha = 0.95, color = "black", width = 0.32, inherit.aes = FALSE
+  )
+} else {
+  geom_col(
+    data = rye_overlay,
+    aes(x = treatment, y = mean_rye, fill = fill_key),
+    alpha = 0.95, color = "black", width = 0.32, inherit.aes = FALSE
+  )
+}
+
+# ── Panel labels ──────────────────────────────────────────────────────────
+facet_panel_labels <- tibble(
+  year      = factor(c(2023, 2024), levels = c(2023, 2024)),
+  treatment = factor("Sorghum", levels = treatment_levels),
+  y         = Inf,
+  label     = c("(a)", "(b)")
+)
+
+# ── Build figure ──────────────────────────────────────────────────────────
+figure5 <- ggplot() +
+  # Sorghum bars
+  geom_col(
+    data = sorghum_stats,
+    aes(x = treatment, y = mean_sorghum, fill = fill_key),
+    color = "black", width = 0.7
+  ) +
+  geom_errorbar(
+    data = sorghum_stats,
+    aes(x = treatment,
+        ymin = pmax(0, mean_sorghum - ci_sorghum),
+        ymax = mean_sorghum + ci_sorghum),
+    width = 0.18, inherit.aes = FALSE
+  ) +
+  # Rye overlay
+  rye_layer +
+  geom_errorbar(
+    data = rye_overlay,
+    aes(x = treatment,
+        ymin = pmax(0, mean_rye - ci_rye),
+        ymax = mean_rye + ci_rye),
+    width = 0.1, inherit.aes = FALSE
+  ) +
+  # Significance letters
+  geom_text(
+    data = sorghum_letters,
+    aes(x = treatment, y = y_label, label = letter),
+    inherit.aes = FALSE, fontface = "bold", size = 3.8
+  ) +
+  # Panel labels via geom_text (consistent bold style)
+  geom_text(
+    data = facet_panel_labels,
+    aes(x = treatment, y = y, label = label),
+    inherit.aes = FALSE,
+    hjust = -0.08, vjust = 1.15,
+    fontface = "bold", size = 3.8
+  ) +
+  facet_wrap(~year, nrow = 1) +
+  scale_fill_manual(
+    values = fill_palette,
+    breaks = c("Sorghum", "Sorghum + WCC", "Rye overlay"),
+    name   = "Biomass component"
+  ) +
+  labs(
+    x = "",
+    y = expression("Oven-dried Biomass (Mg ha"^-1 * ")")
+  ) +
+  theme_publication(base_size = 10) +
+  theme(
+    legend.position    = "top",
+    legend.justification = "center"
+  )
+
+figure5
+```
+
+```{r print-tests}
+#| echo: false
+cat("Per-year t-test p-values:\n")
+sorghum_tests_by_year
+```

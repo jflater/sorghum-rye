@@ -1,0 +1,239 @@
+---
+title: "Figure 1: Weather Conditions"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 10
+    fig-height: 4.5
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Scientific Context
+
+Weather conditions varied substantially between study years. The year 2023
+was characterized by below-average precipitation, while 2024 experienced
+conditions closer to the historical mean. These differences influenced soil
+moisture dynamics, crop growth, and nitrogen cycling processes.
+
+This figure shows cumulative precipitation and growing degree days (GDD) for
+2023 and 2024 against the 34-year historical envelope (min--max range) and
+mean.
+
+# Setup
+
+```{r setup}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(readxl)
+library(patchwork)
+library(lubridate)
+
+# ── Publication theme ──────────────────────────────────────────────────────
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Arial") +
+    theme(
+      panel.background   = element_rect(fill = "#ffffffff", color = NA),
+      plot.background    = element_rect(fill = "#ffffffff", color = NA),
+      strip.background   = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major   = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor   = element_blank(),
+      panel.spacing      = unit(3, "lines"),
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 1),
+      text               = element_text(color = "#000000ff"),
+      axis.text          = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title         = element_text(size = base_size),
+      axis.title.x       = element_text(margin = margin(t = 8)),
+      axis.title.y       = element_text(margin = margin(r = 8)),
+      axis.text.x        = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line          = element_line(color = "black", linewidth = 0.5),
+      axis.ticks         = element_line(color = "black", linewidth = 0.5),
+      legend.position    = "top",
+      legend.justification = "center",
+      legend.direction   = "horizontal",
+      legend.box         = "horizontal",
+      legend.margin      = margin(b = 1, unit = "pt"),
+      legend.box.margin  = margin(b = 1, unit = "pt"),
+      legend.text        = element_text(size = base_size * 0.9),
+      legend.title       = element_text(size = base_size),
+      legend.key.width   = unit(0.8, "cm"),
+      legend.key.height  = unit(0.3, "cm")
+    )
+}
+```
+
+# Statistical Approach
+
+**Current method:** No formal statistics — this is a descriptive/contextual
+figure showing cumulative weather trajectories against a historical envelope.
+
+**Assessment:** This is the correct approach. Weather panels serve as context
+for interpreting treatment effects; hypothesis testing (e.g., "was 2023
+significantly drier?") is not the goal. The historical min--max ribbon with
+the 34-year mean line provides an appropriate visual reference.
+
+**Potential enhancements (not implemented):**
+
+- *Percentile bands:* Replace the min--max envelope with 10th/90th percentile
+  ribbons to reduce the influence of extreme single-year outliers and give a
+  better sense of "typical" variability.
+- *Anomaly framing:* Show 2023/2024 as departures from the long-term mean
+  (i.e., cumulative anomaly curves) to more directly quantify how unusual each
+  year was.
+
+Neither alternative would change the manuscript conclusions; the current
+approach clearly communicates the drought--normal contrast.
+
+# Data Processing
+
+```{r load-data}
+# Load historical weather (precipitation and GDD share the same file)
+weather_raw <- read_xlsx("data/rain/historical_rain.xlsx")
+
+# ── Precipitation ──────────────────────────────────────────────────────────
+rain <- weather_raw |>
+  select(day, doy, precipmm) |>
+  mutate(date = as.Date(day), year = year(date)) |>
+  group_by(year) |>
+  arrange(date) |>
+  mutate(
+    cumulative_precip = cumsum(precipmm),
+    doy_date = as.Date(doy - 1, origin = "2000-01-01")
+  ) |>
+  ungroup()
+
+# ── Growing degree days ───────────────────────────────────────────────────
+gdd <- weather_raw |>
+  select(day, doy, gdd_50_86) |>
+  mutate(date = as.Date(day), year = year(date)) |>
+  group_by(year) |>
+  arrange(date) |>
+  mutate(
+    cumulative_gdd = cumsum(gdd_50_86),
+    doy_date = as.Date(doy - 1, origin = "2000-01-01")
+  ) |>
+  ungroup()
+```
+
+```{r compute-envelopes}
+# Historical envelopes (excluding study years)
+hist_years <- . |> filter(!year %in% c(2023, 2024))
+
+hist_env_rain <- rain |>
+  hist_years() |>
+  summarise(
+    min_cum = min(cumulative_precip, na.rm = TRUE),
+    max_cum = max(cumulative_precip, na.rm = TRUE),
+    .by = doy_date
+  )
+
+hist_env_gdd <- gdd |>
+  hist_years() |>
+  summarise(
+    min_cum = min(cumulative_gdd, na.rm = TRUE),
+    max_cum = max(cumulative_gdd, na.rm = TRUE),
+    .by = doy_date
+  )
+
+# 34-year historical means
+mean_cum_rain <- rain |>
+  hist_years() |>
+  summarise(cumulative_precip = mean(cumulative_precip, na.rm = TRUE), .by = doy_date) |>
+  mutate(year = "Mean") |>
+  filter(doy_date != "2000-12-31")
+
+mean_cum_gdd <- gdd |>
+  hist_years() |>
+  summarise(cumulative_gdd = mean(cumulative_gdd, na.rm = TRUE), .by = doy_date) |>
+  mutate(year = "Mean") |>
+  filter(doy_date != "2000-12-31")
+
+# Combine highlighted years (2023, 2024) with the historical mean
+rain_highlight <- rain |>
+  filter(year %in% c(2023, 2024)) |>
+  mutate(year = as.character(year)) |>
+  bind_rows(mean_cum_rain)
+
+gdd_highlight <- gdd |>
+  filter(year %in% c(2023, 2024)) |>
+  mutate(year = as.character(year)) |>
+  bind_rows(mean_cum_gdd)
+```
+
+# Figure 1
+
+```{r figure1}
+#| fig-width: 10
+#| fig-height: 4.5
+#| fig-dpi: 300
+
+# Shared scale definitions
+year_colors    <- c("2023" = "#E41A1C", "2024" = "#377EB8", "Mean" = "black")
+year_labels    <- c("2023" = "2023", "2024" = "2024", "Mean" = "34-year Mean")
+year_linetypes <- c("2023" = "solid", "2024" = "dashed", "Mean" = "dotdash")
+
+# ── Panel (a): Cumulative precipitation ────────────────────────────────────
+rain_plot <- ggplot() +
+  geom_ribbon(
+    data = hist_env_rain,
+    aes(x = doy_date, ymin = min_cum, ymax = max_cum),
+    fill = "gray80", alpha = 0.6
+  ) +
+  geom_line(
+    data = rain_highlight,
+    aes(x = doy_date, y = cumulative_precip, color = year, linetype = year),
+    linewidth = 0.7
+  ) +
+  scale_color_manual(name = "Year", values = year_colors, labels = year_labels) +
+  scale_linetype_manual(name = "Year", values = year_linetypes, labels = year_labels) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+  labs(x = "", y = "Cumulative Precipitation (mm)", tag = "(a)") +
+  theme_publication(base_size = 10)
+
+# ── Panel (b): Cumulative GDD ─────────────────────────────────────────────
+gdd_plot <- ggplot() +
+  geom_ribbon(
+    data = hist_env_gdd,
+    aes(x = doy_date, ymin = min_cum, ymax = max_cum),
+    fill = "gray80", alpha = 0.6
+  ) +
+  geom_line(
+    data = gdd_highlight,
+    aes(x = doy_date, y = cumulative_gdd, color = year, linetype = year),
+    linewidth = 0.7
+  ) +
+  scale_color_manual(name = "Year", values = year_colors, labels = year_labels) +
+  scale_linetype_manual(name = "Year", values = year_linetypes, labels = year_labels) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+  labs(x = "", y = "Cumulative Growing Degree Days (GDD)", tag = "(b)") +
+  theme_publication(base_size = 10)
+
+# ── Assemble ───────────────────────────────────────────────────────────────
+figure1 <- (rain_plot | gdd_plot) +
+  plot_layout(guides = "collect", widths = c(1.05, 1.05)) &
+  theme_publication(base_size = 10) &
+  theme(
+    legend.position  = "top",
+    legend.text      = element_text(size = 9),
+    legend.key.width = unit(1.1, "cm"),
+    plot.margin      = margin(t = 4, r = 6, b = 3, l = 6, unit = "pt"),
+    plot.tag         = element_text(face = "bold", size = 11),
+    plot.tag.position = "topleft"
+  ) &
+  guides(
+    color    = guide_legend(nrow = 1, byrow = TRUE),
+    linetype = guide_legend(nrow = 1, byrow = TRUE)
+  )
+
+figure1
+```

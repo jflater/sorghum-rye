@@ -67,13 +67,15 @@ theme_publication <- function(base_size = 12) {
       # Grid
       panel.grid.major = element_line(color = alpha("#B7B5B3", 0.2)),
       panel.grid.minor = element_blank(),
-      panel.spacing = unit(2, "lines"),
+      panel.spacing = unit(3, "lines"),
       panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
 
       # Text & Axis
       text = element_text(color = "#000000ff"),
       axis.text = element_text(color = "#000000ff", size = base_size * 0.8),
       axis.title = element_text(size = base_size),
+      axis.title.x = element_text(margin = margin(t = 8)),
+      axis.title.y = element_text(margin = margin(r = 8)),
       axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
       axis.line = element_line(color = "black", linewidth = 0.5),
       axis.ticks = element_line(color = "black", linewidth = 0.5),
@@ -110,8 +112,8 @@ panel_label_face <- "bold"
 panel_label_hjust <- -0.08
 panel_label_vjust <- 1.15
 
-add_panel_label <- function(p, label) {
-  p + annotate(
+add_panel_label <- function(label) {
+  annotate(
     "text",
     x = -Inf, y = Inf,
     label = label,
@@ -226,7 +228,7 @@ rain_plot <- ggplot() +
   ) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b") +
   labs(x = "", y = "Cumulative Precipitation (mm)") +
-  theme_publication(base_size = 10) |>
+  theme_publication(base_size = 10) +
   add_panel_label("a)")
 
 gdd_plot <- ggplot() +
@@ -252,7 +254,7 @@ gdd_plot <- ggplot() +
   ) +
   scale_x_date(date_breaks = "2 months", date_labels = "%b") +
   labs(x = "", y = "Cumulative Growing Degree Days (GDD)") +
-  theme_publication(base_size = 10) |>
+  theme_publication(base_size = 10) +
   add_panel_label("b)")
 
 figure1 <- (rain_plot | gdd_plot) +
@@ -439,8 +441,8 @@ p3 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_temp, color = Treatmen
     axis.ticks.x = element_blank(),
     axis.line.x = element_blank(),
     legend.position = "none"
-  ) |>
-  add_panel_label("a)")
+  ) +
+    add_panel_label("a)")
 
 # Panel b) 2024 temperature
 p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatment, linetype = Treatment, shape = Treatment)) +
@@ -480,8 +482,8 @@ p4 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_temp, color = Treatmen
     axis.ticks.y = element_blank(),
     axis.line.y = element_blank(),
     legend.position = "none"
-  ) |>
-  add_panel_label("b)")
+  ) +
+    add_panel_label("b)")
 
 # Panel c) 2023 moisture
 p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Treatment, linetype = Treatment, shape = Treatment)) +
@@ -519,8 +521,8 @@ p1 <- ggplot(moist_temp_2023, aes(x = date, y = mean_soil_moisture, color = Trea
     shape = "Treatment"
   ) +
   theme_publication(base_size = 10) +
-  theme(legend.position = "none") |>
-  add_panel_label("c)")
+  theme(legend.position = "none") +
+    add_panel_label("c)")
 
 # Panel d) 2024 moisture
 p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Treatment, linetype = Treatment, shape = Treatment)) +
@@ -557,8 +559,8 @@ p2 <- ggplot(moist_temp_2024, aes(x = date, y = mean_soil_moisture, color = Trea
     axis.ticks.y = element_blank(),
     axis.line.y = element_blank(),
     legend.position = "none"
-  ) |>
-  add_panel_label("d)")
+  ) +
+    add_panel_label("d)")
 
 # Temperature difference panel (e)
 temp_span <- diff(range(daily_diff$temp_diff, na.rm = TRUE))
@@ -593,8 +595,8 @@ p5 <- ggplot(daily_diff, aes(x = factor(year), y = temp_diff)) +
     x = "Year",
     y = expression("Daily Temperature Difference (°C, WCC - Sorghum)")
   ) +
-  theme_publication(base_size = 10) |>
-  add_panel_label("e)")
+  theme_publication(base_size = 10) +
+    add_panel_label("e)")
 
 # Moisture difference panel (f)
 moist_span <- diff(range(daily_diff$moist_diff, na.rm = TRUE))
@@ -629,8 +631,8 @@ p6 <- ggplot(daily_diff, aes(x = factor(year), y = moist_diff)) +
     x = "Year",
     y = expression("Daily Moisture Difference (cm"^3 * " " * "cm"^-3 * ", WCC - Sorghum)")
   ) +
-  theme_publication(base_size = 10) |>
-  add_panel_label("f)")
+  theme_publication(base_size = 10) +
+    add_panel_label("f)")
 
 figure2 <- (p3 | p4) / (p1 | p2) / (p5 | p6) +
   patchwork::plot_layout(guides = "collect", heights = c(1, 1, 0.95)) &
@@ -991,12 +993,12 @@ create_leaching_daily_panel <- function(year_val, is_right_panel = FALSE, label_
       axis.text.y = if (is_right_panel) element_blank() else element_text(),
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.line.y = if (is_right_panel) element_blank() else element_line(),
-      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(margin = margin(r = 8)),
       axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
       axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
       axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
       legend.position = "none"
-    ) |>
+    ) +
     add_panel_label(label_id)
 
   p
@@ -1037,9 +1039,9 @@ create_leaching_cum_panel <- function(year_val, is_right_panel = FALSE, label_id
       axis.text.y = if (is_right_panel) element_blank() else element_text(),
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.line.y = if (is_right_panel) element_blank() else element_line(),
-      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(margin = margin(r = 8)),
       legend.position = "none"
-    ) |>
+    ) +
     add_panel_label(label_id)
 
   p
@@ -1077,8 +1079,8 @@ p3c <- ggplot(daily_leach_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum
     x = "Year",
     y = expression("Daily Leached N Difference (kg N ha"^-1 * " d"^-1 * ", WCC - Sorghum)")
   ) +
-  theme_publication(base_size = 10) |>
-  add_panel_label("c)")
+  theme_publication(base_size = 10) +
+    add_panel_label("c)")
 
 # 9. New panel f: annual/cumulative by treatment with years combined + ANOVA
 letter_offset <- diff(range(annual_leached$annual_leached_n, na.rm = TRUE))
@@ -1112,8 +1114,8 @@ p3f <- ggplot(annual_leached, aes(x = Treatment, y = annual_leached_n, fill = Tr
     subtitle = paste0("One-way ANOVA p = ", ifelse(anova_leached_p < 0.001, "< 0.001", sprintf("%.3f", anova_leached_p)))
   ) +
   theme_publication(base_size = 10) +
-  theme(legend.position = "none") |>
-  add_panel_label("f)")
+  theme(legend.position = "none") +
+    add_panel_label("f)")
 
 # 10. Assemble six-panel Figure 3
 p3a <- create_leaching_daily_panel(2023, is_right_panel = FALSE, label_id = "a)")
@@ -1483,12 +1485,12 @@ create_n2o_daily_panel <- function(year_val, is_right_panel = FALSE, label_id) {
       axis.text.y = if (is_right_panel) element_blank() else element_text(),
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.line.y = if (is_right_panel) element_blank() else element_line(),
-      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(margin = margin(r = 8)),
       axis.text.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
       axis.ticks.y.right = if (is_right_panel) element_line() else element_blank(),
       axis.title.y.right = if (is_right_panel) element_text(color = "#377EB8") else element_blank(),
       legend.position = "none"
-    ) |>
+    ) +
     add_panel_label(label_id)
 
   p
@@ -1529,9 +1531,9 @@ create_n2o_cum_panel <- function(year_val, is_right_panel = FALSE, label_id) {
       axis.text.y = if (is_right_panel) element_blank() else element_text(),
       axis.ticks.y = if (is_right_panel) element_blank() else element_line(),
       axis.line.y = if (is_right_panel) element_blank() else element_line(),
-      axis.title.y = if (is_right_panel) element_blank() else element_text(),
+      axis.title.y = if (is_right_panel) element_blank() else element_text(margin = margin(r = 8)),
       legend.position = "none"
-    ) |>
+    ) +
     add_panel_label(label_id)
 
   p
@@ -1569,8 +1571,8 @@ p4c <- ggplot(daily_n2o_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum))
     x = "Year",
     y = expression("Daily N"[2] * "O Difference (g N ha"^-1 * " d"^-1 * ", WCC - Sorghum)")
   ) +
-  theme_publication(base_size = 10) |>
-  add_panel_label("c)")
+  theme_publication(base_size = 10) +
+    add_panel_label("c)")
 
 n2o_letter_offset <- diff(range(annual_n2o$annual_cum_n2o, na.rm = TRUE))
 if (!is.finite(n2o_letter_offset) || n2o_letter_offset == 0) n2o_letter_offset <- 0.05
@@ -1603,8 +1605,8 @@ p4f <- ggplot(annual_n2o, aes(x = Treatment, y = annual_cum_n2o, fill = Treatmen
     subtitle = paste0("One-way ANOVA p = ", ifelse(anova_n2o_p < 0.001, "< 0.001", sprintf("%.3f", anova_n2o_p)))
   ) +
   theme_publication(base_size = 10) +
-  theme(legend.position = "none") |>
-  add_panel_label("f)")
+  theme(legend.position = "none") +
+    add_panel_label("f)")
 
 # Assemble six-panel Figure 4
 p4a <- create_n2o_daily_panel(2023, is_right_panel = FALSE, label_id = "a)")
@@ -2147,3 +2149,56 @@ All data processing steps, statistical analyses, and visualizations are shown ex
 *Document generated: `r Sys.Date()`*
 
 *R version: `r R.version.string`*
+
+```{r export-figures-tables}
+#| echo: false
+#| message: false
+#| warning: false
+#| results: asis
+
+# Make HTML figures render larger in the output document.
+if (knitr::is_html_output()) {
+  cat(
+    "<style>
+      .cell-output-display img { max-width: 100% !important; width: 100% !important; height: auto; }
+    </style>"
+  )
+}
+
+# Save all ggplot/patchwork figures and gt tables at one-page size.
+page_width_in <- 11
+page_height_in <- 8.5
+dpi <- 300
+
+dir.create("figures", showWarnings = FALSE)
+dir.create("tables", showWarnings = FALSE)
+
+objs <- mget(ls(envir = .GlobalEnv), envir = .GlobalEnv)
+
+safe_name <- function(x) gsub("[^A-Za-z0-9_]+", "_", x)
+
+plot_names <- names(objs)[vapply(objs, function(x) inherits(x, c("ggplot", "patchwork")), logical(1))]
+for (nm in plot_names) {
+  out_file <- file.path("figures", paste0("figure_", safe_name(nm), ".png"))
+  ggplot2::ggsave(
+    filename = out_file,
+    plot = objs[[nm]],
+    width = page_width_in,
+    height = page_height_in,
+    units = "in",
+    dpi = dpi,
+    limitsize = FALSE
+  )
+}
+
+table_names <- names(objs)[vapply(objs, function(x) inherits(x, "gt_tbl"), logical(1))]
+for (nm in table_names) {
+  out_file <- file.path("tables", paste0("table_", safe_name(nm), ".png"))
+  gt::gtsave(
+    data = objs[[nm]],
+    filename = out_file,
+    vwidth = page_width_in * dpi,
+    vheight = page_height_in * dpi
+  )
+}
+```

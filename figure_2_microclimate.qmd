@@ -1,0 +1,383 @@
+---
+title: "Figure 2: Soil Microclimate"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 10
+    fig-height: 10
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Scientific Context
+
+We monitored soil temperature and volumetric water content at 5 cm depth to
+evaluate whether the winter cover crop altered the biophysical environment
+experienced by soil microbes and plants. Differences in soil microclimate could
+influence decomposition rates, nutrient mineralization, and crop performance.
+
+This figure has six panels:
+
+- **(a--b)** Soil temperature time series for 2023 and 2024
+- **(c--d)** Soil moisture time series for 2023 and 2024
+- **(e--f)** Boxplots of daily treatment differences (WCC minus Sorghum) for
+  temperature and moisture
+
+Colored status bars at the top of each time-series panel flag dates with
+significant treatment differences.
+
+# Setup
+
+```{r setup}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(patchwork)
+library(lubridate)
+
+# ── Publication theme ──────────────────────────────────────────────────────
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Arial") +
+    theme(
+      panel.background   = element_rect(fill = "#ffffffff", color = NA),
+      plot.background    = element_rect(fill = "#ffffffff", color = NA),
+      strip.background   = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major   = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor   = element_blank(),
+      panel.spacing      = unit(3, "lines"),
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 1),
+      text               = element_text(color = "#000000ff"),
+      axis.text          = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title         = element_text(size = base_size),
+      axis.title.x       = element_text(margin = margin(t = 8)),
+      axis.title.y       = element_text(margin = margin(r = 8)),
+      axis.text.x        = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line          = element_line(color = "black", linewidth = 0.5),
+      axis.ticks         = element_line(color = "black", linewidth = 0.5),
+      legend.position    = "top",
+      legend.justification = "center",
+      legend.direction   = "horizontal",
+      legend.box         = "horizontal",
+      legend.margin      = margin(b = 1, unit = "pt"),
+      legend.box.margin  = margin(b = 1, unit = "pt"),
+      legend.text        = element_text(size = base_size * 0.9),
+      legend.title       = element_text(size = base_size),
+      legend.key.width   = unit(0.8, "cm"),
+      legend.key.height  = unit(0.3, "cm")
+    )
+}
+
+treatment_colors <- c(
+  "Sorghum" = "#D8D97AFF",
+  "Sorghum + WCC" = "#95C36EFF"
+)
+```
+
+# Statistical Approach
+
+**Current method:** Per-date two-sample Welch's t-tests (Sorghum vs
+Sorghum + WCC) with *p* < 0.05 to flag significant dates on the time-series
+panels. The difference panels (e, f) use a one-sample t-test of daily
+differences against zero within each year.
+
+**Assessment:** The approach is reasonable for an exploratory visualization,
+but has limitations:
+
+1. **Multiple comparisons:** Running ~60--80 independent t-tests across dates
+   inflates the family-wise error rate. No correction (e.g., Bonferroni,
+   Benjamini--Hochberg) is applied, so the significant-date bars likely
+   over-detect.
+2. **Temporal autocorrelation:** Consecutive daily means from the same plots
+   are not independent. A mixed model with plot as a random effect and a
+   temporal correlation structure (e.g., AR(1)) would better account for this.
+
+**Suggested alternatives:**
+
+- **Linear mixed-effects model:** `lmer(value ~ Treatment * date + (1|plot))`
+  with an AR(1) residual correlation. Test the Treatment main effect and
+  Treatment-by-date interaction. This avoids the multiple-testing issue
+  entirely and accounts for repeated measures.
+- **If retaining per-date tests:** Apply Benjamini--Hochberg FDR correction
+  across all dates within a year to control the false-discovery rate. This is a
+  minimal fix that preserves the current visual style.
+
+The current approach is retained below for consistency with the manuscript.
+
+# Data Processing
+
+```{r load-data}
+flux_data <- read_csv("data/cleaned_flux_data.csv", show_col_types = FALSE) |>
+  mutate(date = as.Date(date), year = year(date))
+
+raw_soil <- flux_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC"))
+  )
+```
+
+```{r compute-daily-means}
+# Daily treatment means for time-series and difference panels
+moist_temp <- raw_soil |>
+  summarise(
+    mean_soil_moisture = mean(swc_2_mean, na.rm = TRUE),
+    mean_soil_temp     = mean(ts_2_mean, na.rm = TRUE),
+    .by = c(Treatment, year, date)
+  )
+
+daily_diff <- moist_temp |>
+  mutate(trt_key = if_else(Treatment == "Sorghum + WCC", "WCC", "Sorghum")) |>
+  select(year, date, trt_key, mean_soil_temp, mean_soil_moisture) |>
+  pivot_wider(names_from = trt_key, values_from = c(mean_soil_temp, mean_soil_moisture)) |>
+  mutate(
+    temp_diff  = mean_soil_temp_WCC  - mean_soil_temp_Sorghum,
+    moist_diff = mean_soil_moisture_WCC - mean_soil_moisture_Sorghum
+  )
+```
+
+```{r build-status-bars}
+# Per-date significance bars (t-test, p < 0.05)
+build_status_bars <- function(df, value_col) {
+  df |>
+    summarise(
+      n_sorghum    = sum(Treatment == "Sorghum" & !is.na(.data[[value_col]])),
+      n_wcc        = sum(Treatment == "Sorghum + WCC" & !is.na(.data[[value_col]])),
+      mean_sorghum = mean(.data[[value_col]][Treatment == "Sorghum"], na.rm = TRUE),
+      mean_wcc     = mean(.data[[value_col]][Treatment == "Sorghum + WCC"], na.rm = TRUE),
+      p_value = {
+        s <- .data[[value_col]][Treatment == "Sorghum"]   |> na.omit()
+        w <- .data[[value_col]][Treatment == "Sorghum + WCC"] |> na.omit()
+        if (length(s) >= 2 && length(w) >= 2)
+          tryCatch(t.test(s, w)$p.value, error = \(e) NA_real_)
+        else NA_real_
+      },
+      .by = c(year, date)
+    ) |>
+    mutate(
+      has_testable = n_sorghum >= 2 & n_wcc >= 2,
+      significant  = has_testable & !is.na(p_value) & p_value < 0.05,
+      status = case_when(
+        significant  ~ "Significant",
+        has_testable ~ "No difference",
+        TRUE         ~ "No data"
+      ),
+      greater = case_when(
+        significant & mean_wcc > mean_sorghum  ~ "Sorghum + WCC",
+        significant & mean_sorghum >= mean_wcc ~ "Sorghum",
+        TRUE ~ NA_character_
+      ),
+      x    = date - 2,
+      xend = date + 2
+    )
+}
+
+temp_status  <- build_status_bars(raw_soil, "ts_2_mean")
+moist_status <- build_status_bars(raw_soil, "swc_2_mean")
+
+status_fill <- c(
+  "Significant"   = "black",
+  "No difference" = "grey65",
+  "No data"       = "grey90"
+)
+```
+
+```{r compute-diff-stats}
+# One-sample t-test of daily differences against zero
+one_sample_vs_zero <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) < 2) return(NA_real_)
+  tryCatch(t.test(x, mu = 0)$p.value, error = \(e) NA_real_)
+}
+
+temp_diff_stats <- daily_diff |>
+  summarise(
+    n          = sum(!is.na(temp_diff)),
+    mean_diff  = mean(temp_diff, na.rm = TRUE),
+    p_value    = one_sample_vs_zero(temp_diff),
+    significant = !is.na(p_value) & p_value < 0.05,
+    letter     = if_else(significant, "a", NA_character_),
+    .by = year
+  )
+
+moist_diff_stats <- daily_diff |>
+  summarise(
+    n          = sum(!is.na(moist_diff)),
+    mean_diff  = mean(moist_diff, na.rm = TRUE),
+    p_value    = one_sample_vs_zero(moist_diff),
+    significant = !is.na(p_value) & p_value < 0.05,
+    letter     = if_else(significant, "a", NA_character_),
+    .by = year
+  )
+```
+
+# Figure 2
+
+```{r figure2}
+#| fig-width: 10
+#| fig-height: 10
+#| fig-dpi: 300
+
+# ── Global axis limits ────────────────────────────────────────────────────
+global_moisture_limits <- range(moist_temp$mean_soil_moisture, na.rm = TRUE)
+global_moisture_limits[2] <- global_moisture_limits[2] * 1.14
+
+global_temp_limits <- range(moist_temp$mean_soil_temp, na.rm = TRUE)
+global_temp_limits[2] <- max(40, global_temp_limits[2] * 1.08)
+
+moisture_breaks <- pretty(global_moisture_limits, n = 5)
+temp_breaks     <- pretty(global_temp_limits, n = 5)
+
+# Status-bar vertical positions
+temp_bar_y    <- global_temp_limits[2] - diff(global_temp_limits) * 0.035
+temp_bar_half <- diff(global_temp_limits) * 0.01
+moist_bar_y    <- global_moisture_limits[2] - diff(global_moisture_limits) * 0.035
+moist_bar_half <- diff(global_moisture_limits) * 0.01
+
+# ── Helper: time-series panel ─────────────────────────────────────────────
+make_ts_panel <- function(data, status_df, y_var, y_limits, y_breaks,
+                          bar_y, bar_half, y_lab, tag_label,
+                          hide_x = FALSE, hide_y_left = FALSE) {
+  year_val <- unique(data$year)
+  x_lims   <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+
+  p <- ggplot(data, aes(x = date, y = .data[[y_var]],
+                         color = Treatment, linetype = Treatment, shape = Treatment)) +
+    geom_line(linewidth = 0.6) +
+    geom_point(size = 1.5) +
+    # Status bar background
+    geom_rect(
+      data = filter(status_df, year == year_val),
+      aes(xmin = x, xmax = xend,
+          ymin = bar_y - bar_half, ymax = bar_y + bar_half,
+          fill = status),
+      inherit.aes = FALSE, show.legend = FALSE
+    ) +
+    # Colored overlay on significant dates
+    geom_segment(
+      data = filter(status_df, year == year_val, significant),
+      aes(x = x, xend = xend, y = bar_y, yend = bar_y, color = greater),
+      linewidth = 3, inherit.aes = FALSE, show.legend = FALSE
+    ) +
+    scale_fill_manual(values = status_fill) +
+    scale_color_manual(values = treatment_colors) +
+    scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
+    scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(limits = y_limits, breaks = y_breaks,
+                       expand = expansion(mult = c(0.04, 0.04))) +
+    labs(x = if (hide_x) "" else "Month", y = y_lab, tag = tag_label) +
+    theme_publication(base_size = 10) +
+    theme(plot.tag = element_text(face = "bold", size = 11),
+          plot.tag.position = "topleft")
+
+  if (hide_x) {
+    p <- p + theme(axis.text.x = element_blank(),
+                   axis.ticks.x = element_blank(),
+                   axis.line.x = element_blank())
+  }
+  if (hide_y_left) {
+    p <- p + theme(axis.text.y = element_blank(),
+                   axis.ticks.y = element_blank(),
+                   axis.line.y = element_blank()) +
+      labs(y = "")
+  }
+  p + theme(legend.position = "none")
+}
+
+# ── Panels (a–d): time series ─────────────────────────────────────────────
+moist_temp_2023 <- filter(moist_temp, year == 2023)
+moist_temp_2024 <- filter(moist_temp, year == 2024)
+
+p_a <- make_ts_panel(moist_temp_2023, temp_status,  "mean_soil_temp",
+                     global_temp_limits, temp_breaks,
+                     temp_bar_y, temp_bar_half,
+                     "Soil Temperature (\u00B0C)", "(a)",
+                     hide_x = TRUE)
+
+p_b <- make_ts_panel(moist_temp_2024, temp_status,  "mean_soil_temp",
+                     global_temp_limits, temp_breaks,
+                     temp_bar_y, temp_bar_half,
+                     "", "(b)",
+                     hide_x = TRUE, hide_y_left = TRUE)
+
+p_c <- make_ts_panel(moist_temp_2023, moist_status, "mean_soil_moisture",
+                     global_moisture_limits, moisture_breaks,
+                     moist_bar_y, moist_bar_half,
+                     expression("Volumetric Soil Moisture (cm"^3 * " cm"^-3 * ")"),
+                     "(c)")
+
+p_d <- make_ts_panel(moist_temp_2024, moist_status, "mean_soil_moisture",
+                     global_moisture_limits, moisture_breaks,
+                     moist_bar_y, moist_bar_half,
+                     "", "(d)",
+                     hide_y_left = TRUE)
+
+# ── Helper: difference boxplot ─────────────────────────────────────────────
+make_diff_panel <- function(diff_col, diff_stats, y_lab, tag_label) {
+  span <- diff(range(daily_diff[[diff_col]], na.rm = TRUE))
+  if (!is.finite(span) || span == 0) span <- 1
+
+  anno <- daily_diff |>
+    summarise(y = max(.data[[diff_col]], na.rm = TRUE), .by = year) |>
+    left_join(diff_stats, by = "year") |>
+    filter(significant) |>
+    mutate(y = y + span * 0.08)
+
+  ggplot(daily_diff, aes(x = factor(year), y = .data[[diff_col]])) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+    geom_boxplot(width = 0.55, outlier.shape = NA, fill = "grey92", color = "black") +
+    geom_jitter(aes(color = factor(year)), width = 0.12, alpha = 0.7,
+                size = 1.4, show.legend = FALSE) +
+    geom_text(data = anno, aes(x = factor(year), y = y, label = letter),
+              inherit.aes = FALSE, fontface = "bold", size = 3.8) +
+    scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+    labs(x = "Year", y = y_lab, tag = tag_label) +
+    theme_publication(base_size = 10) +
+    theme(plot.tag = element_text(face = "bold", size = 11),
+          plot.tag.position = "topleft")
+}
+
+# ── Panels (e–f): difference boxplots ─────────────────────────────────────
+p_e <- make_diff_panel("temp_diff",  temp_diff_stats,
+                       expression("Daily Temperature Difference (\u00B0C, WCC - Sorghum)"),
+                       "(e)")
+
+p_f <- make_diff_panel("moist_diff", moist_diff_stats,
+                       expression("Daily Moisture Difference (cm"^3 * " cm"^-3 * ", WCC - Sorghum)"),
+                       "(f)")
+
+# ── Assemble ───────────────────────────────────────────────────────────────
+figure2 <- (p_a | p_b) / (p_c | p_d) / (p_e | p_f) +
+  plot_layout(guides = "collect", heights = c(1, 1, 0.95)) &
+  theme(legend.position = "top") &
+  guides(
+    color    = guide_legend(nrow = 1, byrow = TRUE),
+    linetype = guide_legend(nrow = 1, byrow = TRUE),
+    shape    = guide_legend(nrow = 1, byrow = TRUE)
+  )
+
+figure2 <- figure2 +
+  plot_annotation(
+    caption = "Status bars above time-series panels: black = significant treatment difference; gray = no difference; light gray = no data.\nColored overlays indicate which treatment had the greater daily mean on significant dates."
+  )
+
+figure2
+```
+
+```{r diff-stats-table}
+#| echo: false
+cat("Temperature difference stats:\n")
+temp_diff_stats
+cat("\nMoisture difference stats:\n")
+moist_diff_stats
+```

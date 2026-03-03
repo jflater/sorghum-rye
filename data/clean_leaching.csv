@@ -1,4 +1,4 @@
-date,plot,flow_gallons,nitrate_mg_ml,ammonia_mg_l,sample_y_n,flow_l,approx_nitrate_mg_l,approx_ammonia_mg_l,nitrate_loss_mg,ammonia_loss_mg,total_n_loss_mg,year,treatment,cumulative_flow_l,cumulative_n_loss_mg
+date,plot,flow_gallons,nitrate_mg_l,ammonia_mg_l,sample_y_n,flow_l,approx_nitrate_mg_l,approx_ammonia_mg_l,nitrate_loss_mg,ammonia_loss_mg,total_n_loss_mg,year,treatment,cumulative_flow_l,cumulative_n_loss_mg
 2023-01-01,01,0,NA,NA,NA,0,NA,NA,NA,NA,NA,2023,Corn,0,0
 2023-01-01,02,0,NA,NA,NA,0,NA,NA,NA,NA,NA,2023,Sorghum,0,0
 2023-01-01,03,0,NA,NA,NA,0,NA,NA,NA,NA,NA,2023,Sorghum,0,0
