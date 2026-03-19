@@ -2589,7 +2589,7 @@ figure_4 <- p_texture + p_loss +
   plot_layout(widths = c(1, 1.5)) # Give Panel B a bit more width
 
 print(figure_4)
-ggsave("FigureS?_Hydrology.png", figure_4, width = 10, height = 5)
+ggsave("FigureS_Hydrology.png", figure_4, width = 10, height = 5)
 ```
 
 ```{r}
