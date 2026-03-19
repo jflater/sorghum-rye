@@ -372,6 +372,8 @@ figure2 <- figure2 +
   )
 
 figure2
+
+ggsave(filename = "figure_2_microclimate.tiff", plot = figure2, width = 174, height = 174, units = "mm", dpi = 600, device = "tiff", compression = "lzw")
 ```
 
 ```{r diff-stats-table}
@@ -380,4 +382,393 @@ cat("Temperature difference stats:\n")
 temp_diff_stats
 cat("\nMoisture difference stats:\n")
 moist_diff_stats
+```
+
+# Alternative Statistical Approaches
+
+## Approach B: BH FDR-Corrected Per-Date T-Tests
+
+Apply Benjamini–Hochberg FDR correction to the per-date t-tests produced by
+`build_status_bars`. This controls the false-discovery rate across all dates
+within each year.
+
+```{r approach-b-fdr}
+#| message: false
+#| warning: false
+
+# ── Apply BH correction to temperature status bars ──────────────────────
+temp_status_fdr <- temp_status |>
+  group_by(year) |>
+  mutate(
+    p_adj = p.adjust(p_value, method = "BH"),
+    significant_fdr = has_testable & !is.na(p_adj) & p_adj < 0.05,
+    status_fdr = case_when(
+      significant_fdr  ~ "Significant",
+      has_testable     ~ "No difference",
+      TRUE             ~ "No data"
+    ),
+    greater_fdr = case_when(
+      significant_fdr & mean_wcc > mean_sorghum  ~ "Sorghum + WCC",
+      significant_fdr & mean_sorghum >= mean_wcc ~ "Sorghum",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  ungroup()
+
+# ── Apply BH correction to moisture status bars ─────────────────────────
+moist_status_fdr <- moist_status |>
+  group_by(year) |>
+  mutate(
+    p_adj = p.adjust(p_value, method = "BH"),
+    significant_fdr = has_testable & !is.na(p_adj) & p_adj < 0.05,
+    status_fdr = case_when(
+      significant_fdr  ~ "Significant",
+      has_testable     ~ "No difference",
+      TRUE             ~ "No data"
+    ),
+    greater_fdr = case_when(
+      significant_fdr & mean_wcc > mean_sorghum  ~ "Sorghum + WCC",
+      significant_fdr & mean_sorghum >= mean_wcc ~ "Sorghum",
+      TRUE ~ NA_character_
+    )
+  ) |>
+  ungroup()
+
+# ── Comparison: uncorrected vs FDR-corrected significant dates ───────────
+fdr_comparison <- bind_rows(
+  temp_status |>
+    group_by(year) |>
+    summarise(n_sig_uncorrected = sum(significant, na.rm = TRUE), .groups = "drop") |>
+    left_join(
+      temp_status_fdr |>
+        group_by(year) |>
+        summarise(n_sig_FDR = sum(significant_fdr, na.rm = TRUE), .groups = "drop"),
+      by = "year"
+    ) |>
+    mutate(variable = "Temperature"),
+  moist_status |>
+    group_by(year) |>
+    summarise(n_sig_uncorrected = sum(significant, na.rm = TRUE), .groups = "drop") |>
+    left_join(
+      moist_status_fdr |>
+        group_by(year) |>
+        summarise(n_sig_FDR = sum(significant_fdr, na.rm = TRUE), .groups = "drop"),
+      by = "year"
+    ) |>
+    mutate(variable = "Moisture")
+) |>
+  select(year, variable, n_sig_uncorrected, n_sig_FDR)
+
+cat("Comparison of significant dates: uncorrected vs BH FDR-corrected\n")
+knitr::kable(fdr_comparison, align = "c")
+```
+
+```{r approach-b-fdr-figure}
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 7
+#| fig-dpi: 300
+
+# ── Helper for FDR-corrected time-series panels ─────────────────────────
+make_ts_panel_fdr <- function(data, status_fdr_df, y_var, y_limits, y_breaks,
+                              bar_y, bar_half, y_lab, tag_label,
+                              hide_x = FALSE, hide_y_left = FALSE) {
+  year_val <- unique(data$year)
+  x_lims   <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+
+  p <- ggplot(data, aes(x = date, y = .data[[y_var]],
+                         color = Treatment, linetype = Treatment, shape = Treatment)) +
+    geom_line(linewidth = 0.6) +
+    geom_point(size = 1.5) +
+    # FDR-corrected status bar background
+    geom_rect(
+      data = filter(status_fdr_df, year == year_val),
+      aes(xmin = x, xmax = xend,
+          ymin = bar_y - bar_half, ymax = bar_y + bar_half,
+          fill = status_fdr),
+      inherit.aes = FALSE, show.legend = FALSE
+    ) +
+    # Colored overlay on FDR-significant dates
+    geom_segment(
+      data = filter(status_fdr_df, year == year_val, significant_fdr),
+      aes(x = x, xend = xend, y = bar_y, yend = bar_y, color = greater_fdr),
+      linewidth = 3, inherit.aes = FALSE, show.legend = FALSE
+    ) +
+    scale_fill_manual(values = status_fill) +
+    scale_color_manual(values = treatment_colors) +
+    scale_linetype_manual(values = c("Sorghum" = "dashed", "Sorghum + WCC" = "solid")) +
+    scale_shape_manual(values = c("Sorghum" = 16, "Sorghum + WCC" = 15)) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(limits = y_limits, breaks = y_breaks,
+                       expand = expansion(mult = c(0.04, 0.04))) +
+    labs(x = if (hide_x) "" else "Month", y = y_lab, tag = tag_label) +
+    theme_publication(base_size = 10) +
+    theme(plot.tag = element_text(face = "bold", size = 11),
+          plot.tag.position = "topleft")
+
+  if (hide_x) {
+    p <- p + theme(axis.text.x = element_blank(),
+                   axis.ticks.x = element_blank(),
+                   axis.line.x = element_blank())
+  }
+  if (hide_y_left) {
+    p <- p + theme(axis.text.y = element_blank(),
+                   axis.ticks.y = element_blank(),
+                   axis.line.y = element_blank()) +
+      labs(y = "")
+  }
+  p + theme(legend.position = "none")
+}
+
+# ── FDR-corrected panels (a-d) ──────────────────────────────────────────
+p_a_fdr <- make_ts_panel_fdr(moist_temp_2023, temp_status_fdr, "mean_soil_temp",
+                              global_temp_limits, temp_breaks,
+                              temp_bar_y, temp_bar_half,
+                              "Soil Temperature (\u00B0C)", "(a)",
+                              hide_x = TRUE)
+
+p_b_fdr <- make_ts_panel_fdr(moist_temp_2024, temp_status_fdr, "mean_soil_temp",
+                              global_temp_limits, temp_breaks,
+                              temp_bar_y, temp_bar_half,
+                              "", "(b)",
+                              hide_x = TRUE, hide_y_left = TRUE)
+
+p_c_fdr <- make_ts_panel_fdr(moist_temp_2023, moist_status_fdr, "mean_soil_moisture",
+                              global_moisture_limits, moisture_breaks,
+                              moist_bar_y, moist_bar_half,
+                              expression("Volumetric Soil Moisture (cm"^3 * " cm"^-3 * ")"),
+                              "(c)")
+
+p_d_fdr <- make_ts_panel_fdr(moist_temp_2024, moist_status_fdr, "mean_soil_moisture",
+                              global_moisture_limits, moisture_breaks,
+                              moist_bar_y, moist_bar_half,
+                              "", "(d)",
+                              hide_y_left = TRUE)
+
+figure2_fdr <- (p_a_fdr | p_b_fdr) / (p_c_fdr | p_d_fdr) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "top") &
+  guides(
+    color    = guide_legend(nrow = 1, byrow = TRUE),
+    linetype = guide_legend(nrow = 1, byrow = TRUE),
+    shape    = guide_legend(nrow = 1, byrow = TRUE)
+  )
+
+figure2_fdr <- figure2_fdr +
+  plot_annotation(
+    title   = "BH FDR-Corrected Status Bars",
+    caption = "Status bars use BH-adjusted p-values (FDR < 0.05)."
+  )
+
+figure2_fdr
+```
+
+## Approach C: Period-Aggregated One-Sample T-Tests
+
+Aggregate daily treatment differences into seasonal windows (Spring, Summer,
+Fall, Winter), then test each period's mean difference against zero.
+
+```{r approach-c-seasonal}
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 6
+#| fig-dpi: 300
+
+# ── Assign seasons ───────────────────────────────────────────────────────
+daily_diff_season <- daily_diff |>
+  mutate(
+    month = month(date),
+    season = case_when(
+      month %in% 3:5   ~ "Spring",
+      month %in% 6:8   ~ "Summer",
+      month %in% 9:11  ~ "Fall",
+      month %in% c(12, 1, 2) ~ "Winter"
+    ),
+    season = factor(season, levels = c("Spring", "Summer", "Fall", "Winter"))
+  )
+
+# ── One-sample t-tests by year x season for temperature ──────────────────
+seasonal_temp_tests <- daily_diff_season |>
+  group_by(year, season) |>
+  summarise(
+    n         = sum(!is.finite(temp_diff) == FALSE),
+    mean_diff = mean(temp_diff, na.rm = TRUE),
+    se_diff   = sd(temp_diff, na.rm = TRUE) / sqrt(n()),
+    p_value   = if (sum(is.finite(temp_diff)) >= 2)
+                  tryCatch(t.test(temp_diff[is.finite(temp_diff)], mu = 0)$p.value,
+                           error = \(e) NA_real_)
+                else NA_real_,
+    .groups = "drop"
+  ) |>
+  mutate(
+    significant = !is.na(p_value) & p_value < 0.05,
+    sig_label   = if_else(significant, "*", ""),
+    variable    = "Temperature (\u00B0C)"
+  )
+
+# ── One-sample t-tests by year x season for moisture ─────────────────────
+seasonal_moist_tests <- daily_diff_season |>
+  group_by(year, season) |>
+  summarise(
+    n         = sum(!is.finite(moist_diff) == FALSE),
+    mean_diff = mean(moist_diff, na.rm = TRUE),
+    se_diff   = sd(moist_diff, na.rm = TRUE) / sqrt(n()),
+    p_value   = if (sum(is.finite(moist_diff)) >= 2)
+                  tryCatch(t.test(moist_diff[is.finite(moist_diff)], mu = 0)$p.value,
+                           error = \(e) NA_real_)
+                else NA_real_,
+    .groups = "drop"
+  ) |>
+  mutate(
+    significant = !is.na(p_value) & p_value < 0.05,
+    sig_label   = if_else(significant, "*", ""),
+    variable    = "Moisture (cm\u00B3 cm\u207B\u00B3)"
+  )
+
+# ── Combined table ───────────────────────────────────────────────────────
+seasonal_all <- bind_rows(seasonal_temp_tests, seasonal_moist_tests)
+
+cat("Seasonal one-sample t-test results (daily diff vs 0):\n")
+knitr::kable(
+  seasonal_all |> select(year, season, variable, n, mean_diff, se_diff, p_value, sig_label),
+  digits = 4, align = "c"
+)
+
+# ── Point plot with error bars ───────────────────────────────────────────
+p_seasonal <- ggplot(seasonal_all,
+                     aes(x = season, y = mean_diff, color = factor(year))) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_pointrange(aes(ymin = mean_diff - se_diff, ymax = mean_diff + se_diff),
+                  position = position_dodge(width = 0.4), size = 0.6) +
+  geom_text(aes(label = sig_label, y = mean_diff + se_diff + 0.02),
+            position = position_dodge(width = 0.4), size = 5, show.legend = FALSE,
+            fontface = "bold", vjust = 0) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 2) +
+  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8"), name = "Year") +
+  labs(
+    x = "Season",
+    y = "Mean Daily Difference (WCC \u2212 Sorghum) \u00B1 SE",
+    title = "Period-Aggregated One-Sample T-Tests",
+    caption = "* = p < 0.05 (one-sample t-test of daily differences against zero)"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
+
+p_seasonal
+```
+
+## Approach D: Linear Mixed Model
+
+Fit linear mixed-effects models to test Treatment effects while accounting for
+repeated measures across plots.
+
+```{r approach-d-lmm}
+#| message: false
+#| warning: false
+
+library(lme4)
+library(emmeans)
+
+# Ensure year is a factor for mixed model fitting
+raw_soil <- raw_soil |>
+  mutate(year_fct = factor(year))
+
+# ── Temperature model ────────────────────────────────────────────────────
+lmm_temp <- lmer(ts_2_mean ~ Treatment * year_fct + (1 | plot),
+                 data = raw_soil)
+
+cat("===== Temperature Mixed Model Summary =====\n")
+print(summary(lmm_temp))
+
+cat("\n===== Temperature ANOVA (Type III) =====\n")
+anova_temp <- anova(lmm_temp)
+print(anova_temp)
+
+cat("\n===== Temperature EMMs: Treatment Pairwise Comparisons =====\n")
+emm_temp <- emmeans(lmm_temp, pairwise ~ Treatment)
+print(emm_temp)
+
+cat("\n===== Temperature EMMs: Treatment x Year =====\n")
+emm_temp_yr <- emmeans(lmm_temp, pairwise ~ Treatment | year_fct)
+print(emm_temp_yr)
+
+# ── Moisture model ───────────────────────────────────────────────────────
+lmm_moist <- lmer(swc_2_mean ~ Treatment * year_fct + (1 | plot),
+                  data = raw_soil)
+
+cat("\n===== Moisture Mixed Model Summary =====\n")
+print(summary(lmm_moist))
+
+cat("\n===== Moisture ANOVA (Type III) =====\n")
+anova_moist <- anova(lmm_moist)
+print(anova_moist)
+
+cat("\n===== Moisture EMMs: Treatment Pairwise Comparisons =====\n")
+emm_moist <- emmeans(lmm_moist, pairwise ~ Treatment)
+print(emm_moist)
+
+cat("\n===== Moisture EMMs: Treatment x Year =====\n")
+emm_moist_yr <- emmeans(lmm_moist, pairwise ~ Treatment | year_fct)
+print(emm_moist_yr)
+```
+
+## Statistical Comparison
+
+```{r stat-comparison}
+#| message: false
+#| warning: false
+
+# ── Gather results from each approach ────────────────────────────────────
+
+# Approach A: uncorrected per-date significant counts
+a_temp <- sum(temp_status$significant, na.rm = TRUE)
+a_moist <- sum(moist_status$significant, na.rm = TRUE)
+
+# Approach B: FDR-corrected per-date significant counts
+b_temp <- sum(temp_status_fdr$significant_fdr, na.rm = TRUE)
+b_moist <- sum(moist_status_fdr$significant_fdr, na.rm = TRUE)
+
+# Approach C: number of significant seasons
+c_temp <- sum(seasonal_temp_tests$significant, na.rm = TRUE)
+c_moist <- sum(seasonal_moist_tests$significant, na.rm = TRUE)
+
+# Approach D: Treatment p-values from ANOVA
+# lmerTest provides "Pr(>F)"; without it the column may be "Pr(>Chisq)" or absent
+extract_p <- function(anova_tbl, term = "Treatment") {
+  tryCatch({
+    row <- anova_tbl[term, ]
+    p_col <- intersect(c("Pr(>F)", "Pr(>Chisq)"), names(row))
+    if (length(p_col) > 0) row[[p_col[1]]] else NA_real_
+  }, error = function(e) NA_real_)
+}
+d_temp_p <- extract_p(anova_temp)
+if (is.null(d_temp_p) || length(d_temp_p) == 0) d_temp_p <- NA_real_
+d_moist_p <- extract_p(anova_moist)
+if (is.null(d_moist_p) || length(d_moist_p) == 0) d_moist_p <- NA_real_
+
+comparison_table <- tibble::tibble(
+  Approach = c(
+    "A: Per-date t-tests (uncorrected)",
+    "B: Per-date t-tests (BH FDR)",
+    "C: Seasonal aggregated t-tests",
+    "D: Linear mixed model"
+  ),
+  Temperature = c(
+    paste0(a_temp, " significant dates"),
+    paste0(b_temp, " significant dates"),
+    paste0(c_temp, " significant seasons (of ", nrow(seasonal_temp_tests), ")"),
+    paste0("Treatment p = ", formatC(d_temp_p, format = "g", digits = 4))
+  ),
+  Moisture = c(
+    paste0(a_moist, " significant dates"),
+    paste0(b_moist, " significant dates"),
+    paste0(c_moist, " significant seasons (of ", nrow(seasonal_moist_tests), ")"),
+    paste0("Treatment p = ", formatC(d_moist_p, format = "g", digits = 4))
+  )
+)
+
+cat("===== Statistical Comparison Across Approaches =====\n\n")
+knitr::kable(comparison_table, align = "lll")
 ```

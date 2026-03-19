@@ -466,6 +466,8 @@ figure4 <- (p4a | p4b | p4c) / (p4d | p4e | p4f) +
   theme(legend.position = "top", legend.justification = "center")
 
 figure4
+
+ggsave(filename = "figure_4_n2o.png", plot = figure4, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r print-stats}
@@ -473,4 +475,523 @@ figure4
 cat("Daily difference stats:\n")
 n2o_diff_stats
 cat("\nANOVA p-value:", anova_n2o_p, "\n")
+```
+
+# Alternative Statistical Approaches
+
+## Approach B: Log-Transform + lmer
+
+```{r approach-b-model}
+#| message: false
+#| warning: false
+
+library(lme4)
+
+# Ensure year is a factor for model fitting (avoids column-name issues in emmeans)
+annual_n2o <- annual_n2o |>
+  mutate(year_fct = factor(year))
+
+# Fit mixed model on log-transformed annual cumulative N2O (sorghum pair)
+mod_n2o_log <- lmer(
+  log(annual_cum_n2o + 0.001) ~ Treatment * year_fct + (1 | plot),
+  data = annual_n2o
+)
+
+summary(mod_n2o_log)
+```
+
+```{r approach-b-emmeans}
+#| message: false
+#| warning: false
+
+# Back-transformed emmeans
+emm_n2o_log <- emmeans(mod_n2o_log, ~ Treatment | year_fct, type = "response")
+emm_n2o_log
+
+# Pairwise contrasts
+contrast_n2o_log <- pairs(emm_n2o_log)
+contrast_n2o_log
+```
+
+```{r approach-b-diagnostics}
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 5
+
+# Residual diagnostic plots
+par(mfrow = c(1, 2))
+plot(mod_n2o_log, main = "Residuals vs Fitted (Log-lmer)")
+qqnorm(resid(mod_n2o_log), main = "QQ Plot of Residuals (Log-lmer)")
+qqline(resid(mod_n2o_log), col = "red")
+par(mfrow = c(1, 1))
+```
+
+```{r approach-b-barchart}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 5
+
+# Extract means on the LOG scale for manual back-transformation
+emm_b_log_scale <- emmeans(mod_n2o_log, ~ Treatment | year_fct)
+emm_b_df <- as.data.frame(emm_b_log_scale)
+
+# CLD letters from pairwise contrasts
+cld_b <- tryCatch({
+  cld(emm_b_log_scale, adjust = "tukey", Letters = letters) |>
+    as.data.frame() |>
+    mutate(letter = gsub("\\s+", "", .group))
+}, error = \(e) {
+  emm_b_df |> mutate(letter = "a")
+})
+
+# Merge letters with emmeans
+emm_b_plot <- emm_b_df |>
+  left_join(
+    cld_b |> select(Treatment, year_fct, letter),
+    by = c("Treatment", "year_fct")
+  ) |>
+  mutate(
+    # Back-transform from log scale for bar heights
+    bt_mean = exp(emmean),
+    bt_lower = exp(lower.CL),
+    bt_upper = exp(upper.CL)
+  )
+
+ggplot(emm_b_plot, aes(x = Treatment, y = bt_mean, fill = Treatment)) +
+  geom_col(width = 0.6, alpha = 0.7, color = "black") +
+  geom_errorbar(aes(ymin = bt_lower, ymax = bt_upper), width = 0.2) +
+  geom_text(aes(y = bt_upper, label = letter),
+            vjust = -0.5, fontface = "bold", size = 4) +
+  facet_wrap(~ year_fct) +
+  scale_fill_manual(values = treatment_colors) +
+  labs(
+    x = "", y = expression("Back-Transformed Cumulative N"[2]*"O (kg N ha"^-1*")"),
+    title = "Approach B: Log-lmer Back-Transformed Means with CLD"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none")
+```
+
+## Approach C: glmmTMB with Gamma Family
+
+```{r approach-c-model}
+#| message: false
+#| warning: false
+
+has_glmmTMB <- requireNamespace("glmmTMB", quietly = TRUE)
+
+if (has_glmmTMB) {
+  library(glmmTMB)
+
+  mod_n2o_gamma <- glmmTMB(
+    annual_cum_n2o ~ Treatment * year_fct + (1 | plot),
+    family = Gamma(link = "log"),
+    data = annual_n2o
+  )
+
+  summary(mod_n2o_gamma)
+} else {
+  mod_n2o_gamma <- NULL
+  cat("⚠ glmmTMB is not installed. Install with:\n")
+  cat("  install.packages('glmmTMB')\n")
+  cat("Skipping Approach C (Gamma family model).\n")
+}
+```
+
+```{r approach-c-emmeans}
+#| message: false
+#| warning: false
+
+if (has_glmmTMB && !is.null(mod_n2o_gamma)) {
+  # Pairwise comparisons on the response scale
+  emm_n2o_gamma <- emmeans(mod_n2o_gamma, ~ Treatment | year_fct, type = "response")
+  emm_n2o_gamma
+
+  contrast_n2o_gamma <- pairs(emm_n2o_gamma)
+  contrast_n2o_gamma
+} else {
+  emm_n2o_gamma <- NULL
+  contrast_n2o_gamma <- NULL
+}
+```
+
+```{r approach-c-diagnostics}
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 5
+
+if (has_glmmTMB && !is.null(mod_n2o_gamma)) {
+  # Residual diagnostics — prefer DHARMa if available, otherwise base plots
+  if (requireNamespace("DHARMa", quietly = TRUE)) {
+    sim_res_gamma <- DHARMa::simulateResiduals(mod_n2o_gamma, plot = FALSE)
+    plot(sim_res_gamma, main = "DHARMa Residual Diagnostics (Gamma glmmTMB)")
+  } else {
+    res_gamma <- residuals(mod_n2o_gamma, type = "pearson")
+    fit_gamma <- fitted(mod_n2o_gamma)
+    par(mfrow = c(1, 2))
+    plot(fit_gamma, res_gamma,
+         xlab = "Fitted values", ylab = "Pearson residuals",
+         main = "Residuals vs Fitted (Gamma glmmTMB)")
+    abline(h = 0, lty = 2, col = "red")
+    qqnorm(res_gamma, main = "QQ Plot of Residuals (Gamma glmmTMB)")
+    qqline(res_gamma, col = "red")
+    par(mfrow = c(1, 1))
+  }
+} else {
+  cat("Skipped — glmmTMB not available.\n")
+}
+```
+
+```{r approach-c-aic}
+#| message: false
+#| warning: false
+
+if (has_glmmTMB && !is.null(mod_n2o_gamma)) {
+  # Compare AIC/BIC between log-lmer (Approach B) and Gamma glmmTMB (Approach C)
+  aic_comparison <- tibble(
+    Model = c("Approach B: Log-lmer", "Approach C: Gamma glmmTMB"),
+    AIC = c(AIC(mod_n2o_log), AIC(mod_n2o_gamma)),
+    BIC = c(BIC(mod_n2o_log), BIC(mod_n2o_gamma))
+  )
+  aic_comparison
+
+  cat("\nNote: AIC/BIC values are not directly comparable between log-lmer and\n")
+  cat("Gamma glmmTMB because the response variables differ (log(y+0.001) vs y).\n")
+  cat("Use residual diagnostics to judge which model fits better.\n")
+} else {
+  cat("Skipped — glmmTMB not available.\n")
+}
+```
+
+## Approach D: Non-Parametric (Kruskal-Wallis + Dunn's)
+
+```{r approach-d-kruskal}
+#| message: false
+#| warning: false
+
+library(rstatix)
+
+# Kruskal-Wallis test by year on annual cumulative N2O (sorghum pair)
+kw_n2o_results <- annual_n2o |>
+  group_by(year) |>
+  kruskal_test(annual_cum_n2o ~ Treatment)
+
+cat("Kruskal-Wallis results by year:\n")
+kw_n2o_results
+```
+
+```{r approach-d-dunns}
+#| message: false
+#| warning: false
+
+# Follow up with Dunn's test if any year is significant
+kw_significant_years <- kw_n2o_results |> filter(p < 0.05)
+
+if (nrow(kw_significant_years) > 0) {
+  dunn_n2o_results <- annual_n2o |>
+    filter(year %in% kw_significant_years$year) |>
+    group_by(year) |>
+    dunn_test(annual_cum_n2o ~ Treatment, p.adjust.method = "bonferroni")
+  cat("Dunn's post-hoc test results (significant years only):\n")
+  dunn_n2o_results
+} else {
+  dunn_n2o_results <- NULL
+  cat("No years had significant Kruskal-Wallis results; Dunn's test not performed.\n")
+}
+
+cat("\nNote: Kruskal-Wallis / Dunn's is a non-parametric fallback appropriate\n")
+cat("when parametric model residuals show severe departures from assumptions.\n")
+```
+
+## Approach E: All-Treatment ANOVA with CLD
+
+```{r approach-e-data}
+#| message: false
+#| warning: false
+
+# Compute plot-level daily flux for ALL treatments
+all_trt_flux <- flux_data |>
+  filter(year %in% c(2023, 2024)) |>
+  mutate(Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment)) |>
+  summarise(daily_flux_kg = mean(gnha_day_no_negative, na.rm = TRUE) / 1000,
+            .by = c(Treatment, year, plot, date))
+
+# Interpolation and cumulative sum (same method as existing code)
+all_trt_cum <- all_trt_flux |>
+  arrange(Treatment, year, plot, date) |>
+  group_by(Treatment, year, plot) |>
+  group_modify(\(df, keys) {
+    df <- df |>
+      complete(date = seq(min(date), max(date), by = "day")) |>
+      arrange(date)
+    non_na <- !is.na(df$daily_flux_kg)
+    if (sum(non_na) == 0) return(tibble())
+
+    flux_interp <- if (sum(non_na) >= 2) {
+      approx(df$date[non_na], df$daily_flux_kg[non_na],
+             xout = df$date, rule = 1, ties = "ordered")$y
+    } else {
+      rep(df$daily_flux_kg[non_na][1], nrow(df))
+    }
+
+    df |>
+      mutate(flux_interp = flux_interp, cum_flux_kg = cumsum(flux_interp)) |>
+      filter(!is.na(flux_interp))
+  }) |>
+  ungroup()
+
+# Annual totals for all treatments
+annual_n2o_all <- all_trt_cum |>
+  summarise(annual_cum_n2o = max(cum_flux_kg, na.rm = TRUE),
+            .by = c(year, plot, Treatment)) |>
+  filter(is.finite(annual_cum_n2o), annual_cum_n2o >= 0)
+
+cat("Annual cumulative N2O — all treatments:\n")
+annual_n2o_all |>
+  summarise(
+    mean = mean(annual_cum_n2o),
+    sd = sd(annual_cum_n2o),
+    n = n(),
+    .by = c(Treatment, year)
+  ) |>
+  arrange(year, Treatment)
+```
+
+```{r approach-e-model}
+#| message: false
+#| warning: false
+
+# Fit ANOVA / lmer with all treatments
+annual_n2o_all <- annual_n2o_all |>
+  mutate(year_fct = factor(year))
+
+mod_n2o_all <- lmer(
+  annual_cum_n2o ~ Treatment * year_fct + (1 | plot),
+  data = annual_n2o_all
+)
+
+summary(mod_n2o_all)
+anova_n2o_all <- anova(mod_n2o_all)
+anova_n2o_all
+```
+
+```{r approach-e-cld}
+#| message: false
+#| warning: false
+#| fig-width: 9
+#| fig-height: 6
+
+# CLD via emmeans for all treatments
+emm_n2o_all <- emmeans(mod_n2o_all, ~ Treatment | year_fct)
+
+cld_n2o_all <- tryCatch({
+  cld(emm_n2o_all, adjust = "tukey", Letters = letters) |>
+    as.data.frame() |>
+    mutate(letter = gsub("\\s+", "", .group))
+}, error = \(e) {
+  as.data.frame(emm_n2o_all) |> mutate(letter = "a")
+})
+
+cat("CLD groups for all treatments by year:\n")
+cld_n2o_all |> select(Treatment, year_fct, emmean, SE, letter)
+
+# Bar chart with all treatments
+all_trt_colors <- c("Sorghum" = "#D8D97AFF", "Sorghum + WCC" = "#95C36EFF",
+                    "Corn" = "#74C8C3FF", "Soy" = "#0A2E57FF")
+
+ggplot(cld_n2o_all, aes(x = Treatment, y = emmean, fill = Treatment)) +
+  geom_col(width = 0.6, alpha = 0.7, color = "black") +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL), width = 0.2) +
+  geom_text(aes(y = upper.CL, label = letter),
+            vjust = -0.5, fontface = "bold", size = 4) +
+  geom_jitter(data = annual_n2o_all,
+              aes(x = Treatment, y = annual_cum_n2o),
+              width = 0.1, size = 1.5, alpha = 0.5, inherit.aes = FALSE) +
+  facet_wrap(~ year_fct) +
+  scale_fill_manual(values = all_trt_colors) +
+  labs(
+    x = "",
+    y = expression("Annual Cumulative N"[2]*"O (kg N ha"^-1*")"),
+    title = "Approach E: All-Treatment ANOVA with CLD by Year"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none")
+```
+
+## Approach F: BH FDR-Corrected Per-Date Wilcoxon
+
+```{r approach-f-fdr}
+#| message: false
+#| warning: false
+
+# Apply Benjamini-Hochberg FDR correction to per-date Wilcoxon p-values within each year
+daily_sig_fdr <- daily_significance |>
+  filter(!is.na(p_value)) |>
+  group_by(year) |>
+  mutate(
+    p_value_bh = p.adjust(p_value, method = "BH"),
+    significant_bh = p_value_bh < 0.05
+  ) |>
+  ungroup()
+
+# Comparison: significant dates before vs after FDR correction
+fdr_comparison <- daily_sig_fdr |>
+  summarise(
+    total_dates = n(),
+    sig_uncorrected = sum(significant, na.rm = TRUE),
+    sig_fdr = sum(significant_bh, na.rm = TRUE),
+    .by = year
+  )
+
+cat("Per-date Wilcoxon significance: Uncorrected vs BH FDR-corrected\n")
+fdr_comparison
+
+# Show details of dates that change significance status
+cat("\nDates significant before but NOT after FDR correction:\n")
+daily_sig_fdr |>
+  filter(significant & !significant_bh) |>
+  select(year, date, p_value, p_value_bh) |>
+  arrange(year, date)
+
+cat("\nDates significant after FDR correction:\n")
+daily_sig_fdr |>
+  filter(significant_bh) |>
+  select(year, date, p_value, p_value_bh) |>
+  arrange(year, date)
+```
+
+## Statistical Comparison
+
+```{r stat-comparison}
+#| message: false
+#| warning: false
+
+# ── Gather p-values and summaries from each approach ─────────────────────
+
+# Approach A: existing ANOVA + Wilcoxon
+n_sig_wilcox_uncorrected <- daily_significance |>
+  filter(significant) |>
+  nrow()
+
+# Approach B: log-lmer
+anova_b <- anova(mod_n2o_log)
+# lmerTest provides "Pr(>F)"; without it, column may be "Pr(>Chisq)" or absent
+p_treatment_b <- tryCatch({
+  ab <- anova_b["Treatment", ]
+  p_col <- intersect(c("Pr(>F)", "Pr(>Chisq)"), names(ab))
+  if (length(p_col) > 0) ab[[p_col[1]]] else NA_real_
+}, error = \(e) NA_real_)
+if (is.null(p_treatment_b) || length(p_treatment_b) == 0) p_treatment_b <- NA_real_
+pairwise_b_df <- as.data.frame(contrast_n2o_log)
+
+# Approach C: Gamma glmmTMB (may be NULL if package not installed)
+p_treatment_c <- NA_real_
+pairwise_c_df <- NULL
+if (has_glmmTMB && !is.null(mod_n2o_gamma)) {
+  summ_c <- summary(mod_n2o_gamma)
+  coef_c <- summ_c$coefficients$cond
+  p_treatment_c <- tryCatch(coef_c["TreatmentSorghum + WCC", "Pr(>|z|)"], error = \(e) NA_real_)
+  pairwise_c_df <- as.data.frame(contrast_n2o_gamma)
+}
+
+# Approach D: Kruskal-Wallis
+kw_pvals <- kw_n2o_results |> select(year, p)
+
+# Approach E: all-treatment CLD
+cld_summary_e <- cld_n2o_all |>
+  select(Treatment, year_fct, letter) |>
+  arrange(year_fct, Treatment)
+
+# Approach F: FDR-corrected Wilcoxon
+n_sig_fdr <- daily_sig_fdr |> filter(significant_bh) |> nrow()
+
+# ── Build summary table ──────────────────────────────────────────────────
+format_p <- function(p) {
+  if (is.null(p) || length(p) == 0 || is.na(p)) return("NA")
+  if (p < 0.001) return("< 0.001")
+  sprintf("%.4f", p)
+}
+
+comparison_table <- tibble(
+  Approach = c(
+    "A: One-way ANOVA (existing)",
+    "B: Log-lmer (Treatment * Year)",
+    "C: Gamma glmmTMB (Treatment * Year)",
+    "D: Kruskal-Wallis (by year)",
+    "E: All-treatment lmer with CLD",
+    "F: BH FDR-corrected Wilcoxon"
+  ),
+  Key_Metric = c(
+    paste0("ANOVA p = ", format_p(anova_n2o_p),
+           "; ", n_sig_wilcox_uncorrected, " sig. Wilcoxon dates"),
+    paste0("Treatment p = ", format_p(p_treatment_b),
+           "; pairwise: ", paste(sapply(pairwise_b_df$p.value, format_p), collapse = ", ")),
+    paste0("Treatment p = ", format_p(p_treatment_c),
+           if (has_glmmTMB && !is.null(mod_n2o_gamma))
+             paste0("; AIC = ", round(AIC(mod_n2o_gamma), 1))
+           else "; glmmTMB not installed"),
+    paste0("KW p by year: ",
+           paste(paste0(kw_pvals$year, "=", sapply(kw_pvals$p, format_p)), collapse = "; ")),
+    paste0("CLD: ",
+           paste(paste0(cld_summary_e$Treatment, "(", cld_summary_e$year_fct, ")=",
+                        cld_summary_e$letter), collapse = ", ")),
+    paste0(n_sig_fdr, " sig. dates after FDR (was ", n_sig_wilcox_uncorrected, " uncorrected)")
+  )
+)
+
+cat("════════════════════════════════════════════════════════════════════\n")
+cat("                   STATISTICAL COMPARISON TABLE                    \n")
+cat("════════════════════════════════════════════════════════════════════\n\n")
+
+comparison_table |>
+  mutate(row = paste0(Approach, "\n  → ", Key_Metric)) |>
+  pull(row) |>
+  walk(~ cat(.x, "\n\n"))
+```
+
+```{r residual-comparison}
+#| message: false
+#| warning: false
+#| fig-width: 10
+#| fig-height: 5
+
+# ── Residual comparison: Approach B vs Approach C ────────────────────────
+if (has_glmmTMB && !is.null(mod_n2o_gamma)) {
+  par(mfrow = c(1, 2))
+
+  # Approach B residuals
+  qqnorm(resid(mod_n2o_log),
+         main = "Approach B: Log-lmer QQ Plot",
+         col = "#95C36EFF", pch = 16)
+  qqline(resid(mod_n2o_log), col = "red", lwd = 2)
+
+  # Approach C residuals
+  res_c <- residuals(mod_n2o_gamma, type = "pearson")
+  qqnorm(res_c,
+         main = "Approach C: Gamma glmmTMB QQ Plot",
+         col = "#74C8C3FF", pch = 16)
+  qqline(res_c, col = "red", lwd = 2)
+
+  par(mfrow = c(1, 1))
+
+  # Shapiro-Wilk normality test on residuals
+  cat("Shapiro-Wilk test on residuals:\n")
+  cat("  Approach B (log-lmer):     p =",
+      format_p(shapiro.test(resid(mod_n2o_log))$p.value), "\n")
+  cat("  Approach C (Gamma glmmTMB): p =",
+      format_p(shapiro.test(res_c)$p.value), "\n")
+} else {
+  # Only show Approach B residuals
+  qqnorm(resid(mod_n2o_log),
+         main = "Approach B: Log-lmer QQ Plot",
+         col = "#95C36EFF", pch = 16)
+  qqline(resid(mod_n2o_log), col = "red", lwd = 2)
+
+  cat("Shapiro-Wilk test on Approach B residuals: p =",
+      format_p(shapiro.test(resid(mod_n2o_log))$p.value), "\n")
+  cat("Approach C residual comparison skipped — glmmTMB not installed.\n")
+}
 ```

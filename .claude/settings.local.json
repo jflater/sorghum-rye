@@ -2,7 +2,17 @@
   "permissions": {
     "allow": [
       "Bash(Rscript:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "WebFetch(domain:docs.google.com)",
+      "Bash(grep -h \"library\\\\|require\" /Users/jaredflater/Projects/sorghum-rye/*.qmd)",
+      "Bash(grep -l \"lme4\\\\|glmmTMB\\\\|mixed\\\\|random\" /Users/jaredflater/Projects/sorghum-rye/*.qmd /Users/jaredflater/Projects/sorghum-rye/*.r)",
+      "Bash(grep -i \"sessionInfo\\\\|sessioninfo\" /Users/jaredflater/Projects/sorghum-rye/*.qmd /Users/jaredflater/Projects/sorghum-rye/*.r)",
+      "Bash(done)",
+      "Bash(quarto render figure_1_weather.qmd figure_2_microclimate.qmd figure_5_biomass.qmd)",
+      "Bash(quarto render figure_2_microclimate.qmd)",
+      "Bash(quarto render figure_5_biomass.qmd)",
+      "Bash(quarto render figure_1_weather.qmd figure_2_microclimate.qmd figure_3_leaching.qmd figure_4_n2o.qmd figure_5_biomass.qmd figure_3_leaching_spacing.qmd figure_4_n2o_spacing.qmd)",
+      "Bash(quarto render figure_2_microclimate.qmd && quarto render figure_3_leaching.qmd && quarto render figure_4_n2o.qmd && quarto render figure_5_biomass.qmd && quarto render figure_3_leaching_spacing.qmd && quarto render figure_4_n2o_spacing.qmd)"
     ],
     "deny": [],
     "ask": []

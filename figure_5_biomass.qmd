@@ -320,6 +320,8 @@ figure5 <- ggplot() +
   )
 
 figure5
+
+ggsave(filename = "figure_5_biomass.tiff", plot = figure5, width = 174, height = 100, units = "mm", dpi = 600, device = "tiff", compression = "lzw")
 ```
 
 ```{r print-tests}
@@ -327,3 +329,282 @@ figure5
 cat("Per-year t-test p-values:\n")
 sorghum_tests_by_year
 ```
+
+# Alternative Statistical Approaches
+
+The sections below apply additional statistical methods to the same sorghum
+biomass data processed above. Each approach creates its own variables so that
+the original objects (`sorghum_stats`, `sorghum_tests_by_year`, etc.) remain
+unchanged.
+
+## Approach B: Linear Mixed Model
+
+A linear mixed-effects model treats `Plot` as a random intercept, allowing the
+analysis to borrow information across years and account for repeated
+measurements on the same experimental units.
+
+```{r lmm-fit}
+#| message: false
+#| warning: false
+
+library(lme4)
+library(emmeans)
+
+# Fit mixed model: fixed effects for treatment, year, and their interaction;
+# random intercept for Plot
+mod_bio <- lmer(biomass_mg_ha ~ treatment * year + (1 | Plot),
+                data = sorghum_plot_data)
+
+summary(mod_bio)
+```
+
+```{r lmm-anova}
+#| message: false
+#| warning: false
+
+anova(mod_bio)
+```
+
+```{r lmm-emmeans}
+#| message: false
+#| warning: false
+
+# Pairwise comparisons of treatment within each year
+emm_bio <- emmeans(mod_bio, pairwise ~ treatment | year)
+emm_bio
+
+# Extract estimated marginal means as a data frame
+emm_df <- as.data.frame(emm_bio$emmeans)
+```
+
+```{r lmm-cld}
+#| message: false
+#| warning: false
+
+# Compact letter display from the mixed model
+library(multcomp)
+
+emm_cld <- cld(emmeans(mod_bio, ~ treatment | year), Letters = letters) |>
+ as.data.frame() |>
+ mutate(.group = trimws(.group))
+
+emm_cld
+```
+
+```{r lmm-figure}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 5
+#| fig-dpi: 300
+
+# Bar chart using mixed-model estimated marginal means and 95% CIs
+lmm_fig <- ggplot(emm_df, aes(x = treatment, y = emmean, fill = treatment)) +
+  geom_col(color = "black", width = 0.7) +
+  geom_errorbar(
+    aes(ymin = pmax(0, lower.CL), ymax = upper.CL),
+    width = 0.18
+  ) +
+  geom_text(
+    data = emm_cld,
+    aes(x = treatment, y = upper.CL + max(upper.CL) * 0.05, label = .group),
+    inherit.aes = FALSE, fontface = "bold", size = 3.8
+  ) +
+  facet_wrap(~year, nrow = 1) +
+  scale_fill_manual(
+    values = c("Sorghum" = "#D8D97AFF", "Sorghum + WCC" = "#95C36EFF"),
+    name = "Treatment"
+  ) +
+  labs(
+    title = "Approach B: Mixed-Model Estimated Marginal Means",
+    x = "",
+    y = expression("Oven-dried Biomass (Mg ha"^-1 * ")")
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "top", legend.justification = "center")
+
+lmm_fig
+```
+
+```{r lmm-compare-pvalues}
+#| message: false
+#| warning: false
+
+# Extract mixed-model pairwise p-values by year
+lmm_contrasts <- as.data.frame(emm_bio$contrasts) |>
+  mutate(approach = "B: Mixed Model") |>
+  select(year, p.value, approach)
+
+# Merge with original t-test p-values for comparison
+ttest_pvals <- sorghum_tests_by_year |>
+  mutate(approach = "A: t-test") |>
+  rename(p.value = p_value)
+
+pval_comparison_ab <- bind_rows(ttest_pvals, lmm_contrasts) |>
+  select(year, approach, p.value) |>
+  arrange(year, approach)
+
+knitr::kable(pval_comparison_ab,
+             digits = 4,
+             col.names = c("Year", "Approach", "p-value"),
+             caption = "Treatment comparison p-values: t-test vs. mixed model")
+```
+
+## Approach C: TOST Equivalence Testing
+
+The t-tests above test for a *difference*. Failing to reject H~0~ does **not**
+prove equivalence — it may simply reflect low power. A two-one-sided-t-test
+(TOST) procedure directly tests whether the treatments are *equivalent* within
+a practical margin.
+
+**Equivalence bounds:** +/- 2 Mg ha^-1^ (a difference of 2 Mg/ha is considered
+the smallest practically meaningful yield penalty).
+
+```{r tost-setup}
+#| message: false
+#| warning: false
+
+if (!requireNamespace("TOSTER", quietly = TRUE)) {
+  options(repos = c(CRAN = "https://cran.rstudio.com"))
+  install.packages("TOSTER")
+}
+library(TOSTER)
+```
+
+```{r tost-analysis}
+#| message: false
+#| warning: false
+
+# Run TOST equivalence test for each year using summary statistics
+tost_results <- sorghum_plot_data |>
+  group_by(year) |>
+  group_modify(~ {
+    sorghum_vals <- .x$biomass_mg_ha[.x$treatment == "Sorghum"]
+    wcc_vals     <- .x$biomass_mg_ha[.x$treatment == "Sorghum + WCC"]
+
+    m1  <- mean(sorghum_vals, na.rm = TRUE)
+    m2  <- mean(wcc_vals, na.rm = TRUE)
+    sd1 <- sd(sorghum_vals, na.rm = TRUE)
+    sd2 <- sd(wcc_vals, na.rm = TRUE)
+    n1  <- length(sorghum_vals)
+    n2  <- length(wcc_vals)
+
+    # tsum_TOST uses raw equivalence bounds directly
+    tost <- tsum_TOST(
+      m1 = m1, m2 = m2,
+      sd1 = sd1, sd2 = sd2,
+      n1 = n1, n2 = n2,
+      low_eqbound  = -2,
+      high_eqbound =  2,
+      eqbound_type = "raw",
+      alpha = 0.05
+    )
+
+    # The TOST decision is based on the LARGER of the two one-sided p-values
+    tibble(
+      mean_sorghum    = m1,
+      mean_wcc        = m2,
+      mean_diff       = m1 - m2,
+      tost_p_lower    = tost$TOST$p.value[1],
+      tost_p_upper    = tost$TOST$p.value[2],
+      tost_p          = max(tost$TOST$p.value[1], tost$TOST$p.value[2]),
+      nhst_p          = tost$TOST$p.value[3],
+      equivalent      = max(tost$TOST$p.value[1], tost$TOST$p.value[2]) < 0.05
+    )
+  }) |>
+  ungroup()
+```
+
+```{r tost-table}
+#| message: false
+#| warning: false
+
+knitr::kable(
+  tost_results |>
+    select(year, mean_diff, tost_p, nhst_p, equivalent) |>
+    mutate(
+      conclusion = case_when(
+        equivalent  ~ "Equivalent (no yield penalty)",
+        nhst_p < 0.05 ~ "Significant difference",
+        TRUE ~ "Inconclusive (neither different nor equivalent)"
+      )
+    ),
+  digits = 4,
+  col.names = c("Year", "Mean Diff (Mg/ha)", "TOST p",
+                "NHST p", "Equivalent?", "Conclusion"),
+  caption = "TOST Equivalence Testing (bounds: +/- 2 Mg/ha)"
+)
+```
+
+**Interpretation guide:**
+
+- **TOST p < 0.05 and NHST p >= 0.05:** Strong evidence of equivalence — the
+  treatments produce statistically indistinguishable yields within the 2 Mg/ha
+  margin.
+- **TOST p >= 0.05 and NHST p < 0.05:** A real difference exists that exceeds
+  the equivalence margin.
+- **Both p >= 0.05:** Inconclusive — the study lacks power to declare either a
+  difference or equivalence.
+
+## Statistical Comparison
+
+```{r comparison-table}
+#| message: false
+#| warning: false
+
+# Build combined summary across all three approaches
+approach_a <- sorghum_tests_by_year |>
+  transmute(
+    year,
+    approach    = "A: Per-year t-test",
+    p_value     = p_value,
+    conclusion  = if_else(p_value < 0.05, "Significant", "Not significant")
+  )
+
+approach_b <- as.data.frame(emm_bio$contrasts) |>
+  transmute(
+    year,
+    approach    = "B: Linear mixed model",
+    p_value     = p.value,
+    conclusion  = if_else(p.value < 0.05, "Significant", "Not significant")
+  )
+
+approach_c <- tost_results |>
+  transmute(
+    year,
+    approach    = "C: TOST equivalence",
+    p_value     = tost_p,
+    conclusion  = case_when(
+      equivalent & nhst_p >= 0.05 ~ "Equivalent (no yield penalty)",
+      !equivalent & nhst_p < 0.05 ~ "Significant difference",
+      TRUE ~ "Inconclusive"
+    )
+  )
+
+comparison_all <- bind_rows(approach_a, approach_b, approach_c) |>
+  arrange(year, approach)
+
+knitr::kable(
+  comparison_all,
+  digits = 4,
+  col.names = c("Year", "Approach", "p-value", "Conclusion"),
+  caption = "Summary of all three statistical approaches"
+)
+```
+
+### Interpretation Notes
+
+1. **t-test not significant, TOST significant:** This is the strongest evidence
+   for *no yield penalty*. The TOST procedure confirms that the mean difference
+   falls within the +/- 2 Mg/ha equivalence margin with at least 95% confidence.
+   Simply failing to reject H~0~ with a t-test cannot make this claim.
+
+2. **t-test significant:** There is evidence of a real treatment effect on
+   sorghum biomass. The TOST result will typically be non-significant in this
+   case because the difference exceeds the equivalence bounds.
+
+3. **Mixed model advantages:** The `lmer` approach borrows strength across
+   years through the random Plot intercept, yielding a more stable variance
+   estimate and better power than separate per-year t-tests. It also provides a
+   single omnibus test for the treatment-by-year interaction, clarifying whether
+   treatment effects are consistent over time.

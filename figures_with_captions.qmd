@@ -1,0 +1,68 @@
+---
+title: "Study Figures with Captions and Statistical Annotations"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  docx:
+    number-sections: true
+---
+
+# Figure 1: Weather Conditions
+
+![](figure_1_weather.tiff)
+
+**Figure 1.** Cumulative precipitation (a) and growing degree days (b) for the 2023 and 2024 study years compared to a 34-year historical envelope. The gray shaded region represents the minimum to maximum range across historical years; the black dotted-dashed line shows the 34-year mean. Red solid line = 2023 (drought year); blue dashed line = 2024 (near-normal year). These conditions provide context for interpreting subsequent treatment effects on soil microclimate, nitrogen cycling, and crop productivity.
+
+## Statistical Approach for Figure 1
+
+This figure is purely descriptive and contextual. No formal statistical testing is performed on the weather data. The historical min–max envelope and 34-year mean line provide visual reference to frame the 2023–2024 conditions relative to long-term patterns, without hypothesis testing on whether 2023 was significantly drier than normal.
+
+---
+
+# Figure 2: Soil Microclimate
+
+![](figure_2_microclimate.tiff)
+
+**Figure 2.** Soil temperature and volumetric water content at 5 cm depth under sorghum-only (yellow) and sorghum + winter cover crop (green) treatments in 2023 (panels a–b for temperature, c–d for moisture) and 2024 (panels b and d, respectively). Time-series panels (a–d) show daily means with colored status bars above each panel flagging dates with significant treatment differences: black = *p* < 0.05, gray = non-significant, light gray = no data. Difference panels (e–f) show boxplots of daily treatment differences (WCC minus Sorghum) by year, with the horizontal dashed line at zero representing no effect. A bold letter above a boxplot indicates that the mean daily difference was significantly different from zero in that year (one-sample *t*-test, *p* < 0.05).
+
+## Statistical Approach for Figure 2
+
+Per-date two-sample Welch's *t*-tests (α = 0.05) were used to identify dates with significant treatment differences in temperature and moisture (panels a–d). Significance markers on status bars indicate *p* < 0.05 but should be interpreted cautiously due to multiple comparisons without correction; approximately 60–80 independent tests across the growing season inflate the family-wise error rate. For difference panels (e–f), one-sample *t*-tests of daily differences against zero were conducted within each year. The boxplot annotations follow standard conventions: the horizontal line indicates the median, the box spans the interquartile range, and whiskers extend to 1.5× the interquartile range.
+
+---
+
+# Figure 3: Nitrate Leaching
+
+![](figure_3_leaching_spacing.tiff)
+
+**Figure 3.** Daily and cumulative leached nitrogen through tile drainage under sorghum-only (yellow) and sorghum + winter cover crop (green) treatments. Panels (a–b) show daily leached nitrogen with precipitation (blue bars) overlaid; asterisks (*) indicate dates with significant treatment differences (*p* < 0.05). Panel (c) shows the distribution of daily treatment differences (WCC minus Sorghum) by year; differences below zero indicate the cover crop reduced leaching. A bold letter above a boxplot indicates that the mean daily difference was significantly different from zero in that year (one-sample *t*-test, *p* < 0.05). Panels (d–e) show cumulative leached nitrogen across each year. Panel (f) compares total annual cumulative leaching pooled across both years, with letters indicating groups that differ significantly at *p* < 0.05.
+
+## Statistical Approach for Figure 3
+
+Per-date Wilcoxon rank-sum tests (α = 0.05) were applied to daily leaching data (panels a–b) to identify treatment differences, flagged with asterisks. Like Figure 2, multiple comparisons without correction inflate Type I error; with only 3–4 plots per treatment per date, power is limited and only large treatment effects are reliably detected. For panel (c), one-sample *t*-tests of daily differences (WCC minus Sorghum) against zero were used within each year. Panel (f) employs one-way ANOVA with Tukey-adjusted pairwise comparisons (via *emmeans*) on annual cumulative leaching, pooling both years. Compact letter display (CLD) indicates groups that differ significantly; letters connected to the same group are not significantly different at *p* < 0.05.
+
+---
+
+# Figure 4: Nitrous Oxide Emissions
+
+![](figure_4_n2o_spacing.tiff)
+
+**Figure 4.** Daily and cumulative nitrous oxide (N₂O) fluxes under sorghum-only (yellow) and sorghum + winter cover crop (green) treatments. Panels (a–b) show daily N₂O fluxes with precipitation overlay; asterisks (*) flag dates with significant differences (*p* < 0.05). Panel (c) displays the distribution of daily treatment differences (WCC minus Sorghum) by year. A bold letter above a boxplot indicates that the mean daily difference was significantly different from zero in that year (one-sample *t*-test, *p* < 0.05). Panels (d–e) show cumulative N₂O across each year. Panel (f) compares total annual cumulative N₂O pooled across years, with letters indicating significantly different groups at *p* < 0.05.
+
+## Statistical Approach for Figure 4
+
+Per-date Wilcoxon rank-sum tests (α = 0.05) tested for daily N₂O treatment differences. N₂O fluxes are notoriously zero-inflated and right-skewed (many near-zero measurements with occasional emission spikes), making the Wilcoxon test appropriate for non-normality. However, with only 4 plots per treatment, power is extremely low; only perfect separation achieves *p* < 0.05, and the asterisks should be interpreted cautiously. For panel (c), one-sample *t*-tests of daily differences against zero were performed within each year. Cumulative fluxes were calculated via linear interpolation between measurement days, a standard but potentially imperfect approach that can miss short-lived emission pulses between sampling events. Panel (f) uses one-way ANOVA with Tukey-adjusted comparisons on pooled annual totals, with CLD indicating significantly different groups.
+
+---
+
+# Figure 5: Biomass Yields
+
+![](figure_5_biomass.tiff)
+
+**Figure 5.** Sorghum and cereal rye oven-dried biomass (Mg ha⁻¹, 0% moisture) under sorghum-only and sorghum + winter cover crop (Sorghum + WCC) treatments in 2023 (a) and 2024 (b). Sorghum bars (wider, background) and cereal rye bars (narrower, foreground overlay) both originate at zero; rye biomass in the Sorghum + WCC treatment is additive to, not included within, the sorghum bar. Error bars represent 95% confidence intervals. Letters above sorghum bars indicate groups that differ significantly at *p* < 0.05; groups sharing the same letter are not significantly different.
+
+## Statistical Approach for Figure 5
+
+Welch's two-sample *t*-tests (α = 0.05) were used to compare sorghum biomass between treatments within each year (2023 and 2024 analyzed separately). The Welch correction accounts for potentially unequal variances between treatments. With n = 4 plots per treatment per year, the test has low power to detect moderate yield differences; only large differences are reliably detected. Compact letter display (CLD) is used to annotate significantly different groups. The approach assumes biomass is approximately normally distributed, an assumption difficult to verify with only 4 observations per group. Rye biomass is presented for reference (overlay points) but is not formally compared between treatments in this analysis.
+
+

@@ -465,6 +465,8 @@ figure3 <- (p3a | p3b | p3c) / (p3d | p3e | p3f) +
   theme(legend.position = "top", legend.justification = "center")
 
 figure3
+
+ggsave(filename = "figure_3_leaching.png", plot = figure3, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r print-stats}
@@ -472,4 +474,355 @@ figure3
 cat("Daily difference stats:\n")
 leach_diff_stats
 cat("\nANOVA p-value:", anova_leached_p, "\n")
+```
+
+# Alternative Statistical Approaches
+
+The sections below explore alternative analytical frameworks for the leaching
+data. Each approach creates its own variables and leaves the existing figure
+code untouched. Note that the Google Doc recommends renaming the y-axis label
+to **"Leached N"** (nitrate + ammonium) in all new panels.
+
+## Approach B: Mixed Model (Sorghum Pair)
+
+This approach fits a linear mixed-effects model to annual cumulative leached N
+for the two-treatment subset (Sorghum vs Sorghum + WCC), treating `plot` as a
+random intercept and crossing Treatment with year.
+
+```{r approach-b-mixed-model}
+#| message: false
+#| warning: false
+
+library(lme4)
+
+# Ensure year is a factor for model fitting (avoids column-name issues in emmeans)
+annual_leached <- annual_leached |>
+  mutate(year_fct = factor(year))
+
+# Fit mixed model on the existing annual_leached data
+mod_leach <- lmer(
+  annual_leached_n ~ Treatment * year_fct + (1 | plot),
+  data = annual_leached
+)
+
+cat("── Approach B: Mixed Model Summary ──────────────────────────\n")
+summary(mod_leach)
+
+# Pairwise contrasts by year
+emm_leach_b <- emmeans(mod_leach, pairwise ~ Treatment | year_fct)
+cat("\n── Pairwise Contrasts by Year ──────────────────────────────\n")
+emm_leach_b
+
+# Extract means and contrasts for plotting
+emm_leach_b_df <- as.data.frame(emm_leach_b$emmeans)
+
+contrast_leach_b <- as.data.frame(emm_leach_b$contrasts) |>
+  mutate(
+    p_label = ifelse(p.value < 0.001, "p < 0.001", sprintf("p = %.3f", p.value)),
+    year = as.numeric(as.character(year_fct))
+  )
+
+# Bar chart with means ± SE and p-value annotations
+bar_max_b <- max(emm_leach_b_df$emmean + emm_leach_b_df$SE, na.rm = TRUE)
+
+p_approach_b <- ggplot(emm_leach_b_df,
+                       aes(x = year_fct, y = emmean, fill = Treatment)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6,
+           color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = pmax(emmean - SE, 0), ymax = emmean + SE),
+    position = position_dodge(width = 0.7), width = 0.2
+  ) +
+  geom_text(
+    data = contrast_leach_b,
+    aes(x = factor(year), y = bar_max_b * 1.08, label = p_label),
+    inherit.aes = FALSE, size = 3.5, fontface = "italic"
+  ) +
+  scale_fill_manual(values = treatment_colors) +
+  labs(
+    x = "Year",
+    y = expression("Leached N (kg N ha"^-1 * ")"),
+    title = "Approach B: Mixed Model — Treatment Means ± SE by Year"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
+
+p_approach_b
+```
+
+## Approach C: All-Treatment ANOVA with CLD
+
+This section includes all four treatments (Sorghum, Sorghum + Rye, Corn, Soy)
+and applies compact letter display (CLD) via Tukey HSD for pairwise
+comparisons.
+
+```{r approach-c-all-treatment}
+#| message: false
+#| warning: false
+
+# Recompute annual cumulative leached N for ALL treatments
+annual_leached_all <- leaching_data |>
+  mutate(plot = as.character(plot)) |>
+  summarise(
+    annual_leached_n = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha,
+    .by = c(year, plot, treatment)
+  ) |>
+  filter(is.finite(annual_leached_n), annual_leached_n >= 0) |>
+  mutate(year_fct = factor(year))
+
+# Attempt mixed model; fall back to aov if convergence fails
+mod_leach_all <- tryCatch(
+  {
+    m <- lmer(
+      annual_leached_n ~ treatment * year_fct + (1 | plot),
+      data = annual_leached_all
+    )
+    cat("Mixed model (lmer) converged successfully.\n")
+    m
+  },
+  error = function(e) {
+    cat("lmer failed to converge — falling back to aov().\n")
+    cat("Error:", conditionMessage(e), "\n")
+    NULL
+  }
+)
+
+if (is.null(mod_leach_all)) {
+  mod_leach_all <- aov(
+    annual_leached_n ~ treatment * year_fct,
+    data = annual_leached_all
+  )
+  cat("aov() model fitted.\n")
+}
+
+cat("\n── Approach C: Model Summary ──────────────────────────────\n")
+summary(mod_leach_all)
+
+# CLD via emmeans + Tukey HSD
+emm_leach_c <- emmeans(mod_leach_all, ~ treatment | year_fct)
+cld_leach_c <- cld(emm_leach_c, adjust = "tukey", Letters = letters) |>
+  as.data.frame() |>
+  mutate(
+    letter = gsub("\\s+", "", .group),
+    year_num = as.numeric(as.character(year_fct))
+  )
+
+cat("\n── CLD Groups by Year ──────────────────────────────────────\n")
+print(cld_leach_c |> select(treatment, year_fct, emmean, SE, letter))
+
+# All-treatment color palette
+treatment_colors_all <- c(
+  "Sorghum"       = "#D8D97AFF",
+  "Sorghum + Rye" = "#95C36EFF",
+  "Corn"          = "#74C8C3FF",
+  "Soy"           = "#0A2E57FF"
+)
+
+# Grouped bar chart with CLD letters
+bar_max_c <- max(cld_leach_c$emmean + cld_leach_c$SE, na.rm = TRUE)
+
+p_approach_c <- ggplot(cld_leach_c,
+                       aes(x = factor(year_num), y = emmean, fill = treatment)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.65,
+           color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = pmax(emmean - SE, 0), ymax = emmean + SE),
+    position = position_dodge(width = 0.75), width = 0.2
+  ) +
+  geom_text(
+    aes(y = emmean + SE + bar_max_c * 0.03, label = letter),
+    position = position_dodge(width = 0.75),
+    size = 3.5, fontface = "bold", vjust = 0
+  ) +
+  scale_fill_manual(values = treatment_colors_all) +
+  labs(
+    x = "Year",
+    y = expression("Leached N (kg N ha"^-1 * ")"),
+    fill = "Treatment",
+    title = "Approach C: All-Treatment ANOVA — CLD Groups by Year"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
+
+p_approach_c
+```
+
+## Approach D: Log-Transformed Mixed Model
+
+Leaching data are typically right-skewed. This approach fits the same Sorghum-
+pair mixed model from Approach B on the log-transformed response and compares
+residual diagnostics.
+
+```{r approach-d-log-model}
+#| message: false
+#| warning: false
+
+# Log-transformed mixed model (small constant avoids log(0))
+mod_leach_log <- lmer(
+  log(annual_leached_n + 0.01) ~ Treatment * year_fct + (1 | plot),
+  data = annual_leached
+)
+
+cat("── Approach D: Log-Transformed Model Summary ────────────────\n")
+summary(mod_leach_log)
+
+# Back-transformed emmeans
+emm_leach_d <- emmeans(mod_leach_log, pairwise ~ Treatment | year_fct, type = "response")
+cat("\n── Back-Transformed Means ──────────────────────────────────\n")
+emm_leach_d
+```
+
+```{r approach-d-diagnostics}
+#| message: false
+#| warning: false
+#| fig-height: 10
+#| fig-width: 10
+
+# Residual diagnostics comparison
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+
+# Untransformed model (Approach B) residuals
+plot(fitted(mod_leach), resid(mod_leach),
+     xlab = "Fitted", ylab = "Residuals",
+     main = "Approach B: Residuals vs Fitted",
+     pch = 16, col = alpha("steelblue", 0.7))
+abline(h = 0, lty = 2, col = "red")
+
+qqnorm(resid(mod_leach), main = "Approach B: Q-Q Plot", pch = 16,
+       col = alpha("steelblue", 0.7))
+qqline(resid(mod_leach), col = "red", lwd = 1.5)
+
+# Log-transformed model (Approach D) residuals
+plot(fitted(mod_leach_log), resid(mod_leach_log),
+     xlab = "Fitted", ylab = "Residuals",
+     main = "Approach D: Residuals vs Fitted (log)",
+     pch = 16, col = alpha("darkorange", 0.7))
+abline(h = 0, lty = 2, col = "red")
+
+qqnorm(resid(mod_leach_log), main = "Approach D: Q-Q Plot (log)", pch = 16,
+       col = alpha("darkorange", 0.7))
+qqline(resid(mod_leach_log), col = "red", lwd = 1.5)
+
+par(mfrow = c(1, 1))
+```
+
+## Approach E: BH FDR-Corrected Per-Date Wilcoxon
+
+The existing per-date Wilcoxon tests (used for asterisks in panels a--b) do
+not account for the large number of comparisons across dates. This approach
+applies Benjamini--Hochberg FDR correction within each year.
+
+```{r approach-e-fdr}
+#| message: false
+#| warning: false
+
+# Apply BH correction within each year
+fdr_leaching_sig <- daily_leaching_sig |>
+  group_by(year) |>
+  mutate(p_adjusted = p.adjust(p_value, method = "BH")) |>
+  ungroup() |>
+  mutate(significant_fdr = !is.na(p_adjusted) & p_adjusted < 0.05)
+
+# Comparison: uncorrected vs FDR-corrected significant dates
+fdr_comparison <- fdr_leaching_sig |>
+  summarise(
+    n_dates_tested   = sum(!is.na(p_value)),
+    n_sig_uncorrected = sum(significant, na.rm = TRUE),
+    n_sig_fdr        = sum(significant_fdr, na.rm = TRUE),
+    pct_lost         = ifelse(
+      n_sig_uncorrected > 0,
+      sprintf("%.1f%%", 100 * (1 - n_sig_fdr / n_sig_uncorrected)),
+      "N/A"
+    ),
+    .by = year
+  )
+
+cat("── Approach E: Uncorrected vs BH FDR-Corrected Significance ──\n\n")
+knitr::kable(
+  fdr_comparison,
+  col.names = c("Year", "Dates Tested", "Sig. (Uncorrected)",
+                "Sig. (BH FDR)", "% Lost"),
+  align = "ccccc"
+)
+```
+
+## Statistical Comparison
+
+Summary table comparing all approaches on the leaching data.
+
+```{r statistical-comparison}
+#| message: false
+#| warning: false
+
+# ── Gather metrics from each approach ────────────────────────────────────
+
+# Approach A: existing one-way ANOVA
+approach_a_p <- ifelse(anova_leached_p < 0.001, "< 0.001",
+                       sprintf("%.3f", anova_leached_p))
+approach_a_nsig <- sum(daily_leaching_sig$significant, na.rm = TRUE)
+
+# Approach B: mixed model Treatment main effect
+# lmerTest provides "Pr(>F)"; without it the column may be "Pr(>Chisq)" or absent
+approach_b_anova <- tryCatch({
+  anova_b <- anova(mod_leach)
+  ab <- anova_b["Treatment", ]
+  p_col <- intersect(c("Pr(>F)", "Pr(>Chisq)"), names(ab))
+  p_trt <- if (length(p_col) > 0) ab[[p_col[1]]] else NA_real_
+  if (is.null(p_trt) || length(p_trt) == 0 || is.na(p_trt)) "N/A"
+  else if (p_trt < 0.001) "< 0.001"
+  else sprintf("%.3f", p_trt)
+}, error = function(e) "N/A")
+
+approach_b_pairwise <- contrast_leach_b |>
+  mutate(entry = paste0(year, ": ", p_label)) |>
+  pull(entry) |>
+  paste(collapse = "; ")
+
+# Approach C: CLD groups
+approach_c_cld <- cld_leach_c |>
+  mutate(entry = paste0(treatment, " (", year_fct, "): ", letter)) |>
+  pull(entry) |>
+  paste(collapse = "; ")
+
+# Approach D: log-transformed model p-values
+approach_d_anova <- tryCatch({
+  anova_d <- anova(mod_leach_log)
+  ad <- anova_d["Treatment", ]
+  p_col_d <- intersect(c("Pr(>F)", "Pr(>Chisq)"), names(ad))
+  p_trt_d <- if (length(p_col_d) > 0) ad[[p_col_d[1]]] else NA_real_
+  if (is.null(p_trt_d) || length(p_trt_d) == 0 || is.na(p_trt_d)) "N/A"
+  else if (p_trt_d < 0.001) "< 0.001"
+  else sprintf("%.3f", p_trt_d)
+}, error = function(e) "N/A")
+
+# Approach E: FDR-corrected counts
+approach_e_nsig <- sum(fdr_leaching_sig$significant_fdr, na.rm = TRUE)
+
+# ── Build comparison table ───────────────────────────────────────────────
+comparison_table <- tibble(
+  Approach = c(
+    "A: One-way ANOVA (current)",
+    "B: Mixed Model (Sorghum pair)",
+    "C: All-Treatment ANOVA + CLD",
+    "D: Log-Transformed Mixed Model",
+    "E: BH FDR-Corrected Wilcoxon"
+  ),
+  `Key Statistic` = c(
+    paste0("ANOVA p = ", approach_a_p),
+    paste0("Treatment p = ", approach_b_anova),
+    "CLD groups (see below)",
+    paste0("Treatment p = ", approach_d_anova),
+    paste0(approach_e_nsig, " significant dates (FDR)")
+  ),
+  Details = c(
+    paste0(approach_a_nsig, " significant Wilcoxon dates (uncorrected)"),
+    approach_b_pairwise,
+    approach_c_cld,
+    "Log(y + 0.01); back-transformed means shown above",
+    paste0("vs ", approach_a_nsig, " uncorrected; BH correction within year")
+  )
+)
+
+cat("── Statistical Comparison Across Approaches ────────────────\n\n")
+knitr::kable(comparison_table, align = "lll")
 ```

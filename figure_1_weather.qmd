@@ -94,6 +94,11 @@ the 34-year mean line provides an appropriate visual reference.
 Neither alternative would change the manuscript conclusions; the current
 approach clearly communicates the drought--normal contrast.
 
+**Reviewer check (Marshall):** Formatting issues (panel labels, figure width,
+legend alignment) have been confirmed as resolved. The figure uses patchwork
+with `(a)`/`(b)` tags, `fig-width: 10`, and a top-aligned single-row legend.
+Both optional enhancements are implemented below for comparison.
+
 # Data Processing
 
 ```{r load-data}
@@ -127,7 +132,7 @@ gdd <- weather_raw |>
 
 ```{r compute-envelopes}
 # Historical envelopes (excluding study years)
-hist_years <- . |> filter(!year %in% c(2023, 2024))
+hist_years <- \(x) x |> filter(!year %in% c(2023, 2024))
 
 hist_env_rain <- rain |>
   hist_years() |>
@@ -236,4 +241,170 @@ figure1 <- (rain_plot | gdd_plot) +
   )
 
 figure1
+
+ggsave(filename = "figure_1_weather.tiff", plot = figure1, width = 174, height = 65, units = "mm", dpi = 600, device = "tiff", compression = "lzw")
+```
+
+# Alternative Visualizations
+
+## Approach B: Percentile Bands (10th/90th)
+
+Replace the min--max envelope with 10th/90th percentile ribbons to reduce the
+influence of extreme single-year outliers and give a better sense of "typical"
+variability.
+
+```{r percentile-envelopes}
+# 10th/90th percentile envelopes (excluding study years)
+pctile_env_rain <- rain |>
+  hist_years() |>
+  summarise(
+    p10 = quantile(cumulative_precip, 0.10, na.rm = TRUE),
+    p90 = quantile(cumulative_precip, 0.90, na.rm = TRUE),
+    .by = doy_date
+  )
+
+pctile_env_gdd <- gdd |>
+  hist_years() |>
+  summarise(
+    p10 = quantile(cumulative_gdd, 0.10, na.rm = TRUE),
+    p90 = quantile(cumulative_gdd, 0.90, na.rm = TRUE),
+    .by = doy_date
+  )
+```
+
+```{r figure1-percentile}
+#| fig-width: 10
+#| fig-height: 4.5
+#| fig-dpi: 300
+
+rain_plot_pctile <- ggplot() +
+  geom_ribbon(
+    data = pctile_env_rain,
+    aes(x = doy_date, ymin = p10, ymax = p90),
+    fill = "gray80", alpha = 0.6
+  ) +
+  geom_line(
+    data = rain_highlight,
+    aes(x = doy_date, y = cumulative_precip, color = year, linetype = year),
+    linewidth = 0.7
+  ) +
+  scale_color_manual(name = "Year", values = year_colors, labels = year_labels) +
+  scale_linetype_manual(name = "Year", values = year_linetypes, labels = year_labels) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+  labs(x = "", y = "Cumulative Precipitation (mm)", tag = "(a)") +
+  theme_publication(base_size = 10)
+
+gdd_plot_pctile <- ggplot() +
+  geom_ribbon(
+    data = pctile_env_gdd,
+    aes(x = doy_date, ymin = p10, ymax = p90),
+    fill = "gray80", alpha = 0.6
+  ) +
+  geom_line(
+    data = gdd_highlight,
+    aes(x = doy_date, y = cumulative_gdd, color = year, linetype = year),
+    linewidth = 0.7
+  ) +
+  scale_color_manual(name = "Year", values = year_colors, labels = year_labels) +
+  scale_linetype_manual(name = "Year", values = year_linetypes, labels = year_labels) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+  labs(x = "", y = "Cumulative Growing Degree Days (GDD)", tag = "(b)") +
+  theme_publication(base_size = 10)
+
+figure1_pctile <- (rain_plot_pctile | gdd_plot_pctile) +
+  plot_layout(guides = "collect", widths = c(1.05, 1.05)) &
+  theme_publication(base_size = 10) &
+  theme(
+    legend.position  = "top",
+    legend.text      = element_text(size = 9),
+    legend.key.width = unit(1.1, "cm"),
+    plot.margin      = margin(t = 4, r = 6, b = 3, l = 6, unit = "pt"),
+    plot.tag         = element_text(face = "bold", size = 11),
+    plot.tag.position = "topleft"
+  ) &
+  guides(
+    color    = guide_legend(nrow = 1, byrow = TRUE),
+    linetype = guide_legend(nrow = 1, byrow = TRUE)
+  )
+
+figure1_pctile
+```
+
+## Approach C: Anomaly Framing
+
+Show 2023/2024 as cumulative departures from the long-term mean. Positive
+values indicate wetter/warmer-than-average conditions; negative values indicate
+drier/cooler-than-average.
+
+```{r anomaly-data}
+# Compute anomaly curves: cumulative value minus long-term mean at each DOY
+rain_anomaly <- rain |>
+  filter(year %in% c(2023, 2024)) |>
+  left_join(
+    mean_cum_rain |> select(doy_date, mean_precip = cumulative_precip),
+    by = "doy_date"
+  ) |>
+  mutate(
+    anomaly = cumulative_precip - mean_precip,
+    year = as.character(year)
+  ) |>
+  filter(!is.na(anomaly))
+
+gdd_anomaly <- gdd |>
+  filter(year %in% c(2023, 2024)) |>
+  left_join(
+    mean_cum_gdd |> select(doy_date, mean_gdd = cumulative_gdd),
+    by = "doy_date"
+  ) |>
+  mutate(
+    anomaly = cumulative_gdd - mean_gdd,
+    year = as.character(year)
+  ) |>
+  filter(!is.na(anomaly))
+```
+
+```{r figure1-anomaly}
+#| fig-width: 10
+#| fig-height: 4.5
+#| fig-dpi: 300
+
+anomaly_colors <- c("2023" = "#E41A1C", "2024" = "#377EB8")
+
+rain_anom_plot <- ggplot(rain_anomaly, aes(x = doy_date, y = anomaly,
+                                            color = year, linetype = year)) +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "gray40") +
+  geom_line(linewidth = 0.7) +
+  scale_color_manual(name = "Year", values = anomaly_colors) +
+  scale_linetype_manual(name = "Year", values = c("2023" = "solid", "2024" = "dashed")) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+  labs(x = "", y = "Precip. Anomaly vs. 34-yr Mean (mm)", tag = "(a)") +
+  theme_publication(base_size = 10)
+
+gdd_anom_plot <- ggplot(gdd_anomaly, aes(x = doy_date, y = anomaly,
+                                          color = year, linetype = year)) +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "gray40") +
+  geom_line(linewidth = 0.7) +
+  scale_color_manual(name = "Year", values = anomaly_colors) +
+  scale_linetype_manual(name = "Year", values = c("2023" = "solid", "2024" = "dashed")) +
+  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+  labs(x = "", y = "GDD Anomaly vs. 34-yr Mean", tag = "(b)") +
+  theme_publication(base_size = 10)
+
+figure1_anomaly <- (rain_anom_plot | gdd_anom_plot) +
+  plot_layout(guides = "collect", widths = c(1.05, 1.05)) &
+  theme_publication(base_size = 10) &
+  theme(
+    legend.position  = "top",
+    legend.text      = element_text(size = 9),
+    legend.key.width = unit(1.1, "cm"),
+    plot.margin      = margin(t = 4, r = 6, b = 3, l = 6, unit = "pt"),
+    plot.tag         = element_text(face = "bold", size = 11),
+    plot.tag.position = "topleft"
+  ) &
+  guides(
+    color    = guide_legend(nrow = 1, byrow = TRUE),
+    linetype = guide_legend(nrow = 1, byrow = TRUE)
+  )
+
+figure1_anomaly
 ```

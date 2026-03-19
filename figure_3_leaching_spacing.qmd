@@ -1,0 +1,847 @@
+---
+title: "Figure 3: Nitrate Leaching"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 12
+    fig-height: 8
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Scientific Context
+
+Nitrate leaching via subsurface tile drainage represents a primary nitrogen
+loss pathway in agricultural systems. This figure shows daily and cumulative
+nitrogen losses through tile drainage, demonstrating the key finding that the
+winter cover crop substantially reduced nitrogen leaching compared to the
+no-cover control.
+
+The figure has six panels arranged in a 2 x 3 grid:
+
+- **(a--b)** Daily leached N with precipitation overlay (2023, 2024)
+- **(c)** Daily treatment difference boxplot (WCC minus Sorghum) by year
+- **(d--e)** Cumulative leached N (2023, 2024)
+- **(f)** Annual cumulative leached N by treatment (years combined)
+
+# Setup
+
+```{r setup}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(readxl)
+library(patchwork)
+library(lubridate)
+library(janitor)
+library(emmeans)
+library(multcomp)
+
+# ── Publication theme ──────────────────────────────────────────────────────
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Arial") +
+    theme(
+      panel.background   = element_rect(fill = "#ffffffff", color = NA),
+      plot.background    = element_rect(fill = "#ffffffff", color = NA),
+      strip.background   = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major   = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor   = element_blank(),
+      panel.spacing      = unit(3, "lines"),
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 1),
+      text               = element_text(color = "#000000ff"),
+      axis.text          = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title         = element_text(size = base_size),
+      axis.title.x       = element_text(margin = margin(t = 8)),
+      axis.title.y       = element_text(margin = margin(r = 8)),
+      axis.text.x        = element_text(angle = 0, hjust = 0.5, vjust = 1),
+      axis.line          = element_line(color = "black", linewidth = 0.5),
+      axis.ticks         = element_line(color = "black", linewidth = 0.5),
+      legend.position    = "top",
+      legend.justification = "center",
+      legend.direction   = "horizontal",
+      legend.box         = "horizontal",
+      legend.margin      = margin(b = 1, unit = "pt"),
+      legend.box.margin  = margin(b = 1, unit = "pt"),
+      legend.text        = element_text(size = base_size * 0.9),
+      legend.title       = element_text(size = base_size),
+      legend.key.width   = unit(0.8, "cm"),
+      legend.key.height  = unit(0.3, "cm")
+    )
+}
+
+treatment_colors <- c(
+  "Sorghum"       = "#D8D97AFF",
+  "Sorghum + Rye" = "#95C36EFF",
+  "Sorghum + WCC" = "#95C36EFF",
+  "Corn"          = "#74C8C3FF",
+  "Soy"           = "#0A2E57FF"
+)
+```
+
+# Statistical Approach
+
+**Current methods:**
+
+1. **Per-date Wilcoxon rank-sum tests** (*p* < 0.05) to place asterisks on
+   dates with significant treatment differences in daily leaching.
+2. **One-sample t-test** of daily differences (WCC minus Sorghum) against zero
+   for the boxplot panel (c).
+3. **One-way ANOVA** with Tukey-adjusted pairwise comparisons (via `emmeans`)
+   on annual cumulative leaching, pooling both years, for panel (f).
+
+**Assessment:**
+
+- **Per-date Wilcoxon tests (panels a--b):** Same multiple-comparison concern
+  as Figure 2. With only ~3--4 plots per treatment on any given date, the
+  Wilcoxon test has very low power (max test statistic with n = 4 vs n = 4 can
+  only achieve *p* ~ 0.03 under perfect separation). Consider whether the
+  asterisks overstate certainty on individual dates.
+
+- **Annual ANOVA (panel f):** Pooling years and ignoring the year factor treats
+  2023 and 2024 observations as exchangeable replicates, which inflates the
+  effective sample size. A mixed model with year as a random or fixed effect
+  would be more defensible.
+
+**Suggested alternatives:**
+
+- **For panels a--b:** Wilcoxon with Benjamini--Hochberg FDR correction across
+  dates, or replace per-date tests with a cumulative divergence test (e.g.,
+  permutation test on the area between cumulative curves).
+- **For panel f:** A two-way ANOVA or mixed model
+  `lmer(annual_N ~ Treatment + (1|year))` that properly accounts for the
+  year structure. Given only 2 years, treating year as fixed
+  (`annual_N ~ Treatment + year`) may be more appropriate than random.
+- **Log transformation:** Leaching data are right-skewed. A log or
+  square-root transformation (or a generalized linear model with Gamma family)
+  would better meet normality assumptions for ANOVA.
+
+# Data Processing
+
+```{r load-data}
+# Constants
+plot_area_ft2 <- 120 * 160
+plot_area_ha  <- plot_area_ft2 / 107639.1041671
+
+fert_events <- tibble(
+  year            = c(2023, 2024),
+  fertilizer_date = as.Date(c("2023-05-05", "2024-07-17"))
+)
+
+leaching_data <- read_csv("data/clean_leaching.csv", show_col_types = FALSE) |>
+  clean_names() |>
+  mutate(date = as.Date(date), year = year(date)) |>
+  filter(year %in% c(2023, 2024))
+
+# Precipitation (for overlay bars)
+rain <- read_xlsx("data/rain/historical_rain.xlsx") |>
+  select(day, doy, precipmm) |>
+  mutate(date = as.Date(day), year = year(date))
+```
+
+```{r compute-summaries}
+# ── Daily leaching summary ─────────────────────────────────────────────────
+daily_leaching_summary <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    daily_leached_n_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  summarise(
+    mean_leached = mean(daily_leached_n_kgha, na.rm = TRUE),
+    se_leached   = sd(daily_leached_n_kgha, na.rm = TRUE) /
+                   sqrt(sum(!is.na(daily_leached_n_kgha))),
+    .by = c(Treatment, year, date)
+  )
+
+# ── Cumulative leaching summary ───────────────────────────────────────────
+cum_leaching_summary <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    cumulative_leached_n_kgha = (cumulative_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  summarise(
+    cum_leached_mean = mean(cumulative_leached_n_kgha, na.rm = TRUE),
+    cum_leached_sd   = sd(cumulative_leached_n_kgha, na.rm = TRUE),
+    n                = n(),
+    cum_leached_se   = cum_leached_sd / sqrt(n),
+    .by = c(Treatment, year, date)
+  )
+```
+
+```{r significance-tests}
+# ── Per-date Wilcoxon tests (asterisks) ────────────────────────────────────
+daily_leaching_sig <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    daily_leached_n_kgha = (total_n_loss_mg / 1e6) / plot_area_ha
+  ) |>
+  summarise(
+    p_value = {
+      s <- daily_leached_n_kgha[Treatment == "Sorghum"]       |> na.omit()
+      w <- daily_leached_n_kgha[Treatment == "Sorghum + WCC"] |> na.omit()
+      if (length(s) >= 3 && length(w) >= 3)
+        tryCatch(wilcox.test(s, w)$p.value, error = \(e) NA_real_)
+      else NA_real_
+    },
+    .by = c(year, date)
+  ) |>
+  mutate(significant = !is.na(p_value) & p_value < 0.05)
+
+leaching_stars <- daily_leaching_summary |>
+  summarise(y_top = max(mean_leached + se_leached, na.rm = TRUE), .by = c(year, date)) |>
+  left_join(daily_leaching_sig, by = c("year", "date")) |>
+  filter(significant) |>
+  mutate(star_y = y_top * 1.1, star_label = "*")
+```
+
+```{r daily-diff}
+# ── Daily difference (WCC - Sorghum) and one-sample t-test ────────────────
+daily_leach_diff <- daily_leaching_summary |>
+  mutate(trt_key = if_else(Treatment == "Sorghum + WCC", "WCC", "Sorghum")) |>
+  select(year, date, trt_key, mean_leached) |>
+  pivot_wider(names_from = trt_key, values_from = mean_leached) |>
+  mutate(diff_wcc_minus_sorghum = WCC - Sorghum)
+
+one_sample_vs_zero <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) < 2) return(NA_real_)
+  tryCatch(t.test(x, mu = 0)$p.value, error = \(e) NA_real_)
+}
+
+leach_diff_stats <- daily_leach_diff |>
+  summarise(
+    n          = sum(!is.na(diff_wcc_minus_sorghum)),
+    mean_diff  = mean(diff_wcc_minus_sorghum, na.rm = TRUE),
+    p_value    = one_sample_vs_zero(diff_wcc_minus_sorghum),
+    significant = !is.na(p_value) & p_value < 0.05,
+    letter     = if_else(significant, "a", NA_character_),
+    .by = year
+  )
+```
+
+```{r annual-anova}
+# ── Annual cumulative leaching + one-way ANOVA ────────────────────────────
+annual_leached <- leaching_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    plot = as.character(plot)
+  ) |>
+  summarise(
+    annual_leached_n = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha,
+    .by = c(year, plot, Treatment)
+  ) |>
+  filter(is.finite(annual_leached_n), annual_leached_n >= 0)
+
+anova_leached   <- aov(annual_leached_n ~ Treatment, data = annual_leached)
+anova_leached_p <- summary(anova_leached)[[1]]["Treatment", "Pr(>F)"]
+
+leached_letters <- tryCatch({
+  emmeans(anova_leached, ~ Treatment) |>
+    cld(adjust = "tukey", Letters = letters) |>
+    as_tibble() |>
+    transmute(Treatment = as.character(Treatment),
+              letter    = gsub("\\s+", "", .group))
+}, error = \(e) {
+  annual_leached |> distinct(Treatment) |> mutate(letter = "a")
+})
+```
+
+# Figure 3
+
+```{r figure3}
+#| fig-width: 12
+#| fig-height: 8
+#| fig-dpi: 300
+
+# ── Precipitation trimmed to leaching windows ─────────────────────────────
+leach_date_ranges <- daily_leaching_summary |>
+  summarise(min_date = min(date), max_date = max(date), .by = year)
+
+daily_precip_leaching <- rain |>
+  select(date, year, precipmm) |>
+  filter(year %in% c(2023, 2024)) |>
+  left_join(leach_date_ranges, by = "year") |>
+  filter(date >= min_date, date <= max_date)
+
+# ── Scaling constants ─────────────────────────────────────────────────────
+max_leached_daily <- max(daily_leaching_summary$mean_leached +
+                         daily_leaching_summary$se_leached, na.rm = TRUE)
+max_precip_leach  <- max(daily_precip_leaching$precipmm, na.rm = TRUE)
+leach_precip_scale <- (max_leached_daily * 0.4) / max_precip_leach
+leach_plot_top     <- max_leached_daily * 1.12
+max_cum_leached    <- max(cum_leaching_summary$cum_leached_mean +
+                          cum_leaching_summary$cum_leached_se, na.rm = TRUE)
+## Panel Builder
+
+# ── Panel builder: daily leaching ─────────────────────────────────────────
+create_leaching_daily_panel <- function(year_val, is_right, tag_label) {
+  d_sub    <- filter(daily_leaching_summary, year == year_val)
+  p_sub    <- filter(daily_precip_leaching, year == year_val)
+  s_sub    <- filter(leaching_stars, year == year_val)
+  fert_sub <- filter(fert_events, year == year_val)
+  x_lims   <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+
+  p <- ggplot() +
+    # Precipitation (inverted from top)
+    geom_rect(
+      data = p_sub,
+      aes(xmin = date - 0.5, xmax = date + 0.5,
+          ymin = leach_plot_top - precipmm * leach_precip_scale,
+          ymax = leach_plot_top),
+      fill = "#377EB8", alpha = 0.7
+    ) +
+    geom_point(data = d_sub, aes(x = date, y = mean_leached, color = Treatment),
+               size = 1.4) +
+    geom_errorbar(
+      data = d_sub,
+      aes(x = date,
+          ymin = pmax(mean_leached - se_leached, 0),
+          ymax = mean_leached + se_leached,
+          color = Treatment),
+      width = 0.2, alpha = 0.5
+    ) +
+    geom_vline(data = fert_sub, aes(xintercept = fertilizer_date),
+               linetype = "dashed", color = "black", alpha = 0.7) +
+    geom_text(data = s_sub, aes(x = date, y = star_y, label = star_label),
+              size = 4.8) +
+    scale_color_manual(values = treatment_colors, name = "Treatment") +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(
+      name = if (!is_right) expression("Daily Leached N (kg N ha"^-1 * " d"^-1 * ")") else "",
+      limits = c(0, leach_plot_top),
+      sec.axis = sec_axis(
+        ~ (leach_plot_top - .) / leach_precip_scale,
+        name = if (is_right) "Precipitation (mm)" else ""
+      )
+    ) +
+    labs(x = "Month", tag = tag_label) +
+    theme_publication(base_size = 10) +
+    theme(
+      axis.text.x      = element_text(angle = 0, hjust = 0.5),
+      axis.ticks.x     = element_line(),
+      axis.line.x      = element_line(),
+      legend.position  = "none",
+      plot.tag          = element_text(face = "bold", size = 11),
+      plot.tag.position = "topleft",
+      plot.margin       = margin(t = 14, r = 4, b = 4, l = 4)
+    )
+
+  if (is_right) {
+    p <- p + theme(
+      axis.text.y        = element_blank(),
+      axis.ticks.y       = element_blank(),
+      axis.line.y        = element_blank(),
+      axis.title.y       = element_blank(),
+      axis.text.y.right  = element_text(color = "#377EB8"),
+      axis.ticks.y.right = element_line(),
+      axis.title.y.right = element_text(color = "#377EB8")
+    )
+  } else {
+    p <- p + theme(
+      axis.text.y.right  = element_blank(),
+      axis.ticks.y.right = element_blank(),
+      axis.title.y.right = element_blank()
+    )
+  }
+  p
+}
+
+# ── Panel builder: cumulative leaching ────────────────────────────────────
+create_leaching_cum_panel <- function(year_val, is_right, tag_label) {
+  c_sub    <- filter(cum_leaching_summary, year == year_val)
+  fert_sub <- filter(fert_events, year == year_val)
+  x_lims   <- as.Date(paste0(year_val, c("-01-01", "-12-31")))
+
+  p <- ggplot(c_sub, aes(x = date, y = cum_leached_mean,
+                          color = Treatment, fill = Treatment)) +
+    geom_ribbon(aes(ymin = pmax(cum_leached_mean - cum_leached_se, 0),
+                    ymax = cum_leached_mean + cum_leached_se),
+                alpha = 0.15, linewidth = 0) +
+    geom_line(linewidth = 1) +
+    geom_vline(data = fert_sub, aes(xintercept = fertilizer_date),
+               linetype = "dashed", color = "black", alpha = 0.7) +
+    scale_color_manual(values = treatment_colors) +
+    scale_fill_manual(values = treatment_colors) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b", limits = x_lims) +
+    scale_y_continuous(
+      name = if (!is_right) expression("Cumulative Leached N (kg N ha"^-1 * ")") else "",
+      limits = c(0, max_cum_leached)
+    ) +
+    labs(x = "Month", tag = tag_label) +
+    theme_publication(base_size = 10) +
+    theme(legend.position = "none",
+          plot.tag = element_text(face = "bold", size = 11),
+          plot.tag.position = "topleft",
+          plot.margin = margin(t = 14, r = 4, b = 4, l = 4))
+
+  if (is_right) {
+    p <- p + theme(
+      axis.text.y  = element_blank(),
+      axis.ticks.y = element_blank(),
+      axis.line.y  = element_blank(),
+      axis.title.y = element_blank()
+    )
+  }
+  p
+}
+
+# ── Panel (c): daily difference boxplot ────────────────────────────────────
+diff_span <- diff(range(daily_leach_diff$diff_wcc_minus_sorghum, na.rm = TRUE))
+if (!is.finite(diff_span) || diff_span == 0) diff_span <- 0.05
+
+leach_diff_anno <- daily_leach_diff |>
+  summarise(y = max(diff_wcc_minus_sorghum, na.rm = TRUE), .by = year) |>
+  left_join(leach_diff_stats, by = "year") |>
+  filter(significant) |>
+  mutate(y = y + diff_span * 0.08)
+
+p3c <- ggplot(daily_leach_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_boxplot(width = 0.55, outlier.shape = NA, fill = "grey92", color = "black") +
+  geom_jitter(aes(color = factor(year)), width = 0.12, alpha = 0.7,
+              size = 1.4, show.legend = FALSE) +
+  geom_text(data = leach_diff_anno,
+            aes(x = factor(year), y = y, label = letter),
+            inherit.aes = FALSE, fontface = "bold", size = 3.8) +
+  scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  labs(
+    x = "Year",
+    y = expression(atop("Daily Leached N Difference",
+                        "(kg N ha"^{-1}~"d"^{-1}*", WCC \u2212 Sorghum)")),
+    tag = "(c)"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft",
+        plot.margin = margin(t = 14, r = 4, b = 4, l = 4),
+        legend.position = "none")
+
+# ── Panel (f): annual cumulative by treatment ──────────────────────────────
+letter_offset <- diff(range(annual_leached$annual_leached_n, na.rm = TRUE))
+if (!is.finite(letter_offset) || letter_offset == 0) letter_offset <- 0.05
+
+annual_letter_pos <- annual_leached |>
+  summarise(y = max(annual_leached_n, na.rm = TRUE), .by = Treatment) |>
+  left_join(leached_letters, by = "Treatment") |>
+  mutate(y = y + letter_offset * 0.08)
+
+p3f <- ggplot(annual_leached, aes(x = Treatment, y = annual_leached_n, fill = Treatment)) +
+  geom_boxplot(width = 0.55, outlier.shape = NA, alpha = 0.5, color = "black") +
+  geom_jitter(aes(shape = factor(year)), width = 0.12, size = 1.8,
+              alpha = 0.8, show.legend = FALSE) +
+  geom_text(data = annual_letter_pos,
+            aes(x = Treatment, y = y, label = letter),
+            inherit.aes = FALSE, fontface = "bold", size = 3.8) +
+  scale_fill_manual(values = treatment_colors) +
+  labs(
+    x = "",
+    y = expression("Cumulative Leached N (kg N ha"^-1 * ")"),
+    subtitle = paste0("One-way ANOVA p = ",
+                      ifelse(anova_leached_p < 0.001, "< 0.001",
+                             sprintf("%.3f", anova_leached_p))),
+    tag = "(f)"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft",
+        plot.margin = margin(t = 14, r = 4, b = 4, l = 4))
+
+# ── Build panels ──────────────────────────────────────────────────────────
+p3a <- create_leaching_daily_panel(2023, is_right = FALSE, "(a)")
+p3b <- create_leaching_daily_panel(2024, is_right = TRUE,  "(b)")
+p3d <- create_leaching_cum_panel(2023, is_right = FALSE, "(d)")
+p3e <- create_leaching_cum_panel(2024, is_right = TRUE,  "(e)")
+
+# p3a keeps its legend; all others are suppressed
+p3b_nl <- p3b + theme(legend.position = "none")
+
+# Style p3a legend
+p3a <- p3a + theme(
+  legend.position   = "top",
+  legend.direction  = "horizontal",
+  legend.text       = element_text(size = 10),
+  legend.title      = element_text(size = 10),
+  legend.key.width  = unit(1.2, "cm"),
+  legend.key.height = unit(0.4, "cm")
+)
+
+figure3 <- guide_area() /
+  ((p3a | p3b_nl | p3c) / (p3d | p3e | p3f) +
+     plot_layout(widths = c(1, 1, 0.95))) +
+  plot_layout(heights = c(0.05, 1), guides = "collect")
+
+figure3
+
+ggsave(filename = "figure_3_leaching_spacing.tiff", plot = figure3, width = 174, height = 116, units = "mm", dpi = 600, device = "tiff", compression = "lzw")
+```
+
+```{r print-stats}
+#| echo: false
+cat("Daily difference stats:\n")
+leach_diff_stats
+cat("\nANOVA p-value:", anova_leached_p, "\n")
+```
+
+# Alternative Statistical Approaches
+
+The sections below explore alternative analytical frameworks for the leaching
+data. Each approach creates its own variables and leaves the existing figure
+code untouched. Note that the Google Doc recommends renaming the y-axis label
+to **"Leached N"** (nitrate + ammonium) in all new panels.
+
+## Approach B: Mixed Model (Sorghum Pair)
+
+This approach fits a linear mixed-effects model to annual cumulative leached N
+for the two-treatment subset (Sorghum vs Sorghum + WCC), treating `plot` as a
+random intercept and crossing Treatment with year.
+
+```{r approach-b-mixed-model}
+#| message: false
+#| warning: false
+
+library(lme4)
+
+# Ensure year is a factor for model fitting (avoids column-name issues in emmeans)
+annual_leached <- annual_leached |>
+  mutate(year_fct = factor(year))
+
+# Fit mixed model on the existing annual_leached data
+mod_leach <- lmer(
+  annual_leached_n ~ Treatment * year_fct + (1 | plot),
+  data = annual_leached
+)
+
+cat("── Approach B: Mixed Model Summary ──────────────────────────\n")
+summary(mod_leach)
+
+# Pairwise contrasts by year
+emm_leach_b <- emmeans(mod_leach, pairwise ~ Treatment | year_fct)
+cat("\n── Pairwise Contrasts by Year ──────────────────────────────\n")
+emm_leach_b
+
+# Extract means and contrasts for plotting
+emm_leach_b_df <- as.data.frame(emm_leach_b$emmeans)
+
+contrast_leach_b <- as.data.frame(emm_leach_b$contrasts) |>
+  mutate(
+    p_label = ifelse(p.value < 0.001, "p < 0.001", sprintf("p = %.3f", p.value)),
+    year = as.numeric(as.character(year_fct))
+  )
+
+# Bar chart with means ± SE and p-value annotations
+bar_max_b <- max(emm_leach_b_df$emmean + emm_leach_b_df$SE, na.rm = TRUE)
+
+p_approach_b <- ggplot(emm_leach_b_df,
+                       aes(x = year_fct, y = emmean, fill = Treatment)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6,
+           color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = pmax(emmean - SE, 0), ymax = emmean + SE),
+    position = position_dodge(width = 0.7), width = 0.2
+  ) +
+  geom_text(
+    data = contrast_leach_b,
+    aes(x = factor(year), y = bar_max_b * 1.08, label = p_label),
+    inherit.aes = FALSE, size = 3.5, fontface = "italic"
+  ) +
+  scale_fill_manual(values = treatment_colors) +
+  labs(
+    x = "Year",
+    y = expression("Leached N (kg N ha"^-1 * ")"),
+    title = "Approach B: Mixed Model — Treatment Means ± SE by Year"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
+
+p_approach_b
+```
+
+## Approach C: All-Treatment ANOVA with CLD
+
+This section includes all four treatments (Sorghum, Sorghum + Rye, Corn, Soy)
+and applies compact letter display (CLD) via Tukey HSD for pairwise
+comparisons.
+
+```{r approach-c-all-treatment}
+#| message: false
+#| warning: false
+
+# Recompute annual cumulative leached N for ALL treatments
+annual_leached_all <- leaching_data |>
+  mutate(plot = as.character(plot)) |>
+  summarise(
+    annual_leached_n = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha,
+    .by = c(year, plot, treatment)
+  ) |>
+  filter(is.finite(annual_leached_n), annual_leached_n >= 0) |>
+  mutate(year_fct = factor(year))
+
+# Attempt mixed model; fall back to aov if convergence fails
+mod_leach_all <- tryCatch(
+  {
+    m <- lmer(
+      annual_leached_n ~ treatment * year_fct + (1 | plot),
+      data = annual_leached_all
+    )
+    cat("Mixed model (lmer) converged successfully.\n")
+    m
+  },
+  error = function(e) {
+    cat("lmer failed to converge — falling back to aov().\n")
+    cat("Error:", conditionMessage(e), "\n")
+    NULL
+  }
+)
+
+if (is.null(mod_leach_all)) {
+  mod_leach_all <- aov(
+    annual_leached_n ~ treatment * year_fct,
+    data = annual_leached_all
+  )
+  cat("aov() model fitted.\n")
+}
+
+cat("\n── Approach C: Model Summary ──────────────────────────────\n")
+summary(mod_leach_all)
+
+# CLD via emmeans + Tukey HSD
+emm_leach_c <- emmeans(mod_leach_all, ~ treatment | year_fct)
+cld_leach_c <- cld(emm_leach_c, adjust = "tukey", Letters = letters) |>
+  as.data.frame() |>
+  mutate(
+    letter = gsub("\\s+", "", .group),
+    year_num = as.numeric(as.character(year_fct))
+  )
+
+cat("\n── CLD Groups by Year ──────────────────────────────────────\n")
+print(cld_leach_c |> select(treatment, year_fct, emmean, SE, letter))
+
+# All-treatment color palette
+treatment_colors_all <- c(
+  "Sorghum"       = "#D8D97AFF",
+  "Sorghum + Rye" = "#95C36EFF",
+  "Corn"          = "#74C8C3FF",
+  "Soy"           = "#0A2E57FF"
+)
+
+# Grouped bar chart with CLD letters
+bar_max_c <- max(cld_leach_c$emmean + cld_leach_c$SE, na.rm = TRUE)
+
+p_approach_c <- ggplot(cld_leach_c,
+                       aes(x = factor(year_num), y = emmean, fill = treatment)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.65,
+           color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = pmax(emmean - SE, 0), ymax = emmean + SE),
+    position = position_dodge(width = 0.75), width = 0.2
+  ) +
+  geom_text(
+    aes(y = emmean + SE + bar_max_c * 0.03, label = letter),
+    position = position_dodge(width = 0.75),
+    size = 3.5, fontface = "bold", vjust = 0
+  ) +
+  scale_fill_manual(values = treatment_colors_all) +
+  labs(
+    x = "Year",
+    y = expression("Leached N (kg N ha"^-1 * ")"),
+    fill = "Treatment",
+    title = "Approach C: All-Treatment ANOVA — CLD Groups by Year"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
+
+p_approach_c
+```
+
+## Approach D: Log-Transformed Mixed Model
+
+Leaching data are typically right-skewed. This approach fits the same Sorghum-
+pair mixed model from Approach B on the log-transformed response and compares
+residual diagnostics.
+
+```{r approach-d-log-model}
+#| message: false
+#| warning: false
+
+# Log-transformed mixed model (small constant avoids log(0))
+mod_leach_log <- lmer(
+  log(annual_leached_n + 0.01) ~ Treatment * year_fct + (1 | plot),
+  data = annual_leached
+)
+
+cat("── Approach D: Log-Transformed Model Summary ────────────────\n")
+summary(mod_leach_log)
+
+# Back-transformed emmeans
+emm_leach_d <- emmeans(mod_leach_log, pairwise ~ Treatment | year_fct, type = "response")
+cat("\n── Back-Transformed Means ──────────────────────────────────\n")
+emm_leach_d
+```
+
+```{r approach-d-diagnostics}
+#| message: false
+#| warning: false
+#| fig-height: 10
+#| fig-width: 10
+
+# Residual diagnostics comparison
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+
+# Untransformed model (Approach B) residuals
+plot(fitted(mod_leach), resid(mod_leach),
+     xlab = "Fitted", ylab = "Residuals",
+     main = "Approach B: Residuals vs Fitted",
+     pch = 16, col = alpha("steelblue", 0.7))
+abline(h = 0, lty = 2, col = "red")
+
+qqnorm(resid(mod_leach), main = "Approach B: Q-Q Plot", pch = 16,
+       col = alpha("steelblue", 0.7))
+qqline(resid(mod_leach), col = "red", lwd = 1.5)
+
+# Log-transformed model (Approach D) residuals
+plot(fitted(mod_leach_log), resid(mod_leach_log),
+     xlab = "Fitted", ylab = "Residuals",
+     main = "Approach D: Residuals vs Fitted (log)",
+     pch = 16, col = alpha("darkorange", 0.7))
+abline(h = 0, lty = 2, col = "red")
+
+qqnorm(resid(mod_leach_log), main = "Approach D: Q-Q Plot (log)", pch = 16,
+       col = alpha("darkorange", 0.7))
+qqline(resid(mod_leach_log), col = "red", lwd = 1.5)
+
+par(mfrow = c(1, 1))
+```
+
+## Approach E: BH FDR-Corrected Per-Date Wilcoxon
+
+The existing per-date Wilcoxon tests (used for asterisks in panels a--b) do
+not account for the large number of comparisons across dates. This approach
+applies Benjamini--Hochberg FDR correction within each year.
+
+```{r approach-e-fdr}
+#| message: false
+#| warning: false
+
+# Apply BH correction within each year
+fdr_leaching_sig <- daily_leaching_sig |>
+  group_by(year) |>
+  mutate(p_adjusted = p.adjust(p_value, method = "BH")) |>
+  ungroup() |>
+  mutate(significant_fdr = !is.na(p_adjusted) & p_adjusted < 0.05)
+
+# Comparison: uncorrected vs FDR-corrected significant dates
+fdr_comparison <- fdr_leaching_sig |>
+  summarise(
+    n_dates_tested   = sum(!is.na(p_value)),
+    n_sig_uncorrected = sum(significant, na.rm = TRUE),
+    n_sig_fdr        = sum(significant_fdr, na.rm = TRUE),
+    pct_lost         = ifelse(
+      n_sig_uncorrected > 0,
+      sprintf("%.1f%%", 100 * (1 - n_sig_fdr / n_sig_uncorrected)),
+      "N/A"
+    ),
+    .by = year
+  )
+
+cat("── Approach E: Uncorrected vs BH FDR-Corrected Significance ──\n\n")
+knitr::kable(
+  fdr_comparison,
+  col.names = c("Year", "Dates Tested", "Sig. (Uncorrected)",
+                "Sig. (BH FDR)", "% Lost"),
+  align = "ccccc"
+)
+```
+
+## Statistical Comparison
+
+Summary table comparing all approaches on the leaching data.
+
+```{r statistical-comparison}
+#| message: false
+#| warning: false
+
+# ── Gather metrics from each approach ────────────────────────────────────
+
+# Approach A: existing one-way ANOVA
+approach_a_p <- ifelse(anova_leached_p < 0.001, "< 0.001",
+                       sprintf("%.3f", anova_leached_p))
+approach_a_nsig <- sum(daily_leaching_sig$significant, na.rm = TRUE)
+
+# Approach B: mixed model Treatment main effect
+# lmerTest provides "Pr(>F)"; without it the column may be "Pr(>Chisq)" or absent
+approach_b_anova <- tryCatch({
+  anova_b <- anova(mod_leach)
+  ab <- anova_b["Treatment", ]
+  p_col <- intersect(c("Pr(>F)", "Pr(>Chisq)"), names(ab))
+  p_trt <- if (length(p_col) > 0) ab[[p_col[1]]] else NA_real_
+  if (is.null(p_trt) || length(p_trt) == 0 || is.na(p_trt)) "N/A"
+  else if (p_trt < 0.001) "< 0.001"
+  else sprintf("%.3f", p_trt)
+}, error = function(e) "N/A")
+
+approach_b_pairwise <- contrast_leach_b |>
+  mutate(entry = paste0(year, ": ", p_label)) |>
+  pull(entry) |>
+  paste(collapse = "; ")
+
+# Approach C: CLD groups
+approach_c_cld <- cld_leach_c |>
+  mutate(entry = paste0(treatment, " (", year_fct, "): ", letter)) |>
+  pull(entry) |>
+  paste(collapse = "; ")
+
+# Approach D: log-transformed model p-values
+approach_d_anova <- tryCatch({
+  anova_d <- anova(mod_leach_log)
+  ad <- anova_d["Treatment", ]
+  p_col_d <- intersect(c("Pr(>F)", "Pr(>Chisq)"), names(ad))
+  p_trt_d <- if (length(p_col_d) > 0) ad[[p_col_d[1]]] else NA_real_
+  if (is.null(p_trt_d) || length(p_trt_d) == 0 || is.na(p_trt_d)) "N/A"
+  else if (p_trt_d < 0.001) "< 0.001"
+  else sprintf("%.3f", p_trt_d)
+}, error = function(e) "N/A")
+
+# Approach E: FDR-corrected counts
+approach_e_nsig <- sum(fdr_leaching_sig$significant_fdr, na.rm = TRUE)
+
+# ── Build comparison table ───────────────────────────────────────────────
+comparison_table <- tibble(
+  Approach = c(
+    "A: One-way ANOVA (current)",
+    "B: Mixed Model (Sorghum pair)",
+    "C: All-Treatment ANOVA + CLD",
+    "D: Log-Transformed Mixed Model",
+    "E: BH FDR-Corrected Wilcoxon"
+  ),
+  `Key Statistic` = c(
+    paste0("ANOVA p = ", approach_a_p),
+    paste0("Treatment p = ", approach_b_anova),
+    "CLD groups (see below)",
+    paste0("Treatment p = ", approach_d_anova),
+    paste0(approach_e_nsig, " significant dates (FDR)")
+  ),
+  Details = c(
+    paste0(approach_a_nsig, " significant Wilcoxon dates (uncorrected)"),
+    approach_b_pairwise,
+    approach_c_cld,
+    "Log(y + 0.01); back-transformed means shown above",
+    paste0("vs ", approach_a_nsig, " uncorrected; BH correction within year")
+  )
+)
+
+cat("── Statistical Comparison Across Approaches ────────────────\n\n")
+knitr::kable(comparison_table, align = "lll")
+```
