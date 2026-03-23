@@ -194,7 +194,7 @@ contrast_table <- bind_rows(slope_contrasts, intercept_contrasts) |>
     )
   )
 
-gt(contrast_table) |>
+table <- gt(contrast_table) |>
   tab_header(
     title    = "Pairwise Treatment Contrasts",
     subtitle = "LME model (Tukey-adjusted); slopes in kg/ha per mm drainage"
@@ -228,3 +228,8 @@ gt(contrast_table) |>
     style     = cell_text(weight = "bold"),
     locations = cells_body(columns = sig, rows = p.value < 0.05)
   )
+print(table)
+
+# Save the contrast table as an image (optional)
+gtsave(table, "TableS1_Treatment_Contrasts.png")
+
