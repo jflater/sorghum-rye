@@ -2679,6 +2679,175 @@ print(anova(uncouple_stats))
 print(summary(uncouple_stats))
 ```
 
+
+# Figure revisions for submission layout consistency
+
+```{r figure-revisions-submission}
+# Consistent multi-panel tag styling
+panel_tag_theme <- theme(
+  plot.tag = element_text(face = "bold", size = 11),
+  plot.tag.position = c(0.02, 0.98)
+)
+
+# ---- Figure 1: add consistent a) b) panel tags and widen layout ----
+six_panel_plot <- (rain_plot_v2 | gdd_plot_v2) +
+  plot_layout(guides = "collect", widths = c(1, 1)) +
+  plot_annotation(tag_levels = "a", tag_suffix = ")") &
+  theme_publication(base_size = 10) &
+  theme(
+    legend.position = "top",
+    plot.margin = margin(t = 3, r = 4, b = 2, l = 4, unit = "pt")
+  ) &
+  panel_tag_theme
+
+# ---- Figure 2: expand to 6 panels with daily treatment-difference panels ----
+soil_diff_daily <- moist_temp |>
+  select(year, date, Treatment, mean_soil_temp, mean_soil_moisture) |>
+  pivot_wider(names_from = Treatment, values_from = c(mean_soil_temp, mean_soil_moisture)) |>
+  mutate(
+    temp_diff = `mean_soil_temp_Sorghum + WCC` - `mean_soil_temp_Sorghum`,
+    moist_diff = `mean_soil_moisture_Sorghum + WCC` - `mean_soil_moisture_Sorghum`
+  )
+
+get_diff_letters <- function(df, val_col) {
+  df |>
+    group_by(year) |>
+    summarise(
+      p_value = tryCatch(t.test(.data[[val_col]], mu = 0)$p.value, error = function(e) NA_real_),
+      y_pos = max(.data[[val_col]], na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    mutate(letter = if_else(!is.na(p_value) & p_value < 0.05, "a", ""))
+}
+
+temp_diff_letters <- get_diff_letters(soil_diff_daily, "temp_diff")
+moist_diff_letters <- get_diff_letters(soil_diff_daily, "moist_diff")
+
+p5 <- ggplot(soil_diff_daily, aes(x = factor(year), y = temp_diff)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  geom_boxplot(width = 0.45, fill = "grey90", color = "black", outlier.shape = NA) +
+  geom_jitter(width = 0.12, alpha = 0.6, size = 1.2, color = "#377EB8") +
+  geom_text(data = temp_diff_letters, aes(x = factor(year), y = y_pos * 1.05, label = letter), inherit.aes = FALSE, fontface = "bold") +
+  labs(x = "Year", y = expression("Daily Soil Temperature Difference ("*degree*C*")")) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none")
+
+p6 <- ggplot(soil_diff_daily, aes(x = factor(year), y = moist_diff)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
+  geom_boxplot(width = 0.45, fill = "grey90", color = "black", outlier.shape = NA) +
+  geom_jitter(width = 0.12, alpha = 0.6, size = 1.2, color = "#377EB8") +
+  geom_text(data = moist_diff_letters, aes(x = factor(year), y = y_pos * 1.05, label = letter), inherit.aes = FALSE, fontface = "bold") +
+  labs(x = "Year", y = expression("Daily Soil Moisture Difference (cm"^3*" "*cm^-3*")")) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none")
+
+soil_4panel <- (p3 | p4) / (p1 | p2) / (p5 | p6) +
+  plot_layout(guides = "collect", heights = c(1, 1, 0.9)) +
+  plot_annotation(tag_levels = "a", tag_suffix = ")") &
+  theme(legend.position = "top") &
+  panel_tag_theme
+
+# ---- Figure 3 (N2O): add two right-column summary panels ----
+n2o_daily_diff <- daily_flux |>
+  select(year, date, Treatment, mean_flux) |>
+  pivot_wider(names_from = Treatment, values_from = mean_flux) |>
+  mutate(diff = `Sorghum + WCC` - Sorghum)
+
+n2o_diff_letters <- get_diff_letters(n2o_daily_diff, "diff")
+p_n2o_diff <- ggplot(n2o_daily_diff, aes(x = factor(year), y = diff)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_boxplot(width = 0.45, fill = "grey90", outlier.shape = NA) +
+  geom_jitter(width = 0.12, size = 1.2, alpha = 0.6, color = "#377EB8") +
+  geom_text(data = n2o_diff_letters, aes(x = factor(year), y = y_pos * 1.05, label = letter), inherit.aes = FALSE, fontface = "bold") +
+  labs(x = "Year", y = expression("Daily N"[2]*"O Difference (kg N ha"^-1*" d"^-1*")")) +
+  theme_publication(base_size = 10)
+
+n2o_cum_annual <- cum_flux_plot_level |>
+  group_by(year, Treatment, plot) |>
+  slice_max(order_by = date, n = 1, with_ties = FALSE) |>
+  ungroup()
+
+anova_n2o <- summary(aov(cum_flux ~ Treatment, data = n2o_cum_annual))[[1]][1, "Pr(>F)"]
+
+p_n2o_annual <- ggplot(n2o_cum_annual, aes(x = Treatment, y = cum_flux, fill = Treatment)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(width = 0.1, size = 1.3, alpha = 0.7) +
+  annotate("text", x = 1.5, y = max(n2o_cum_annual$cum_flux, na.rm = TRUE) * 1.05,
+           label = paste0("ANOVA p = ", signif(anova_n2o, 3)), fontface = "bold", size = 3) +
+  labs(x = "Treatment", y = expression("Annual Cumulative N"[2]*"O (kg N ha"^-1*")")) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none")
+
+figure3_dual_axis <- ((create_dual_axis_plot(2023) | create_dual_axis_plot(2024, TRUE)) | (p_n2o_diff / p_n2o_annual)) +
+  plot_layout(widths = c(2.1, 1), guides = "collect") +
+  plot_annotation(tag_levels = "a", tag_suffix = ")") &
+  theme(legend.position = "top") &
+  panel_tag_theme
+
+# ---- Figure 4 (Leaching): terminology update + two right-column summary panels ----
+create_leaching_plot <- function(year_val, is_right_panel = FALSE) {
+  d_sub <- filter(daily_leaching_summary, year == year_val)
+  c_sub <- filter(cum_leaching_summary, year == year_val)
+  p_sub <- filter(daily_precip_leaching, year == year_val)
+  s_sub <- filter(leaching_stars, year == year_val)
+
+  p_daily <- ggplot() +
+    geom_rect(data = p_sub, aes(xmin = date - 0.5, xmax = date + 0.5, ymin = plot_top_l - precipmm * scale_factor_l, ymax = plot_top_l), fill = "#377EB8", alpha = 0.7) +
+    geom_line(data = d_sub, aes(x = date, y = mean_loss, color = Treatment), linewidth = 0.8) +
+    scale_color_manual(values = treatment_colors) +
+    scale_y_continuous(name = if(!is_right_panel) expression("Daily Leached N (kg N ha"^-1*" d"^-1*")") else "") +
+    theme_publication(base_size = 10) + theme(legend.position = "none")
+
+  p_cum <- ggplot(c_sub, aes(x = date, y = cum_loss_mean, color = Treatment, fill = Treatment)) +
+    geom_ribbon(aes(ymin = pmax(cum_loss_mean - cum_loss_se, 0), ymax = cum_loss_mean + cum_loss_se), alpha = 0.15, linewidth = 0) +
+    geom_line(linewidth = 1) +
+    scale_color_manual(values = treatment_colors) +
+    scale_fill_manual(values = treatment_colors) +
+    scale_y_continuous(name = if(!is_right_panel) expression("Cumulative Leached N (kg N ha"^-1*")") else "") +
+    labs(x = "Month") +
+    theme_publication(base_size = 10)
+
+  p_daily / p_cum
+}
+
+leach_daily_diff <- daily_leaching_summary |>
+  select(year, date, Treatment, mean_loss) |>
+  pivot_wider(names_from = Treatment, values_from = mean_loss) |>
+  mutate(diff = `Sorghum + WCC` - Sorghum)
+
+leach_diff_letters <- get_diff_letters(leach_daily_diff, "diff")
+p_leach_diff <- ggplot(leach_daily_diff, aes(x = factor(year), y = diff)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_boxplot(width = 0.45, fill = "grey90", outlier.shape = NA) +
+  geom_jitter(width = 0.12, size = 1.2, alpha = 0.6, color = "#377EB8") +
+  geom_text(data = leach_diff_letters, aes(x = factor(year), y = y_pos * 1.05, label = letter), inherit.aes = FALSE, fontface = "bold") +
+  labs(x = "Year", y = expression("Daily Leached N Difference (kg N ha"^-1*" d"^-1*")")) +
+  theme_publication(base_size = 10)
+
+leach_annual <- leaching_data |>
+  mutate(Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment), year = year(date)) |>
+  filter(year %in% c(2023, 2024), Treatment %in% c("Sorghum", "Sorghum + WCC")) |>
+  group_by(year, Treatment, plot) |>
+  summarise(cum_leached_n = max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6 / first(plot_area_ha), .groups = "drop")
+
+anova_leach <- summary(aov(cum_leached_n ~ Treatment, data = leach_annual))[[1]][1, "Pr(>F)"]
+
+p_leach_annual <- ggplot(leach_annual, aes(x = Treatment, y = cum_leached_n, fill = Treatment)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(width = 0.1, size = 1.3, alpha = 0.7) +
+  annotate("text", x = 1.5, y = max(leach_annual$cum_leached_n, na.rm = TRUE) * 1.05,
+           label = paste0("ANOVA p = ", signif(anova_leach, 3)), fontface = "bold", size = 3) +
+  labs(x = "Treatment", y = expression("Annual Cumulative Leached N (kg N ha"^-1*")")) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none")
+
+fig_leaching <- ((create_leaching_plot(2023) | create_leaching_plot(2024, TRUE)) | (p_leach_diff / p_leach_annual)) +
+  plot_layout(widths = c(2.1, 1), guides = "collect") +
+  plot_annotation(tag_levels = "a", tag_suffix = ")") &
+  theme(legend.position = "top") &
+  panel_tag_theme
+```
+
 # Save Tables and Figures
 
 Save to SubmissionFiguresTables
@@ -2693,7 +2862,7 @@ Save to SubmissionFiguresTables
 ggsave(
   "SubmissionFiguresTables/Figure1_Weather.png",
   plot = six_panel_plot,
-  width = 84, height = 105, units = "mm", dpi = 600, bg = "white"
+  width = 174, height = 90, units = "mm", dpi = 600, bg = "white"
 )
 
 # Figure 2: Soil Moisture & Temperature
