@@ -1,0 +1,171 @@
+---
+title: "Figure S: Nitrate Concentration and Proportion"
+author: "Jared Flater"
+date: last-modified
+format:
+  html:
+    theme: cosmo
+    toc: false
+    code-fold: true
+    code-tools: true
+    self-contained: true
+    fig-width: 8
+    fig-height: 6
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(patchwork)
+```
+
+```{r theme}
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Helvetica") +
+    theme(
+      panel.background = element_rect(fill = "#ffffffff", color = NA),
+      plot.background  = element_rect(fill = "#ffffffff", color = NA),
+      strip.background = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor = element_blank(),
+      panel.spacing    = unit(2, "lines"),
+      panel.border     = element_rect(color = "black", fill = NA, linewidth = 1),
+      text             = element_text(color = "#000000ff"),
+      axis.text        = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title       = element_text(size = base_size),
+      axis.text.x      = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line        = element_line(color = "black", linewidth = 0.5),
+      axis.ticks       = element_line(color = "black", linewidth = 0.5),
+      legend.position       = "top",
+      legend.justification  = "center",
+      legend.direction      = "horizontal",
+      legend.box            = "vertical",
+      legend.margin         = margin(b = 1, unit = "pt"),
+      legend.box.margin     = margin(b = 1, unit = "pt"),
+      legend.text           = element_text(size = base_size * 0.9),
+      legend.title          = element_text(size = base_size),
+      legend.key.width      = unit(0.8, "cm"),
+      legend.key.height     = unit(0.3, "cm")
+    )
+}
+
+# Subtle grays/blues for Maize & Soybean; distinct greens for Sorghum treatments
+treatment_colors <- c(
+  "Maize"         = "#B0B0B0",   # neutral gray
+  "Soybean"       = "#A8C8E8",   # light steel blue
+  "Sorghum"       = "#D8D97AFF", # yellow-green
+  "Sorghum + WCC" = "#95C36EFF"  # medium green
+)
+```
+
+```{r data}
+leaching_data <- read_csv("data/clean_leaching.csv") |>
+  janitor::clean_names() |>
+  mutate(
+    date = as.Date(date),
+    year = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024))
+```
+
+```{r figure}
+# Prepare concentration data
+conc_data <- leaching_data |>
+  filter(!is.na(nitrate_mg_l), !is.na(ammonia_mg_l)) |>
+  mutate(
+    total_inorganic_n = nitrate_mg_l + ammonia_mg_l,
+    prop_nitrate      = nitrate_mg_l / total_inorganic_n
+  ) |>
+  filter(total_inorganic_n > 0)
+
+# Rename treatments and set order for both panels
+conc_data <- conc_data |>
+  mutate(
+    Treatment = case_when(
+      treatment == "Corn"          ~ "Maize",
+      treatment == "Soy"           ~ "Soybean",
+      treatment == "Sorghum + Rye" ~ "Sorghum + WCC",
+      TRUE                         ~ treatment
+    ),
+    Treatment = factor(Treatment,
+                       levels = c("Maize", "Soybean", "Sorghum", "Sorghum + WCC"))
+  )
+
+# Summary stats for median lines in panel (a)
+conc_stats <- conc_data |>
+  group_by(Treatment) |>
+  summarise(median_no3 = median(nitrate_mg_l, na.rm = TRUE), .groups = "drop")
+
+# Panel (a): Density plot — all treatments
+p_density <- ggplot(conc_data, aes(x = nitrate_mg_l, fill = Treatment, color = Treatment)) +
+  geom_density(alpha = 0.5, linewidth = 0.3) +
+  geom_vline(
+    data     = conc_stats,
+    aes(xintercept = median_no3, color = Treatment),
+    linetype = "dashed", linewidth = 0.8
+  ) +
+  scale_fill_manual(values  = treatment_colors) +
+  scale_color_manual(values = treatment_colors) +
+  labs(
+    tag   = "(a)",
+    x     = expression(NO[3]^{"-"}*"-N Concentration (mg L"^{-1}*")"),
+    y     = "Density",
+    fill  = "Treatment",
+    color = "Treatment"
+  ) +
+  theme_publication(base_size = 10) +
+  theme(
+    plot.tag          = element_text(face = "bold", size = 11),
+    plot.tag.position = "topleft"
+  )
+
+# Count values below 50% for caption note
+n_below_50 <- conc_data |>
+  filter(prop_nitrate < 0.5) |>
+  group_by(Treatment) |>
+  summarise(n = n(), .groups = "drop")
+
+# Panel (b): Proportion NO3 by treatment, faceted by year, trimmed to 50–100%
+p_prop <- ggplot(conc_data, aes(x = Treatment, y = prop_nitrate * 100, fill = Treatment)) +
+  geom_boxplot(outlier.shape = 1, alpha = 0.7, color = "black") +
+  geom_hline(yintercept = 90, linetype = "dotted", color = "grey40") +
+  coord_cartesian(ylim = c(50, 100)) +
+  scale_fill_manual(values = treatment_colors) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    breaks = c(50, 60, 70, 80, 90, 100)
+  ) +
+  facet_wrap(~ year) +
+  labs(
+    tag     = "(b)",
+    x       = "",
+    y       = expression("Proportion of Inorganic N as NO"[3]^{"-"}),
+    caption = "Two Soybean values fell below 50% and are not shown."
+  ) +
+  theme_publication(base_size = 10) +
+  theme(
+    legend.position   = "none",
+    plot.tag          = element_text(face = "bold", size = 11),
+    plot.tag.position = "topleft",
+    plot.caption      = element_text(size = 8, hjust = 0, color = "grey40")
+  )
+
+# Combine panels — suppress auto-tagging since tags are set manually
+fig_n_speciation <- (p_density / p_prop)
+
+fig_n_speciation
+```
+
+
+
+```{r save}
+ggsave(
+  "SubmissionFiguresTables/SuppFigurex_Nitrate_Concentration_Proportion.png",
+  plot   = fig_n_speciation,
+  width  = 174, height = 200, units = "mm", dpi = 600, bg = "white"
+)
+```

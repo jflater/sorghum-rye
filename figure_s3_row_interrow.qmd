@@ -1,0 +1,243 @@
+---
+title: "Figure S3: Row vs. Interrow N₂O Flux"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 10
+    fig-height: 8
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Caption
+
+**Figure S3.** Daily N₂O flux by measurement position (Row vs. Interrow) for
+Sorghum and Sorghum + WCC treatments in **(a)** 2023 and **(b)** 2024.
+Boxplots show the median and interquartile range; individual observations are
+overlaid as jittered points. The x-axis is log₁₀-scaled. Panels **(c)** and
+**(d)** show the distribution of within-date, within-plot differences
+(Interrow − Row) for each year. The x-axis uses a pseudo-log (signed
+symmetric log) scale: values near zero are displayed on a linear scale,
+while the tails are compressed logarithmically to reveal the shape of the
+distribution without hiding the extreme observations. The red dashed line
+marks zero (no difference). Most differences cluster tightly near zero;
+large positive differences indicate measurement dates when Interrow flux
+exceeded Row flux substantially, and vice versa.
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(patchwork)
+library(scales)
+
+# ── Publication theme (matches figure_1_weather.qmd) ──────────────────────────
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Arial") +
+    theme(
+      panel.background   = element_rect(fill = "#ffffffff", color = NA),
+      plot.background    = element_rect(fill = "#ffffffff", color = NA),
+      strip.background   = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major   = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor   = element_blank(),
+      panel.spacing      = unit(2, "lines"),
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 1),
+      text               = element_text(color = "#000000ff"),
+      axis.text          = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title         = element_text(size = base_size),
+      axis.title.x       = element_text(margin = margin(t = 8)),
+      axis.title.y       = element_text(margin = margin(r = 8)),
+      axis.text.x        = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line          = element_line(color = "black", linewidth = 0.5),
+      axis.ticks         = element_line(color = "black", linewidth = 0.5),
+      legend.position    = "top",
+      legend.justification = "center",
+      legend.direction   = "horizontal",
+      legend.box         = "horizontal",
+      legend.margin      = margin(b = 1, unit = "pt"),
+      legend.box.margin  = margin(b = 1, unit = "pt"),
+      legend.text        = element_text(size = base_size * 0.9),
+      legend.title       = element_text(size = base_size),
+      legend.key.width   = unit(0.8, "cm"),
+      legend.key.height  = unit(0.3, "cm")
+    )
+}
+
+# ── Colors ─────────────────────────────────────────────────────────────────────
+year_colors <- c("2023" = "#E41A1C", "2024" = "#377EB8")
+
+treatment_colors <- c(
+  "Sorghum"       = "#D8D97AFF",
+  "Sorghum + WCC" = "#95C36EFF"
+)
+
+position_colors <- c("Row" = "grey80", "Interrow" = "grey40")
+```
+
+# Data
+
+```{r data}
+flux_data <- read_csv("data/cleaned_flux_data.csv") |>
+  mutate(date = as.Date(date))
+
+# Sorghum vs Sorghum + WCC only; relabel and set factor order
+row_interrow_comparison <- flux_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+  mutate(
+    Treatment      = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
+    Treatment      = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC")),
+    rowvs_interrow = factor(rowvs_interrow, levels = c("Row", "Interrow")),
+    year           = year(date)
+  ) |>
+  filter(year %in% c(2023, 2024)) |>
+  select(year, date, Treatment, plot, rowvs_interrow, gnha_day_no_negative)
+
+# Paired differences: Interrow − Row per plot × date
+diff_analysis <- row_interrow_comparison |>
+  pivot_wider(
+    names_from  = rowvs_interrow,
+    values_from = gnha_day_no_negative,
+    names_prefix = "Flux_"
+  ) |>
+  mutate(Diff = Flux_Interrow - Flux_Row) |>
+  filter(!is.na(Diff)) |>
+  mutate(year = year(date))
+```
+
+# Summary statistics
+
+```{r summary}
+cat("=== Mean flux by year / treatment / position ===\n")
+row_interrow_comparison |>
+  group_by(year, Treatment, rowvs_interrow) |>
+  summarise(
+    n         = n(),
+    mean_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    median_flux = median(gnha_day_no_negative, na.rm = TRUE),
+    sd_flux   = sd(gnha_day_no_negative, na.rm = TRUE),
+    .groups   = "drop"
+  ) |> print()
+
+cat("\n=== One-sample t-test: mean difference ≠ 0 (Interrow − Row) ===\n")
+diff_analysis |>
+  group_by(year) |>
+  summarise(
+    n        = n(),
+    mean_diff = mean(Diff),
+    t_stat   = t.test(Diff)$statistic,
+    p_value  = t.test(Diff)$p.value,
+    .groups  = "drop"
+  ) |> print()
+```
+
+# Figure
+
+```{r figure}
+# ── Panels (a) & (b): absolute flux, log x-axis ────────────────────────────────
+make_flux_panel <- function(yr, tag_label) {
+  ggplot(
+    filter(row_interrow_comparison, year == yr),
+    aes(x = gnha_day_no_negative, color = rowvs_interrow)
+  ) +
+    geom_boxplot(aes(y = Treatment), outlier.shape = NA, alpha = 0.7) +
+    geom_jitter(
+      aes(y = Treatment),
+      position = position_jitterdodge(jitter.width = 0.2),
+      alpha = 0.4, size = 0.7
+    ) +
+    scale_x_log10(labels = label_log()) +
+    annotation_logticks(sides = "b") +
+    scale_color_manual(values = position_colors, name = "Position") +
+    labs(
+      y     = "",
+      x     = expression("N"[2]*"O Flux (g N ha"^{-1}*" day"^{-1}*")"),
+      tag   = tag_label,
+      title = as.character(yr)
+    ) +
+    theme_publication(base_size = 10) +
+    theme(
+      legend.position   = if (tag_label == "(a)") "top" else "none",
+      plot.tag          = element_text(face = "bold", size = 11),
+      plot.tag.position = "topleft",
+      plot.title        = element_text(
+        hjust = 0.5, face = "bold", size = 12,
+        color = year_colors[as.character(yr)]
+      )
+    )
+}
+
+# ── Panels (c) & (d): difference distribution, pseudo-log x-axis ───────────────
+# pseudo_log_trans: linear near 0, logarithmic in the tails — handles negatives.
+# sigma controls the width of the linear region (units = g N ha-1 day-1).
+make_diff_panel <- function(yr, tag_label) {
+  df <- filter(diff_analysis, year == yr)
+
+  # Compute % of observations within ±10 for annotation
+  pct_near_zero <- round(mean(abs(df$Diff) <= 10) * 100, 0)
+  n_extreme <- sum(abs(df$Diff) > 10)
+
+  ggplot(df, aes(x = Diff, fill = Treatment)) +
+    geom_histogram(
+      aes(y = after_stat(density)),
+      bins = 60, alpha = 0.75, position = "identity",
+      color = "white", linewidth = 0.2
+    ) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "red",
+               linewidth = 0.7) +
+    # Pseudo-log scale: sigma = 2 keeps small differences visible
+    scale_x_continuous(
+      trans  = pseudo_log_trans(sigma = 2, base = 10),
+      breaks = c(-100, -10, -1, 0, 1, 10, 100),
+      labels = label_comma()
+    ) +
+    scale_fill_manual(values = treatment_colors, name = "Treatment") +
+    annotate(
+      "text", x = Inf, y = Inf,
+      label = paste0(pct_near_zero, "% within ±10\n",
+                     n_extreme, " obs. outside ±10"),
+      hjust = 1.05, vjust = 1.3, size = 2.8, color = "grey30"
+    ) +
+    labs(
+      x     = expression("Interrow \u2212 Row (g N ha"^{-1}*" day"^{-1}*")"),
+      y     = "Density",
+      tag   = tag_label,
+      title = as.character(yr)
+    ) +
+    theme_publication(base_size = 10) +
+    theme(
+      legend.position   = if (tag_label == "(c)") "top" else "none",
+      plot.tag          = element_text(face = "bold", size = 11),
+      plot.tag.position = "topleft",
+      plot.title        = element_text(
+        hjust = 0.5, face = "bold", size = 12,
+        color = year_colors[as.character(yr)]
+      )
+    )
+}
+
+p_a <- make_flux_panel(2023, "(a)")
+p_b <- make_flux_panel(2024, "(b)")
+p_c <- make_diff_panel(2023, "(c)")
+p_d <- make_diff_panel(2024, "(d)")
+
+fig_s3 <- (p_a | p_b) / (p_c | p_d)
+fig_s3
+```
+
+```{r save}
+ggsave(
+  "SubmissionFiguresTables/FigureS3_row_vs_interrow.tiff",
+  plot        = fig_s3,
+  width       = 174, height = 200, units = "mm", dpi = 600, bg = "white",
+  compression = "lzw"
+)
+```

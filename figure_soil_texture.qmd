@@ -1,0 +1,115 @@
+---
+title: "Figure: Soil Texture by Plot"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 11
+    fig-height: 8
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(readxl)
+
+# Colors matched to actual particle appearance:
+#   Sand  → very light cream (sand grains are pale/light)
+#   Silt  → dark brown (fine organic-rich dark soil)
+#   Clay  → warm tan (clay mineral colour)
+texture_colors <- c(
+  "Sand" = "#EDE0C4",
+  "Silt" = "#5C3317",
+  "Clay" = "#C4956A"
+)
+```
+
+# Data
+
+```{r data}
+texture <- read_excel(
+  "data/PSA Report - AGRON-McDaniel-Potter-2024.xlsm",
+  sheet = "Main Data File format", n_max = 22
+) |>
+  select(Sample, Sand = S, Silt = T, Clay = C) |>
+  separate(Sample, into = c("ID", "Plot"), sep = "_") |>
+  mutate(across(c(Plot, Sand, Silt, Clay), as.numeric)) |>
+  drop_na() |>
+  select(Plot, Sand, Silt, Clay)
+
+# Long format; order fractions from coarse (bottom) to fine (top)
+texture_long <- texture |>
+  pivot_longer(cols = c(Sand, Silt, Clay),
+               names_to  = "Fraction",
+               values_to = "Percent") |>
+  mutate(
+    Fraction = factor(Fraction, levels = c("Sand", "Silt", "Clay")),
+    Plot     = factor(Plot, levels = 1:15)
+  )
+
+texture_long
+```
+
+# Figure
+
+```{r figure, fig.width=11, fig.height=8}
+# Label color: white on dark silt, dark brown on light sand/clay
+label_colors <- c("Sand" = "#3D2008", "Silt" = "white", "Clay" = "#3D2008")
+
+p <- ggplot(texture_long, aes(x = "", y = Percent, fill = Fraction)) +
+  geom_col(width = 0.85, color = "white", linewidth = 0.5) +
+  geom_text(
+    aes(label = paste0(round(Percent, 1), "%"),
+        color = Fraction),
+    position = position_stack(vjust = 0.5),
+    size = 3.2, fontface = "bold", show.legend = FALSE
+  ) +
+  facet_wrap(
+    ~ Plot, nrow = 3,
+    labeller = as_labeller(function(x) paste("Plot", x))
+  ) +
+  scale_fill_manual(values  = texture_colors, name = NULL) +
+  scale_color_manual(values = label_colors) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 101)) +
+  labs(x = NULL, y = "Percent (%)") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.background     = element_rect(fill = "white", color = NA),
+    plot.background      = element_rect(fill = "white", color = NA),
+    strip.background     = element_rect(fill = "#EDE8E0", color = NA),
+    strip.text           = element_text(face = "bold", size = 10),
+    panel.grid           = element_blank(),
+    axis.text.x          = element_blank(),
+    axis.ticks.x         = element_blank(),
+    axis.text.y          = element_text(size = 9),
+    legend.position      = "top",
+    legend.justification = "center",
+    legend.key.size      = unit(0.5, "cm"),
+    legend.text          = element_text(size = 10),
+    panel.spacing        = unit(0.6, "lines"),
+    aspect.ratio         = 1
+  )
+
+p
+```
+
+# Save
+
+```{r save}
+ggsave(
+  "SubmissionFiguresTables/Figure_Soil_Texture.tiff",
+  plot = p,
+  width = 230, height = 170, units = "mm", dpi = 600,
+  device = "tiff", compression = "lzw", bg = "white"
+)
+```

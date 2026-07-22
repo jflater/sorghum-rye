@@ -201,9 +201,10 @@ rain_plot <- ggplot() +
   ) +
   scale_color_manual(name = "Year", values = year_colors, labels = year_labels) +
   scale_linetype_manual(name = "Year", values = year_linetypes, labels = year_labels) +
-  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
+               limits = as.Date(c("2000-01-01", "2000-12-31"))) +
   labs(x = "", y = "Cumulative Precipitation (mm)", tag = "(a)") +
-  theme_publication(base_size = 10)
+  theme_publication(base_size = 12)
 
 # ── Panel (b): Cumulative GDD ─────────────────────────────────────────────
 gdd_plot <- ggplot() +
@@ -219,20 +220,21 @@ gdd_plot <- ggplot() +
   ) +
   scale_color_manual(name = "Year", values = year_colors, labels = year_labels) +
   scale_linetype_manual(name = "Year", values = year_linetypes, labels = year_labels) +
-  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
-  labs(x = "", y = "Cumulative Growing Degree Days (GDD)", tag = "(b)") +
-  theme_publication(base_size = 10)
+  scale_x_date(date_breaks = "1 month", date_labels = "%b",
+               limits = as.Date(c("2000-01-01", "2000-12-31"))) +
+  labs(x = "", y = "Cumulative Growing Degree Days", tag = "(b)") +
+  theme_publication(base_size = 12)
 
 # ── Assemble ───────────────────────────────────────────────────────────────
 figure1 <- (rain_plot | gdd_plot) +
   plot_layout(guides = "collect", widths = c(1.05, 1.05)) &
-  theme_publication(base_size = 10) &
+  theme_publication(base_size = 12) &
   theme(
     legend.position  = "top",
-    legend.text      = element_text(size = 9),
+    legend.text      = element_text(size = 11),
     legend.key.width = unit(1.1, "cm"),
     plot.margin      = margin(t = 4, r = 6, b = 3, l = 6, unit = "pt"),
-    plot.tag         = element_text(face = "bold", size = 11),
+    plot.tag         = element_text(face = "bold", size = 13),
     plot.tag.position = "topleft"
   ) &
   guides(
@@ -242,7 +244,7 @@ figure1 <- (rain_plot | gdd_plot) +
 
 figure1
 
-ggsave(filename = "figure_1_weather.tiff", plot = figure1, width = 174, height = 65, units = "mm", dpi = 600, device = "tiff", compression = "lzw")
+ggsave(filename = "figure_1_weather.png", plot = figure1, width = 174, height = 120, units = "mm", dpi = 600, device = "png")
 ```
 
 # Alternative Visualizations

@@ -12,7 +12,9 @@
       "Bash(quarto render figure_2_microclimate.qmd)",
       "Bash(quarto render figure_5_biomass.qmd)",
       "Bash(quarto render figure_1_weather.qmd figure_2_microclimate.qmd figure_3_leaching.qmd figure_4_n2o.qmd figure_5_biomass.qmd figure_3_leaching_spacing.qmd figure_4_n2o_spacing.qmd)",
-      "Bash(quarto render figure_2_microclimate.qmd && quarto render figure_3_leaching.qmd && quarto render figure_4_n2o.qmd && quarto render figure_5_biomass.qmd && quarto render figure_3_leaching_spacing.qmd && quarto render figure_4_n2o_spacing.qmd)"
+      "Bash(quarto render figure_2_microclimate.qmd && quarto render figure_3_leaching.qmd && quarto render figure_4_n2o.qmd && quarto render figure_5_biomass.qmd && quarto render figure_3_leaching_spacing.qmd && quarto render figure_4_n2o_spacing.qmd)",
+      "Bash(quarto render:*)",
+      "Bash(sips -s format png /Users/jaredflater/Projects/sorghum-rye/SubmissionFiguresTables/FigureS4_Hydrology.tiff --out /tmp/FigureS4_v7.png)"
     ],
     "deny": [],
     "ask": []

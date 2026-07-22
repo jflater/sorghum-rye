@@ -220,13 +220,14 @@ one_sample_vs_zero <- function(x) {
 }
 
 # Helper to convert p-value to asterisk notation for 1-tail test
+# Thresholds: * p<0.10, ** p<0.05, *** p<0.01
 p_to_stars <- function(p) {
   case_when(
-    is.na(p)   ~ NA_character_,
-    p < 0.01   ~ "***",
-    p < 0.05   ~ "**",
-    p < 0.10   ~ "*",
-    TRUE       ~ NA_character_
+    is.na(p)  ~ NA_character_,
+    p < 0.01  ~ "***",
+    p < 0.05  ~ "**",
+    p < 0.10  ~ "*",
+    TRUE      ~ NA_character_
   )
 }
 
@@ -258,7 +259,7 @@ annual_leached <- leaching_data |>
 anova_leached   <- aov(annual_leached_n ~ Treatment, data = annual_leached)
 anova_leached_p <- summary(anova_leached)[[1]]["Treatment", "Pr(>F)"]
 
-# CLD with "a" assigned to the HIGHER mean value (McDaniel convention)
+# CLD with "a" assigned to the HIGHER mean value (convention: a = highest)
 leached_letters <- tryCatch({
   emm_tbl <- emmeans(anova_leached, ~ Treatment) |>
     cld(adjust = "tukey", Letters = letters) |>
@@ -266,10 +267,16 @@ leached_letters <- tryCatch({
     transmute(Treatment = as.character(Treatment),
               letter    = gsub("\\s+", "", .group),
               emmean    = emmean)
-  # Reverse letters so "a" = highest mean
-  if (nrow(emm_tbl) > 1 && n_distinct(emm_tbl$letter) > 1) {
-    rank_desc <- rank(-emm_tbl$emmean)
-    emm_tbl$letter <- letters[rank_desc]
+  # Assign letters by descending mean: highest mean gets "a"
+  # Get the distinct CLD groups in their natural order, then remap
+  if (nrow(emm_tbl) > 1) {
+    # Sort by descending emmean; assign new letters in that order
+    emm_sorted <- emm_tbl |> arrange(desc(emmean))
+    # Build a mapping from old letter to new letter based on rank of mean
+    old_letters <- emm_tbl |> arrange(emmean) |> pull(letter)  # ascending = default cld order
+    new_letters <- rev(old_letters)  # reverse so highest mean = "a"
+    letter_map  <- setNames(new_letters, old_letters)
+    emm_tbl$letter <- letter_map[emm_tbl$letter]
   }
   emm_tbl |> select(Treatment, letter)
 }, error = \(e) {
@@ -420,11 +427,15 @@ create_leaching_cum_panel <- function(year_val, is_right, tag_label) {
 diff_span <- diff(range(daily_leach_diff$diff_wcc_minus_sorghum, na.rm = TRUE))
 if (!is.finite(diff_span) || diff_span == 0) diff_span <- 0.05
 
+# For annotation: place stars just above the boxplot upper hinge (or above 0)
 leach_diff_anno <- daily_leach_diff |>
-  summarise(y = max(diff_wcc_minus_sorghum, na.rm = TRUE), .by = year) |>
+  summarise(
+    y_box_top = quantile(diff_wcc_minus_sorghum, 0.75, na.rm = TRUE),
+    .by = year
+  ) |>
   left_join(leach_diff_stats, by = "year") |>
   filter(significant) |>
-  mutate(y = y + diff_span * 0.08)
+  mutate(y = pmax(y_box_top, 0) + diff_span * 0.06)
 
 p3c <- ggplot(daily_leach_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
@@ -433,11 +444,12 @@ p3c <- ggplot(daily_leach_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum
               size = 1.4, show.legend = FALSE) +
   geom_text(data = leach_diff_anno,
             aes(x = factor(year), y = y, label = letter),
-            inherit.aes = FALSE, fontface = "bold", size = 3.8) +
+            inherit.aes = FALSE, fontface = "bold", size = 4.5) +
   scale_color_manual(values = c("2023" = "#E41A1C", "2024" = "#377EB8")) +
+  scale_x_discrete(labels = NULL) +
   coord_cartesian(ylim = c(-0.2, NA)) +
   labs(
-    x = "Year",
+    x = "",
     y = expression(atop("Daily Leached N Difference",
                         "(kg N ha"^{-1}~"d"^{-1}*", WCC \u2212 Sorghum)")),
     tag = "(c)"
@@ -446,6 +458,8 @@ p3c <- ggplot(daily_leach_diff, aes(x = factor(year), y = diff_wcc_minus_sorghum
   theme(plot.tag = element_text(face = "bold", size = 11),
         plot.tag.position = "topleft",
         plot.margin = margin(t = 14, r = 4, b = 4, l = 4),
+        axis.text.x  = element_blank(),
+        axis.ticks.x = element_blank(),
         legend.position = "none")
 
 # ── Panel (f): annual cumulative by treatment ──────────────────────────────
@@ -483,29 +497,31 @@ p3f <- ggplot(annual_leached, aes(x = Treatment, y = annual_leached_n, fill = Tr
 p3a <- create_leaching_daily_panel(2023, is_right = FALSE, "(a)") +
   labs(title = "2023") +
   theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
-                                   color = "#E41A1C"))
+                                   color = "#E41A1C"),
+        legend.position   = "top",
+        legend.direction  = "horizontal",
+        legend.text       = element_text(size = 10),
+        legend.title      = element_text(size = 10),
+        legend.key.width  = unit(1.2, "cm"),
+        legend.key.height = unit(0.4, "cm"))
+
 p3b <- create_leaching_daily_panel(2024, is_right = TRUE,  "(b)") +
   labs(title = "2024") +
   theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                   color = "#377EB8"),
+        legend.position = "none")
+
+p3d <- create_leaching_cum_panel(2023, is_right = FALSE, "(d)") +
+  labs(title = "2023") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                   color = "#E41A1C"))
+p3e <- create_leaching_cum_panel(2024, is_right = TRUE,  "(e)") +
+  labs(title = "2024") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
                                    color = "#377EB8"))
-p3d <- create_leaching_cum_panel(2023, is_right = FALSE, "(d)")
-p3e <- create_leaching_cum_panel(2024, is_right = TRUE,  "(e)")
-
-# p3a keeps its legend; all others are suppressed
-p3b_nl <- p3b + theme(legend.position = "none")
-
-# Style p3a legend
-p3a <- p3a + theme(
-  legend.position   = "top",
-  legend.direction  = "horizontal",
-  legend.text       = element_text(size = 10),
-  legend.title      = element_text(size = 10),
-  legend.key.width  = unit(1.2, "cm"),
-  legend.key.height = unit(0.4, "cm")
-)
 
 figure3 <- guide_area() /
-  ((p3a | p3b_nl | p3c) / (p3d | p3e | p3f) +
+  ((p3a | p3b | p3c) / (p3d | p3e | p3f) +
      plot_layout(widths = c(1, 1, 0.95))) +
   plot_layout(heights = c(0.05, 1), guides = "collect")
 

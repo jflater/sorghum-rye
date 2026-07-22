@@ -1,0 +1,117 @@
+---
+title: "Table S2: Cereal Rye Cover Crop Biomass"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Overview
+
+Summary statistics for cereal rye (cover crop) dry biomass at termination,
+reported in Mg ha⁻¹ (oven-dry equivalent).
+
+**Unit conversion note:** Samples were collected from 1 m² quadrats (4 reps per
+plot, 4 plots per year → n = 16 per year). Dry mass is recorded in grams. The
+conversion from g m⁻² to Mg ha⁻¹ is:
+
+$$1 \text{ g m}^{-2} \times \frac{1 \text{ Mg}}{10^6 \text{ g}} \times
+\frac{10{,}000 \text{ m}^2}{\text{ha}} = 0.01 \text{ Mg ha}^{-1}$$
+
+So `biomass_mg_ha = net_dry_mass_g * 0.01` is the correct conversion.
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(readxl)
+library(gt)
+```
+
+# Load & Process Data
+
+```{r load-data}
+rye_biomass <- bind_rows(
+  read_excel("data/BiomassData_Rye_20230522.xlsx") |> mutate(year = 2023),
+  read_excel("data/BiomassData_Rye_20240515.xlsx") |> mutate(year = 2024)
+) |>
+  mutate(
+    year          = factor(year, levels = c(2023, 2024)),
+    Plot          = as.character(`Plot ID`),
+    # Samples from 1 m² quadrats; dry mass in grams → Mg ha⁻¹
+    # g/m² × 0.01 = Mg/ha
+    biomass_mg_ha = (`Dry Mass + Dry Bag Mass` - `Dry Bag Mass`) * 0.01
+  ) |>
+  select(year, Plot, biomass_mg_ha)
+```
+
+# Raw Data Check
+
+```{r raw-check}
+rye_biomass |>
+  group_by(year) |>
+  summarise(
+    n         = n(),
+    mean_g_m2 = mean(biomass_mg_ha / 0.01),   # back-convert to g/m² for inspection
+    mean_Mg_ha = mean(biomass_mg_ha),
+    min_Mg_ha = min(biomass_mg_ha),
+    max_Mg_ha = max(biomass_mg_ha)
+  )
+```
+
+# Summary Statistics
+
+```{r summary-stats}
+rye_biomass_summary <- rye_biomass |>
+  group_by(year) |>
+  summarise(
+    n     = n(),
+    mean  = mean(biomass_mg_ha, na.rm = TRUE),
+    sd    = sd(biomass_mg_ha, na.rm = TRUE),
+    se    = sd / sqrt(n),
+    min   = min(biomass_mg_ha, na.rm = TRUE),
+    max   = max(biomass_mg_ha, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+rye_biomass_summary
+```
+
+# Table S2
+
+```{r table-s2}
+table_s2 <- rye_biomass_summary |>
+  gt() |>
+  cols_label(
+    year = "Year",
+    n    = "n",
+    mean = "Mean",
+    sd   = "SD",
+    se   = "SE",
+    min  = "Min",
+    max  = "Max"
+  ) |>
+  fmt_number(columns = c(mean, sd, se, min, max), decimals = 2) |>
+  tab_header(
+    title    = md("**Table S2. Cereal Rye (Cover Crop) Biomass**"),
+    subtitle = md("Biomass in Mg ha⁻¹, measured at termination")
+  ) |>
+  cols_align(align = "center", columns = everything())
+
+table_s2
+```
+
+# Save
+
+```{r save}
+gtsave(table_s2, "SubmissionFiguresTables/Table_S2_Cover_Crop_Biomass.rtf")
+```

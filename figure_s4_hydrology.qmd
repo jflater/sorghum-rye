@@ -1,0 +1,357 @@
+---
+title: "Figure S4: Hydrology — Drainage, Texture, and N Leaching"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 10
+    fig-height: 5
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Caption
+
+**Figure S4.** Relationships between soil texture, annual drainage, and
+cumulative N leaching across treatment plots in 2023 and 2024. **(a)** Annual
+drainage (mm) vs. cumulative leached N (kg N ha⁻¹); **(b)** sand content (%)
+vs. annual drainage (mm). Lines show per-treatment OLS regression fits with
+95% confidence bands. Point shapes distinguish treatments. Equation and R²
+annotations are shown per treatment.
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(readxl)
+library(patchwork)
+library(lme4)
+library(lmerTest)   # p-values for lmer
+library(broom.mixed)
+conflicted::conflicts_prefer(lmerTest::lmer)
+
+# ── Publication theme (matches figure_1_weather.qmd) ──────────────────────────
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Arial") +
+    theme(
+      panel.background   = element_rect(fill = "#ffffffff", color = NA),
+      plot.background    = element_rect(fill = "#ffffffff", color = NA),
+      strip.background   = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major   = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor   = element_blank(),
+      panel.spacing      = unit(2, "lines"),
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 1),
+      text               = element_text(color = "#000000ff"),
+      axis.text          = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title         = element_text(size = base_size),
+      axis.title.x       = element_text(margin = margin(t = 8)),
+      axis.title.y       = element_text(margin = margin(r = 8)),
+      axis.text.x        = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line          = element_line(color = "black", linewidth = 0.5),
+      axis.ticks         = element_line(color = "black", linewidth = 0.5),
+      legend.position    = "top",
+      legend.justification = "center",
+      legend.direction   = "horizontal",
+      legend.box         = "horizontal",
+      legend.margin      = margin(b = 1, unit = "pt"),
+      legend.box.margin  = margin(b = 1, unit = "pt"),
+      legend.text        = element_text(size = base_size * 0.9),
+      legend.title       = element_text(size = base_size),
+      legend.key.width   = unit(0.8, "cm"),
+      legend.key.height  = unit(0.3, "cm")
+    )
+}
+
+# ── Colors & shapes ────────────────────────────────────────────────────────────
+supp_colors <- c(
+  "Maize"         = "#B0B0B0",
+  "Soybean"       = "#A8C8E8",
+  "Sorghum"       = "#D8D97AFF",
+  "Sorghum + WCC" = "#95C36EFF"
+)
+supp_shapes <- c("Maize" = 22, "Soybean" = 24,
+                 "Sorghum" = 21, "Sorghum + WCC" = 23)
+```
+
+# Data
+
+```{r data}
+plot_area_ha <- (120 * 160) / 107639.1041671
+
+# ── Leaching & drainage ────────────────────────────────────────────────────────
+annual_leaching <- read_csv("data/clean_leaching.csv", show_col_types = FALSE) |>
+  janitor::clean_names() |>
+  mutate(date = as.Date(date), year = lubridate::year(date)) |>
+  filter(year %in% c(2023, 2024)) |>
+  mutate(plot = as.numeric(plot)) |>
+  group_by(plot, treatment, year) |>
+  summarise(
+    annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha,
+    annual_drainage_l          = max(cumulative_flow_l, na.rm = TRUE),
+    annual_drainage_mm         = (annual_drainage_l / plot_area_ha) / 10000,
+    .groups = "drop"
+  ) |>
+  filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0)
+
+# ── Soil texture ───────────────────────────────────────────────────────────────
+texture <- read_excel(
+  "data/PSA Report - AGRON-McDaniel-Potter-2024.xlsm",
+  sheet = "Main Data File format", n_max = 22
+) |>
+  select(Sample, Sand = S, Silt = T, Clay = C) |>
+  separate(Sample, into = c("ID", "Plot"), sep = "_") |>
+  mutate(across(c(Plot, Sand, Silt, Clay), as.numeric)) |>
+  drop_na() |>
+  select(Plot, Sand, Silt, Clay)
+
+# ── Join & relabel ─────────────────────────────────────────────────────────────
+plot_hydrology <- annual_leaching |>
+  select(year, plot, treatment,
+         drainage_mm    = annual_drainage_mm,
+         leaching_kg_ha = annual_cumulative_leaching) |>
+  left_join(texture, by = c("plot" = "Plot")) |>
+  mutate(
+    year      = as.factor(year),
+    Treatment = case_when(
+      treatment == "Corn"          ~ "Maize",
+      treatment == "Soy"           ~ "Soybean",
+      treatment == "Sorghum + Rye" ~ "Sorghum + WCC",
+      TRUE                         ~ treatment
+    ),
+    Treatment = factor(Treatment,
+                       levels = c("Maize", "Soybean", "Sorghum", "Sorghum + WCC"))
+  )
+```
+
+# Sample count diagnostic
+
+```{r sample-counts}
+# Note: Maize and Soybean plots rotate between years (crop rotation design).
+# Sorghum and Sorghum + WCC plots are stable across years.
+plot_hydrology |>
+  count(year, Treatment, name = "n_plots") |>
+  arrange(year, Treatment) |>
+  print()
+```
+
+# Figure S4
+
+```{r lm-labels-helper}
+# Per-treatment OLS label: slope, intercept, R²
+lm_labels <- function(df, xvar, yvar) {
+  df |>
+    group_by(Treatment) |>
+    summarise(
+      lbl = {
+        mod <- lm(get(yvar) ~ get(xvar))
+        b0  <- round(coef(mod)[1], 2)
+        b1  <- round(coef(mod)[2], 3)
+        r2  <- round(summary(mod)$r.squared, 2)
+        paste0("β = ", b1, ",  R² = ", r2)
+      },
+      .groups = "drop"
+    )
+}
+```
+
+```{r figure-s4}
+eq_loss <- lm_labels(plot_hydrology, "drainage_mm", "leaching_kg_ha")
+eq_tex  <- lm_labels(plot_hydrology, "Sand", "drainage_mm")
+
+# Panel (a): Drainage vs. N Leaching ──────────────────────────────────────────
+p_loss <- ggplot(plot_hydrology,
+                 aes(x = drainage_mm, y = leaching_kg_ha)) +
+  geom_smooth(aes(color = Treatment), method = "lm", se = FALSE,
+              linewidth = 0.8) +
+  geom_point(aes(fill = Treatment, shape = Treatment),
+             size = 3.5, alpha = 0.9, color = "black", stroke = 0.4) +
+  geom_text(
+    data = eq_loss,
+    aes(label = lbl, color = Treatment),
+    x = -Inf, y = Inf,
+    hjust = -0.05,
+    vjust = seq(1.6, by = 1.4, length.out = nrow(eq_loss)),
+    size = 2.8, fontface = "italic", show.legend = FALSE
+  ) +
+  scale_fill_manual(values  = supp_colors) +
+  scale_color_manual(values = supp_colors) +
+  scale_shape_manual(values = supp_shapes) +
+  labs(
+    tag   = "(a)",
+    x     = "Annual Drainage (mm)",
+    y     = expression("Cumulative Leached N (kg N ha"^{-1}*")"),
+    fill  = NULL, shape = NULL, color = NULL
+  ) +
+  theme_publication(base_size = 10) +
+  theme(
+    plot.tag          = element_text(face = "bold", size = 11),
+    plot.tag.position = "topleft"
+  )
+
+# Panel (b): Sand content vs. Drainage ────────────────────────────────────────
+p_texture <- ggplot(plot_hydrology,
+                    aes(x = Sand, y = drainage_mm)) +
+  geom_smooth(aes(color = Treatment), method = "lm", se = FALSE,
+              linewidth = 0.8) +
+  geom_point(aes(fill = Treatment, shape = Treatment),
+             size = 3.5, alpha = 0.9, color = "black", stroke = 0.4) +
+  geom_text(
+    data = eq_tex,
+    aes(label = lbl, color = Treatment),
+    x = -Inf, y = Inf,
+    hjust = -0.05,
+    vjust = seq(1.6, by = 1.4, length.out = nrow(eq_tex)),
+    size = 2.8, fontface = "italic", show.legend = FALSE
+  ) +
+  scale_fill_manual(values  = supp_colors) +
+  scale_color_manual(values = supp_colors) +
+  scale_shape_manual(values = supp_shapes) +
+  labs(
+    tag   = "(b)",
+    x     = "Sand Content (%)",
+    y     = "Annual Drainage (mm)",
+    fill  = NULL, shape = NULL, color = NULL
+  ) +
+  theme_publication(base_size = 10) +
+  theme(
+    plot.tag          = element_text(face = "bold", size = 11),
+    plot.tag.position = "topleft"
+  )
+
+figure_s4 <- (p_loss + p_texture) +
+  plot_layout(widths = c(1, 1), guides = "collect") &
+  theme(
+    legend.position      = "top",
+    legend.justification = "center",
+    plot.margin          = margin(t = 2, r = 4, b = 2, l = 4, unit = "mm")
+  )
+figure_s4
+```
+
+```{r save}
+ggsave(
+  "SubmissionFiguresTables/FigureS4_Hydrology.tiff",
+  plot        = figure_s4,
+  width       = 174, height = 100, units = "mm", dpi = 600, bg = "white",
+  compression = "lzw"
+)
+```
+
+# Per-treatment OLS: Drainage → N Leaching
+
+Simple linear models fit within each treatment group. With n = 7–8 per
+treatment, these are exploratory; interpret slopes and R² directionally.
+
+```{r per-treatment-ols}
+ols_results <- plot_hydrology |>
+  group_by(Treatment) |>
+  summarise(
+    n         = n(),
+    slope     = coef(lm(leaching_kg_ha ~ drainage_mm))[2],
+    intercept = coef(lm(leaching_kg_ha ~ drainage_mm))[1],
+    r_squared = summary(lm(leaching_kg_ha ~ drainage_mm))$r.squared,
+    p_slope   = summary(lm(leaching_kg_ha ~ drainage_mm))$coefficients[2, 4],
+    .groups   = "drop"
+  ) |>
+  mutate(across(where(is.numeric), \(x) round(x, 4)))
+
+print(ols_results)
+```
+
+# Linear Mixed Effects Model: Do slopes differ by treatment?
+
+**Design note:** Maize and Soybean plots rotate between years (crop rotation);
+Sorghum/Sorghum+WCC plots are fixed. The `(1 | plot)` random intercept
+captures plot-level spatial effects (soil, drainage position) that persist
+across years regardless of treatment.
+
+**Model:** `leaching_kg_ha ~ drainage_mm × Treatment + (1 | plot)`
+
+The `drainage_mm:Treatment` interaction tests whether the slope of N leaching
+on drainage differs among treatments (i.e., does each treatment have a
+distinct drainage-to-leaching efficiency?).
+
+```{r lmer-model}
+# Fit full model with treatment × drainage interaction
+m_full <- lmer(
+  leaching_kg_ha ~ drainage_mm * Treatment + (1 | plot),
+  data = plot_hydrology,
+  REML = FALSE   # use ML for model comparison
+)
+
+# Reduced model (parallel slopes — no interaction)
+m_reduced <- lmer(
+  leaching_kg_ha ~ drainage_mm + Treatment + (1 | plot),
+  data = plot_hydrology,
+  REML = FALSE
+)
+
+cat("=== Likelihood ratio test: interaction vs. no interaction ===\n")
+print(anova(m_reduced, m_full))
+
+cat("\n=== Full model fixed effects (lmerTest p-values) ===\n")
+m_full_reml <- lmer(
+  leaching_kg_ha ~ drainage_mm * Treatment + (1 | plot),
+  data = plot_hydrology,
+  REML = TRUE   # REML for final estimates
+)
+print(summary(m_full_reml)$coefficients |> round(4))
+```
+
+```{r lmer-slopes}
+# Extract per-treatment slopes from the full model
+# Slope for reference (Maize) = drainage_mm coefficient
+# Slope for others = drainage_mm + drainage_mm:TreatmentX interaction
+fe <- fixef(m_full_reml)
+ci <- confint(m_full_reml, parm = "beta_", method = "Wald")
+
+trt_levels <- levels(plot_hydrology$Treatment)
+ref_trt    <- trt_levels[1]   # Maize is reference
+
+slopes <- tibble(
+  Treatment  = trt_levels,
+  slope      = c(
+    fe["drainage_mm"],
+    fe["drainage_mm"] + fe[paste0("drainage_mm:Treatment", trt_levels[-1])]
+  ),
+  ci_lo = c(
+    ci["drainage_mm", 1],
+    ci["drainage_mm", 1] + ci[paste0("drainage_mm:Treatment", trt_levels[-1]), 1]
+  ),
+  ci_hi = c(
+    ci["drainage_mm", 2],
+    ci["drainage_mm", 2] + ci[paste0("drainage_mm:Treatment", trt_levels[-1]), 2]
+  )
+)
+
+cat("\n=== Model-estimated slopes (kg N ha⁻¹ per mm drainage) by treatment ===\n")
+print(slopes |> mutate(across(where(is.numeric), \(x) round(x, 4))))
+```
+
+```{r slope-plot, fig.height=4}
+# Coefficient plot: per-treatment slopes with 95% Wald CI
+ggplot(slopes, aes(x = slope, y = Treatment, color = Treatment)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_errorbarh(aes(xmin = ci_lo, xmax = ci_hi),
+                 height = 0.25, linewidth = 0.8) +
+  geom_point(aes(fill = Treatment, shape = Treatment),
+             size = 4, color = "black", stroke = 0.5) +
+  scale_color_manual(values = supp_colors) +
+  scale_fill_manual(values  = supp_colors) +
+  scale_shape_manual(values = supp_shapes) +
+  labs(
+    x     = expression("Slope (kg N ha"^{-1}*" per mm drainage)"),
+    y     = "",
+    title = "Mixed model drainage → leaching slopes by treatment",
+    subtitle = "Points = REML estimate; bars = 95% Wald CI"
+  ) +
+  theme_publication(base_size = 11) +
+  theme(legend.position = "none")
+```

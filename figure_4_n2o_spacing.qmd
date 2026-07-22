@@ -240,13 +240,24 @@ one_sample_vs_zero <- function(x) {
   tryCatch(t.test(x, mu = 0)$p.value, error = \(e) NA_real_)
 }
 
+# Helper to convert p-value to asterisk notation for 1-tail test
+p_to_stars <- function(p) {
+  case_when(
+    is.na(p)   ~ NA_character_,
+    p < 0.01   ~ "***",
+    p < 0.05   ~ "**",
+    p < 0.10   ~ "*",
+    TRUE       ~ NA_character_
+  )
+}
+
 n2o_diff_stats <- daily_n2o_diff |>
   summarise(
     n          = sum(!is.na(diff_wcc_minus_sorghum)),
     mean_diff  = mean(diff_wcc_minus_sorghum, na.rm = TRUE),
     p_value    = one_sample_vs_zero(diff_wcc_minus_sorghum),
-    significant = !is.na(p_value) & p_value < 0.05,
-    letter     = if_else(significant, "a", NA_character_),
+    significant = !is.na(p_value) & p_value < 0.10,
+    letter     = p_to_stars(p_value),
     .by = year
   )
 
@@ -259,14 +270,20 @@ annual_n2o <- cum_flux_plot_level |>
 anova_n2o   <- aov(annual_cum_n2o ~ Treatment, data = annual_n2o)
 anova_n2o_p <- summary(anova_n2o)[[1]]["Treatment", "Pr(>F)"]
 
+# If no significant difference (all same group), show no letters (McDaniel)
 n2o_letters <- tryCatch({
-  emmeans(anova_n2o, ~ Treatment) |>
+  cld_tbl <- emmeans(anova_n2o, ~ Treatment) |>
     cld(adjust = "tukey", Letters = letters) |>
     as_tibble() |>
     transmute(Treatment = as.character(Treatment),
               letter    = gsub("\\s+", "", .group))
+  # If all treatments share the same letter, remove letters entirely
+  if (n_distinct(cld_tbl$letter) == 1) {
+    cld_tbl$letter <- NA_character_
+  }
+  cld_tbl
 }, error = \(e) {
-  annual_n2o |> distinct(Treatment) |> mutate(letter = "a")
+  annual_n2o |> distinct(Treatment) |> mutate(letter = NA_character_)
 })
 ```
 
@@ -461,8 +478,14 @@ p4f <- ggplot(annual_n2o, aes(x = Treatment, y = annual_cum_n2o, fill = Treatmen
         plot.margin = margin(t = 14, r = 4, b = 4, l = 4))
 
 # ── Build panels ──────────────────────────────────────────────────────────
-p4a <- create_n2o_daily_panel(2023, is_right = FALSE, "(a)")
-p4b <- create_n2o_daily_panel(2024, is_right = TRUE,  "(b)")
+p4a <- create_n2o_daily_panel(2023, is_right = FALSE, "(a)") +
+  labs(title = "2023") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                   color = "#E41A1C"))
+p4b <- create_n2o_daily_panel(2024, is_right = TRUE,  "(b)") +
+  labs(title = "2024") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                   color = "#377EB8"))
 p4d <- create_n2o_cum_panel(2023, is_right = FALSE, "(d)")
 p4e <- create_n2o_cum_panel(2024, is_right = TRUE,  "(e)")
 

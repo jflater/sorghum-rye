@@ -203,20 +203,22 @@ sorghum_tests_by_year <- sorghum_plot_data |>
   )
 
 # ── Compact letter display ────────────────────────────────────────────────
+# McDaniel: remove letters entirely if no significant difference in that year
 sorghum_letters <- sorghum_stats |>
   left_join(sorghum_tests_by_year, by = "year") |>
   group_by(year) |>
   mutate(
     letter = case_when(
-      is.na(p_value) | p_value >= 0.05 ~ "a",
+      is.na(p_value) | p_value >= 0.05 ~ NA_character_,
       mean_sorghum == max(mean_sorghum, na.rm = TRUE) ~ "a",
       TRUE ~ "b"
     )
   ) |>
   ungroup()
 
+# y_label is used as x position in horizontal bars (right of error bar)
 letter_offsets <- sorghum_letters |>
-  summarise(offset = max(mean_sorghum + ci_sorghum, na.rm = TRUE) * 0.08, .by = year)
+  summarise(offset = max(mean_sorghum + ci_sorghum, na.rm = TRUE) * 0.05, .by = year)
 
 sorghum_letters <- sorghum_letters |>
   left_join(letter_offsets, by = "year") |>
@@ -230,94 +232,71 @@ sorghum_letters <- sorghum_letters |>
 #| fig-height: 5
 #| fig-dpi: 300
 
-# ── Fill keys for layered bars ────────────────────────────────────────────
+# ── Fill keys for bars (rye overlay removed per McDaniel) ─────────────────
 sorghum_stats <- sorghum_stats |> mutate(fill_key = as.character(treatment))
-rye_overlay   <- rye_stats |> mutate(fill_key = "Rye overlay")
 
 fill_palette <- c(
   "Sorghum"       = "#D8D97AFF",
-  "Sorghum + WCC" = "#95C36EFF",
-  "Rye overlay"   = "#F5DEB3"
+  "Sorghum + WCC" = "#95C36EFF"
 )
 
-# ── Rye layer (striped if ggpattern available) ────────────────────────────
-rye_layer <- if (requireNamespace("ggpattern", quietly = TRUE)) {
-  ggpattern::geom_col_pattern(
-    data = rye_overlay,
-    aes(x = treatment, y = mean_rye, fill = fill_key),
-    pattern = "stripe", pattern_fill = "grey35", pattern_colour = "grey35",
-    pattern_angle = 45, pattern_density = 0.45,
-    alpha = 0.95, color = "black", width = 0.32, inherit.aes = FALSE
-  )
-} else {
-  geom_col(
-    data = rye_overlay,
-    aes(x = treatment, y = mean_rye, fill = fill_key),
-    alpha = 0.95, color = "black", width = 0.32, inherit.aes = FALSE
-  )
+# ── Build figure (horizontal bars, no rye overlay) ────────────────────────
+# McDaniel: Treatment on y-axis, Sorghum Biomass on x-axis, red/blue year titles
+# Panel labels as patchwork tags (outside plots, in corners)
+
+# Split by year for patchwork with colored year title bars
+sorghum_stats_2023 <- filter(sorghum_stats, year == 2023)
+sorghum_stats_2024 <- filter(sorghum_stats, year == 2024)
+sorghum_letters_2023 <- filter(sorghum_letters, year == 2023)
+sorghum_letters_2024 <- filter(sorghum_letters, year == 2024)
+
+make_biomass_panel <- function(stats_df, letters_df, tag_label, year_label, year_color) {
+  p <- ggplot() +
+    geom_col(
+      data = stats_df,
+      aes(y = treatment, x = mean_sorghum, fill = fill_key),
+      color = "black", width = 0.7
+    ) +
+    geom_errorbarh(
+      data = stats_df,
+      aes(y = treatment,
+          xmin = pmax(0, mean_sorghum - ci_sorghum),
+          xmax = mean_sorghum + ci_sorghum),
+      height = 0.18, inherit.aes = FALSE
+    ) +
+    # Significance letters (only if non-NA)
+    geom_text(
+      data = filter(letters_df, !is.na(letter)),
+      aes(y = treatment, x = y_label, label = letter),
+      inherit.aes = FALSE, fontface = "bold", size = 3.8
+    ) +
+    scale_fill_manual(values = fill_palette, name = "Treatment") +
+    labs(
+      y = "Treatment",
+      x = expression("Sorghum Biomass (Mg ha"^-1 * ")"),
+      tag = tag_label,
+      title = year_label
+    ) +
+    theme_publication(base_size = 10) +
+    theme(
+      legend.position    = "none",
+      plot.tag           = element_text(face = "bold", size = 11),
+      plot.tag.position  = "topleft",
+      plot.title         = element_text(hjust = 0.5, face = "bold", size = 12,
+                                         color = year_color)
+    )
+  p
 }
 
-# ── Panel labels ──────────────────────────────────────────────────────────
-facet_panel_labels <- tibble(
-  year      = factor(c(2023, 2024), levels = c(2023, 2024)),
-  treatment = factor("Sorghum", levels = treatment_levels),
-  y         = Inf,
-  label     = c("(a)", "(b)")
-)
+p5a <- make_biomass_panel(sorghum_stats_2023, sorghum_letters_2023,
+                          "(a)", "2023", "#E41A1C")
+p5b <- make_biomass_panel(sorghum_stats_2024, sorghum_letters_2024,
+                          "(b)", "2024", "#377EB8") +
+  labs(y = "")  # remove duplicate y-axis label
 
-# ── Build figure ──────────────────────────────────────────────────────────
-figure5 <- ggplot() +
-  # Sorghum bars
-  geom_col(
-    data = sorghum_stats,
-    aes(x = treatment, y = mean_sorghum, fill = fill_key),
-    color = "black", width = 0.7
-  ) +
-  geom_errorbar(
-    data = sorghum_stats,
-    aes(x = treatment,
-        ymin = pmax(0, mean_sorghum - ci_sorghum),
-        ymax = mean_sorghum + ci_sorghum),
-    width = 0.18, inherit.aes = FALSE
-  ) +
-  # Rye overlay
-  rye_layer +
-  geom_errorbar(
-    data = rye_overlay,
-    aes(x = treatment,
-        ymin = pmax(0, mean_rye - ci_rye),
-        ymax = mean_rye + ci_rye),
-    width = 0.1, inherit.aes = FALSE
-  ) +
-  # Significance letters
-  geom_text(
-    data = sorghum_letters,
-    aes(x = treatment, y = y_label, label = letter),
-    inherit.aes = FALSE, fontface = "bold", size = 3.8
-  ) +
-  # Panel labels via geom_text (consistent bold style)
-  geom_text(
-    data = facet_panel_labels,
-    aes(x = treatment, y = y, label = label),
-    inherit.aes = FALSE,
-    hjust = -0.08, vjust = 1.15,
-    fontface = "bold", size = 3.8
-  ) +
-  facet_wrap(~year, nrow = 1) +
-  scale_fill_manual(
-    values = fill_palette,
-    breaks = c("Sorghum", "Sorghum + WCC", "Rye overlay"),
-    name   = "Biomass component"
-  ) +
-  labs(
-    x = "",
-    y = expression("Oven-dried Biomass (Mg ha"^-1 * ")")
-  ) +
-  theme_publication(base_size = 10) +
-  theme(
-    legend.position    = "top",
-    legend.justification = "center"
-  )
+figure5 <- (p5a | p5b) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "top")
 
 figure5
 

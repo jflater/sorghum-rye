@@ -1022,27 +1022,33 @@ cat("Overall cumulative N2O flux range (kg N ha-1) across Sorghum, Sorghum + WCC
 ```{r}
 library(gt)
 str(flux_data)
+# Table S1: Use RAW flux values (including negatives) for min; round to whole numbers
+# If 'gnha_day' column exists use it for min; otherwise fall back to gnha_day_no_negative
+raw_flux_col <- if ("gnha_day" %in% names(flux_data)) "gnha_day" else "gnha_day_no_negative"
+
 daily_flux_stats <- flux_data |>
   filter(treatment %in% c("Sorghum", "Sorghum + Rye", "Corn", "Soy")) |>
   mutate(
     Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", treatment),
-    year = year(date)
+    year = year(date),
+    raw_flux = .data[[raw_flux_col]]
   ) |>
   filter(year %in% c(2023, 2024)) |>
-  
-  # --- STEP 1: POOL ROW & INTERROW (The Fix) ---
+
+  # --- STEP 1: POOL ROW & INTERROW ---
   group_by(date, plot, Treatment, year) |>
   summarise(
     plot_daily_flux = mean(gnha_day_no_negative, na.rm = TRUE),
+    plot_daily_flux_raw = mean(raw_flux, na.rm = TRUE),
     .groups = "drop"
   ) |>
-  
-  # --- STEP 2: CALCULATE STATS ON POOLED VALUES ---
+
+  # --- STEP 2: CALCULATE STATS — use raw for min to capture negatives ---
   group_by(Treatment, year) |>
   summarise(
-    mean_flux = mean(plot_daily_flux, na.rm = TRUE), # In g N ha d
+    mean_flux = mean(plot_daily_flux, na.rm = TRUE),
     median_flux = median(plot_daily_flux, na.rm = TRUE),
-    min_flux = min(plot_daily_flux, na.rm = TRUE),
+    min_flux = min(plot_daily_flux_raw, na.rm = TRUE),   # negative values preserved
     max_flux = max(plot_daily_flux, na.rm = TRUE),
     .groups = "drop"
   )
@@ -1051,8 +1057,8 @@ daily_flux_stats |>
   summarise(mean = mean(mean_flux))
 
 print(daily_flux_stats)
-# Create formatted table
-supp_table2 <- daily_flux_stats %>%
+# Create formatted table — round to nearest whole number per McDaniel
+supp_table1 <- daily_flux_stats %>%
   gt() %>%
   cols_label(
     Treatment = "Treatment",
@@ -1064,16 +1070,16 @@ supp_table2 <- daily_flux_stats %>%
   ) %>%
   fmt_number(
     columns = c(mean_flux, median_flux, min_flux, max_flux),
-    decimals = 1  # 1 decimal place is enough for grams (e.g., 16.6)
+    decimals = 0  # Round to nearest whole number
   ) %>%
   tab_header(
-    title = md("**Supplementary Table 2. Daily N₂O Flux Statistics**"),
-    subtitle = "Values represent plot-level averages (pooled row/interrow) in g N ha⁻¹ d⁻¹"
+    title = md("**Table S1. Daily N₂O Flux Statistics**"),
+    subtitle = "Values represent plot-level averages (pooled row/interrow) in g N₂O-N ha⁻¹ d⁻¹. Min values include negative (uptake) fluxes."
   ) %>%
   cols_align(align = "center", columns = everything()) %>%
   cols_align(align = "left", columns = "Treatment")
 
-print(supp_table2)
+print(supp_table1)
 
 # save 
 
@@ -1191,43 +1197,86 @@ t_test_result <- t.test(diff_analysis$Diff)
 print("--- Paired T-Test Results (Reviewer Check) ---")
 print(t_test_result)
 
-# 4. PLOT A: Absolute Fluxes (Your Request)
-p1_boxplot <- ggplot(row_interrow_comparison, aes(x = Treatment, y = gnha_day_no_negative, color = rowvs_interrow)) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
-  geom_jitter(position = position_jitterdodge(), alpha = 0.5, size = 0.7) +
-  facet_wrap(~ year) +
-  labs(
-    y = expression("N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
-    color = "Row Position"
-  ) +
-  scale_color_manual(values = c("Interrow" = "grey40", "Row" = "grey80")) +
-  theme_publication() +
-  theme(
-    legend.position = "top",
-    axis.text.x = element_blank(),
-    axis.ticks.x = element_blank(),
-    axis.line.x = element_blank(),
-    axis.title.x = element_blank()
-  )
+# 4. PLOTS: Split by year for red/blue title bars, swap Row/Interrow order
+# Row first (control), Interrow second
+row_interrow_comparison <- row_interrow_comparison |>
+  mutate(rowvs_interrow = factor(rowvs_interrow, levels = c("Row", "Interrow")))
 
-# 5. PLOT B: The "Difference" Plot (For Reviewer MM2)
-p2_diff <- ggplot(diff_analysis, aes(x = Treatment, y = Diff, fill = Treatment)) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  #geom_violin(alpha = 0.5) +
-  geom_boxplot(width = 0.1, outlier.shape = NA) +
-  facet_wrap(~ year, labeller = labeller(year = c())) +
-  labs(
-    y = expression("Difference (g N ha"^-1*" day"^-1*")")
-  ) +
+diff_analysis <- diff_analysis |>
+  mutate(year = year(date))
+
+# --- Panel (a): Absolute fluxes, 2023 ---
+p_s5a <- ggplot(filter(row_interrow_comparison, year == 2023),
+                aes(x = gnha_day_no_negative, color = rowvs_interrow)) +
+  geom_boxplot(aes(y = Treatment), outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(aes(y = Treatment), position = position_jitterdodge(jitter.width = 0.2),
+              alpha = 0.5, size = 0.7) +
+  scale_x_log10() +
+  annotation_logticks(sides = "b") +
+  scale_color_manual(values = c("Row" = "grey80", "Interrow" = "grey40"),
+                     name = "Position") +
+  labs(y = "", x = expression("N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
+       tag = "(a)", title = "2023") +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "top",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                   color = "#E41A1C"))
+
+# --- Panel (b): Absolute fluxes, 2024 ---
+p_s5b <- ggplot(filter(row_interrow_comparison, year == 2024),
+                aes(x = gnha_day_no_negative, color = rowvs_interrow)) +
+  geom_boxplot(aes(y = Treatment), outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(aes(y = Treatment), position = position_jitterdodge(jitter.width = 0.2),
+              alpha = 0.5, size = 0.7) +
+  scale_x_log10() +
+  annotation_logticks(sides = "b") +
+  scale_color_manual(values = c("Row" = "grey80", "Interrow" = "grey40"),
+                     name = "Position") +
+  labs(y = "", x = expression("N"[2]*"O Flux (g N ha"^-1*" day"^-1*")"),
+       tag = "(b)", title = "2024") +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                   color = "#377EB8"))
+
+# --- Panel (c): Difference histogram, 2023 ---
+p_s5c <- ggplot(filter(diff_analysis, year == 2023),
+                aes(x = Diff, fill = Treatment)) +
+  geom_histogram(bins = 30, alpha = 0.7, position = "identity", color = "black",
+                 linewidth = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 0.6) +
   scale_fill_manual(values = treatment_colors) +
-  theme_publication() +
-  theme(legend.position = "none")
+  labs(x = expression("Difference (g N ha"^-1*" day"^-1*")"),
+       y = "Count", tag = "(c)", title = "2023") +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                   color = "#E41A1C"))
 
-# Display Plots
-print(p1_boxplot)
-print(p2_diff)
+# --- Panel (d): Difference histogram, 2024 ---
+p_s5d <- ggplot(filter(diff_analysis, year == 2024),
+                aes(x = Diff, fill = Treatment)) +
+  geom_histogram(bins = 30, alpha = 0.7, position = "identity", color = "black",
+                 linewidth = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 0.6) +
+  scale_fill_manual(values = treatment_colors) +
+  labs(x = expression("Difference (g N ha"^-1*" day"^-1*")"),
+       y = "Count", tag = "(d)", title = "2024") +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                   color = "#377EB8"))
 
-rowvsinterrow <- p1_boxplot / p2_diff
+# Display & assemble
+rowvsinterrow <- (p_s5a | p_s5b) / (p_s5c | p_s5d)
 rowvsinterrow
 
 
@@ -1272,7 +1321,7 @@ leaching_data <- read_csv("data/clean_leaching.csv") |>
 leaching_data |>
   group_by(treatment, year, date) |>
   summarise(
-    max_nitrate = max(nitrate_mg_ml, na.rm = TRUE),
+    max_nitrate = max(nitrate_mg_l, na.rm = TRUE),
     .groups = "drop"
   ) |>
   slice_max(max_nitrate, by = c(treatment, year))
@@ -1494,29 +1543,36 @@ ggsave("figures/figure3_leaching_precip.png", fig_leaching,
 ```{r}
 # Prepare concentration data
 conc_data <- leaching_data |>
-  filter(!is.na(nitrate_mg_ml), !is.na(ammonia_mg_l)) |>
+  filter(!is.na(nitrate_mg_l), !is.na(ammonia_mg_l)) |>
   mutate(
-    # Rename for clarity (nitrate_mg_ml is actually mg/L based on your earlier note)
-    nitrate_mg_l = nitrate_mg_ml,
     total_inorganic_n = nitrate_mg_l + ammonia_mg_l,
     prop_nitrate = nitrate_mg_l / total_inorganic_n
   ) |>
   filter(total_inorganic_n > 0) # Avoid division issues
 
-# Sorghum vs Sorghum + WCC only
-conc_sr <- conc_data |>
-  filter(treatment %in% c("Sorghum", "Sorghum + Rye")) |>
+# All treatments with renamed labels and order
+conc_all <- conc_data |>
   mutate(
-    Treatment = if_else(treatment == "Sorghum + Rye", "Sorghum + WCC", "Sorghum"),
-    Treatment = factor(Treatment, levels = c("Sorghum", "Sorghum + WCC"))
+    Treatment = case_when(
+      treatment == "Corn"          ~ "Maize",
+      treatment == "Soy"           ~ "Soybean",
+      treatment == "Sorghum + Rye" ~ "Sorghum + WCC",
+      TRUE                         ~ treatment
+    ),
+    Treatment = factor(Treatment,
+                       levels = c("Maize", "Soybean", "Sorghum", "Sorghum + WCC"))
   )
 
-# Means for vertical lines
-conc_means <- conc_sr |>
-  group_by(Treatment) |>
-  summarise(mean_no3 = mean(nitrate_mg_l, na.rm = TRUE), .groups = "drop")
+# Also keep Sorghum vs WCC subset for t-test
+conc_sr <- conc_all |>
+  filter(Treatment %in% c("Sorghum", "Sorghum + WCC"))
 
-# t-test on mean concentrations (table)
+# Medians for vertical lines
+conc_medians <- conc_all |>
+  group_by(Treatment) |>
+  summarise(median_no3 = median(nitrate_mg_l, na.rm = TRUE), .groups = "drop")
+
+# t-test on mean concentrations (Sorghum vs WCC)
 ttest <- t.test(nitrate_mg_l ~ Treatment, data = conc_sr)
 ttest_table <- tibble(
   comparison = "Sorghum vs Sorghum + WCC",
@@ -1528,23 +1584,49 @@ ttest_table <- tibble(
   p_value = ttest$p.value
 )
 
-# Density plot (y scaled to percent)
-p_density <- ggplot(conc_sr, aes(x = nitrate_mg_l, fill = Treatment, color = Treatment)) +
+# Subtle colors for Maize/Soybean
+s4_colors <- c("Maize"          = "#B0B0B0",
+               "Soybean"        = "#A8C8E8",
+               "Sorghum"        = "#D8D97AFF",
+               "Sorghum + WCC"  = "#95C36EFF")
+
+# Panel (a): Density plot — all treatments
+p_s4a <- ggplot(conc_all, aes(x = nitrate_mg_l, fill = Treatment, color = Treatment)) +
   geom_density(aes(y = after_stat(density * 100)), alpha = 0.5, linewidth = 0.3) +
-  geom_vline(data = conc_means, aes(xintercept = mean_no3, color = Treatment),
+  geom_vline(data = conc_medians, aes(xintercept = median_no3, color = Treatment),
              linetype = "dashed", linewidth = 0.8) +
   labs(
+    tag = "(a)",
     x = expression(NO[3]^{"-"}*"-N Concentration (mg L"^{-1}*")"),
     y = "Proportion of Measurements (%)",
-    fill = "Treatment",
-    color = "Treatment"
+    fill = "Treatment", color = "Treatment"
   ) +
-  scale_fill_manual(values = treatment_colors) +
-  scale_color_manual(values = treatment_colors) +
+  scale_fill_manual(values = s4_colors) +
+  scale_color_manual(values = s4_colors) +
   theme_publication(base_size = 10) +
-  theme(legend.position = c(0.65, 0.9))
+  theme(legend.position = "top",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft")
 
-p_density
+# Panel (b): Proportion nitrate boxplots — all treatments, y trimmed to 50% min
+p_s4b <- ggplot(conc_all, aes(x = Treatment, y = prop_nitrate * 100, fill = Treatment)) +
+  geom_boxplot(outlier.shape = 1, alpha = 0.7, color = "black") +
+  geom_hline(yintercept = 90, linetype = "dashed", color = "grey50") +
+  coord_cartesian(ylim = c(50, 100)) +
+  scale_fill_manual(values = s4_colors) +
+  labs(
+    tag = "(b)",
+    x = "Treatment",
+    y = expression("NO"[3]^{"-"}*"-N as % of Total Inorganic N")
+  ) +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 0, hjust = 0.5),
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft")
+
+# Combine panels
+fig_s4 <- p_s4a / p_s4b
 
 # T-test table
 ttest_table |>
@@ -1568,8 +1650,9 @@ ttest_table |>
   )
 
 # Save
-ggsave("figures/figureX_nitrate_concentration_proportion.png", p_density,
-       width = 174, height = 110, units = "mm", dpi = 600, bg = "white")
+ggsave("figures/FigureS4_nitrate_concentration_proportion.tiff", fig_s4,
+       width = 174, height = 150, units = "mm", dpi = 600, bg = "white",
+       compression = "lzw")
 
 # Measurement counts by year and plot (concentration data only)
 # Ensure year exists
@@ -1607,6 +1690,85 @@ conc_counts_by_year_treatment |>
     n_measurements = "N Measurements"
   ) |>
   cols_align(align = "center", columns = -treatment)
+```
+
+# Figure S_NEW: Stacked Bar — NH4/NO3 Proportions Over Time
+
+```{r figure-s-nh4-no3-stacked}
+#| message: FALSE
+#| warning: FALSE
+
+# Prepare time-series of NH4 vs NO3 proportions by treatment and sampling date
+nh4_no3_ts <- conc_data |>
+  mutate(
+    date = as.Date(date),
+    year = lubridate::year(date),
+    Treatment = case_when(
+      treatment == "Corn"          ~ "Maize",
+      treatment == "Soy"           ~ "Soybean",
+      treatment == "Sorghum + Rye" ~ "Sorghum + WCC",
+      TRUE                         ~ treatment
+    ),
+    Treatment = factor(Treatment,
+                       levels = c("Maize", "Soybean", "Sorghum", "Sorghum + WCC"))
+  ) |>
+  filter(year %in% c(2023, 2024)) |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    mean_no3 = mean(nitrate_mg_l, na.rm = TRUE),
+    mean_nh4 = mean(ammonia_mg_l, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(total = mean_no3 + mean_nh4,
+         pct_no3 = mean_no3 / total * 100,
+         pct_nh4 = mean_nh4 / total * 100) |>
+  pivot_longer(cols = c(pct_no3, pct_nh4),
+               names_to = "N_form", values_to = "pct") |>
+  mutate(
+    N_form = if_else(N_form == "pct_no3",
+                     "NO\u2083\u207B-N", "NH\u2084\u207A-N"),
+    N_form = factor(N_form, levels = c("NH\u2084\u207A-N", "NO\u2083\u207B-N"))
+  )
+
+# Standardize dates to a common year for overlay
+nh4_no3_ts <- nh4_no3_ts |>
+  mutate(plot_date = as.Date(paste0("2000-", format(date, "%m-%d"))))
+
+# Colors for N forms
+n_form_colors <- c("NO\u2083\u207B-N" = "#4393C3",   # blue
+                    "NH\u2084\u207A-N" = "#D6604D")   # red-orange
+
+# Stacked bar per year
+make_nh4no3_panel <- function(yr, tag_label, year_color) {
+  df <- filter(nh4_no3_ts, year == yr)
+  ggplot(df, aes(x = plot_date, y = pct, fill = N_form)) +
+    geom_col(position = "stack", width = 5, color = NA) +
+    facet_wrap(~ Treatment, nrow = 1) +
+    scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+    scale_fill_manual(values = n_form_colors, name = "N Form") +
+    labs(x = "", y = "Proportion (%)", tag = tag_label,
+         title = as.character(yr)) +
+    coord_cartesian(ylim = c(0, 100)) +
+    theme_publication(base_size = 10) +
+    theme(
+      legend.position = if (tag_label == "(a)") "top" else "none",
+      plot.tag = element_text(face = "bold", size = 11),
+      plot.tag.position = "topleft",
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 12,
+                                 color = year_color),
+      strip.text = element_text(size = 9, face = "bold")
+    )
+}
+
+p_nh4no3_a <- make_nh4no3_panel(2023, "(a)", "#E41A1C")
+p_nh4no3_b <- make_nh4no3_panel(2024, "(b)", "#377EB8")
+
+fig_nh4no3 <- p_nh4no3_a / p_nh4no3_b
+fig_nh4no3
+
+ggsave("figures/FigureS_NH4_NO3_proportions.tiff", fig_nh4no3,
+       width = 174, height = 130, units = "mm", dpi = 600, bg = "white",
+       compression = "lzw")
 ```
 
 # Table 3: Annual Nitrogen Losses
@@ -2534,62 +2696,101 @@ texture <- texture_raw %>%
 # We use 'annual_leaching' from your previous analysis steps
 # Ensure 'drainage_mm' is the correct column name for water volume in your dataset
 plot_hydrology <- annual_leaching %>%
-  # Select key vars. IF YOUR DRAINAGE COL IS NAMED DIFFERENTLY, CHANGE 'drainage_mm' BELOW
-  select(year, plot, treatment, drainage_mm = annual_drainage_mm, leaching_kg_ha = annual_cumulative_leaching) %>% 
+  select(year, plot, treatment, drainage_mm = annual_drainage_mm,
+         leaching_kg_ha = annual_cumulative_leaching) %>%
   left_join(texture, by = c("plot" = "Plot")) %>%
   mutate(
     year = as.factor(year),
-    # Ensure treatment order for coloring
-    treatment = factor(treatment, levels = c("Corn", "Soy", "Sorghum", "Sorghum + Rye"))
+    # Rename Corn → Maize, Soy → Soybean for publication
+    Treatment = case_when(
+      treatment == "Corn"          ~ "Maize",
+      treatment == "Soy"           ~ "Soybean",
+      treatment == "Sorghum + Rye" ~ "Sorghum + WCC",
+      TRUE                         ~ treatment
+    ),
+    Treatment = factor(Treatment,
+                       levels = c("Maize", "Soybean", "Sorghum", "Sorghum + WCC"))
   )
+
+# Subtle colors for Maize/Soybean, standard for Sorghum treatments
+supp_colors <- c("Maize"          = "#B0B0B0",   # gray
+                  "Soybean"        = "#A8C8E8",   # light blue
+                  "Sorghum"        = "#D8D97AFF",
+                  "Sorghum + WCC"  = "#95C36EFF")
+
+supp_shapes <- c("Maize" = 22, "Soybean" = 24,
+                  "Sorghum" = 21, "Sorghum + WCC" = 23)
+
+# Helper: extract per-treatment lm equation + R² annotation labels
+lm_labels <- function(df, xvar, yvar) {
+  df |>
+    group_by(Treatment) |>
+    summarise(
+      lbl = {
+        mod <- lm(get(yvar) ~ get(xvar))
+        b0 <- round(coef(mod)[1], 1)
+        b1 <- round(coef(mod)[2], 2)
+        r2 <- round(summary(mod)$r.squared, 2)
+        paste0("y = ", b1, "x + ", b0, "  R\u00b2 = ", r2)
+      },
+      x_pos = max(get(xvar), na.rm = TRUE),
+      y_pos = max(get(yvar), na.rm = TRUE),
+      .groups = "drop"
+    )
+}
 
 # --- 3. GENERATE PLOTS ---
 
-# PANEL A: Texture vs. Drainage (The "Site Characteristic" Check)
-# Does sandier soil drain more? (Expect positive slope)
-p_texture <- ggplot(plot_hydrology, aes(x = Sand, y = drainage_mm)) +
-  geom_smooth(method = "lm", color = "black", fill = "grey80", alpha = 0.5) +
-  geom_point(aes(fill = treatment), shape = 21, size = 3, color = "black", stroke = 0.5) +
-  scale_fill_manual(values = c("Corn" = "#E69F00", "Soy" = "#D55E00", 
-                               "Sorghum" = "grey70", "Sorghum + Rye" = "#009E73")) +
-  labs(
-    title = "A. Soil Texture vs. Drainage",
-    x = "Sand Content (%)",
-    y = "Annual Drainage (mm)"
-  ) +
-  theme_bw() +
-  theme(legend.position = "none") # Hide legend here, show in Panel B
+# PANEL (a): Drainage vs. N Leaching Load (swapped from old Panel B)
+eq_loss <- lm_labels(plot_hydrology, "drainage_mm", "leaching_kg_ha")
 
-# PANEL B: Drainage vs. N Loss (The "Uncoupling" Effect)
-# Does WCC break the link between water flow and N loss?
 p_loss <- ggplot(plot_hydrology, aes(x = drainage_mm, y = leaching_kg_ha)) +
-  # Add global trend line (dashed) to show the general "Water = Leaching" rule
-  geom_smooth(method = "lm", se = FALSE, color = "grey60", linetype = "dashed") +
-  # Add points
-  geom_point(aes(fill = treatment, shape = treatment), size = 3.5, alpha = 0.9) +
-  # Custom Colors & Shapes
-  scale_fill_manual(values = c("Corn" = "#E69F00", "Soy" = "#D55E00", 
-                               "Sorghum" = "grey70", "Sorghum + Rye" = "#009E73")) +
-  scale_shape_manual(values = c(21, 24, 22, 21)) + # Circle, Triangle, Square, Circle
-  labs(
-    title = "B. Drainage vs. N Leaching Load",
-    x = "Annual Drainage (mm)",
-    y = expression(Annual~NO[3]-N~Leaching~(kg~N~ha^{-1})),
-    fill = "Treatment",
-    shape = "Treatment"
-  ) +
-  theme_bw() +
-  theme(
-    legend.position = "right",
-    legend.box.background = element_rect(color = "black", linewidth = 0.5)
-  )
+  # Per-treatment regression lines
+  geom_smooth(aes(color = Treatment), method = "lm", se = FALSE, linewidth = 0.7) +
+  # Points with shape differences
+  geom_point(aes(fill = Treatment, shape = Treatment), size = 3.5, alpha = 0.9,
+             color = "black", stroke = 0.4) +
+  scale_fill_manual(values = supp_colors) +
+  scale_color_manual(values = supp_colors) +
+  scale_shape_manual(values = supp_shapes) +
+  # Annotate per-treatment equations
+  geom_text(data = eq_loss, aes(x = -Inf, y = Inf, label = lbl, color = Treatment),
+            hjust = -0.05, vjust = seq(1.5, by = 1.3, length.out = nrow(eq_loss)),
+            size = 2.8, show.legend = FALSE, fontface = "italic") +
+  labs(tag = "(a)", x = "Annual Drainage (mm)",
+       y = expression("Cumulative Leached N (kg N ha"^-1*")"),
+       fill = "Treatment", shape = "Treatment", color = "Treatment") +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "top",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft")
+
+# PANEL (b): Texture vs. Drainage (swapped from old Panel A)
+eq_tex <- lm_labels(plot_hydrology, "Sand", "drainage_mm")
+
+p_texture <- ggplot(plot_hydrology, aes(x = Sand, y = drainage_mm)) +
+  geom_smooth(aes(color = Treatment), method = "lm", se = FALSE, linewidth = 0.7) +
+  geom_point(aes(fill = Treatment, shape = Treatment), size = 3.5, alpha = 0.9,
+             color = "black", stroke = 0.4) +
+  scale_fill_manual(values = supp_colors) +
+  scale_color_manual(values = supp_colors) +
+  scale_shape_manual(values = supp_shapes) +
+  geom_text(data = eq_tex, aes(x = -Inf, y = Inf, label = lbl, color = Treatment),
+            hjust = -0.05, vjust = seq(1.5, by = 1.3, length.out = nrow(eq_tex)),
+            size = 2.8, show.legend = FALSE, fontface = "italic") +
+  labs(tag = "(b)", x = "Sand Content (%)",
+       y = "Annual Drainage (mm)") +
+  theme_publication(base_size = 10) +
+  theme(legend.position = "none",
+        plot.tag = element_text(face = "bold", size = 11),
+        plot.tag.position = "topleft")
 
 # --- 4. COMBINE & SAVE ---
-figure_4 <- p_texture + p_loss + 
-  plot_layout(widths = c(1, 1.5)) # Give Panel B a bit more width
+figure_s3 <- p_loss + p_texture + plot_layout(widths = c(1, 1))
 
-print(figure_4)
-ggsave("FigureS_Hydrology.png", figure_4, width = 10, height = 5)
+print(figure_s3)
+ggsave("FigureS_Hydrology.tiff", figure_s3, width = 174, height = 90,
+       units = "mm", dpi = 600, compression = "lzw")
 ```
 
 ```{r}
@@ -2623,24 +2824,29 @@ p_hydro <- ggplot(hydrograph_data, aes(x = date, y = cumulative_mm_reset, group 
   # Split by Year to see seasonal differences clearly
   facet_wrap(~year, scales = "free_x") +
   
-  # Colors
-  scale_color_manual(values = c("Corn" = "#E69F00", 
-                                "Soy" = "#D55E00", 
-                                "Sorghum" = "grey70", 
-                                "Sorghum + Rye" = "#009E73")) +
-  
-  # Labels
-  labs(title = "Seasonal Cumulative Drainage Dynamics",
-       subtitle = "Steep slopes indicate active drainage periods; flat lines indicate dry periods.",
-       x = "Date",
+  # Rename treatments for display
+  aes(color = case_when(
+    treatment == "Corn"          ~ "Maize",
+    treatment == "Soy"           ~ "Soybean",
+    treatment == "Sorghum + Rye" ~ "Sorghum + WCC",
+    TRUE                         ~ treatment
+  )) +
+
+  # Colors — subtle Maize/Soybean
+  scale_color_manual(values = c("Maize"          = "#B0B0B0",
+                                "Soybean"        = "#A8C8E8",
+                                "Sorghum"        = "#D8D97AFF",
+                                "Sorghum + WCC"  = "#95C36EFF")) +
+
+  # Labels — no title per McDaniel
+  labs(x = "Date",
        y = "Cumulative Drainage (mm)",
        color = "Treatment") +
-  
+
   # Theme
-  theme_bw() +
+  theme_publication(base_size = 10) +
   theme(
-    legend.position = "bottom",
-    axis.text.x = element_text(angle = 45, hjust = 1)
+    legend.position = "bottom"
   )
 
 print(p_hydro)
@@ -2668,7 +2874,7 @@ print(summary(tex_stats))
 # Model: Leaching ~ Drainage + Treatment + (Drainage * Treatment)
 
 # First, set "Sorghum + Rye" as the reference group to see if others differ from IT
-plot_hydrology$treatment <- relevel(plot_hydrology$treatment, ref = "Sorghum + Rye")
+plot_hydrology$treatment <- relevel(factor(plot_hydrology$treatment), ref = "Sorghum + Rye")
 
 uncouple_stats <- lm(leaching_kg_ha ~ drainage_mm * treatment, data = plot_hydrology)
 
@@ -2677,6 +2883,65 @@ print(anova(uncouple_stats))
 
 # detailed coefficients to see specific slope differences
 print(summary(uncouple_stats))
+```
+
+# Table S2: Cover Crop Biomass
+
+```{r table-s2-cover-crop-biomass}
+#| message: FALSE
+#| warning: FALSE
+
+library(readxl)
+library(gt)
+
+# Load rye cover crop biomass data
+rye_biomass <- bind_rows(
+
+  read_excel("data/BiomassData_Rye_20230522.xlsx") |> mutate(year = 2023),
+  read_excel("data/BiomassData_Rye_20240515.xlsx") |> mutate(year = 2024)
+) |>
+  mutate(
+    year          = factor(year, levels = c(2023, 2024)),
+    Plot          = as.character(`Plot ID`),
+    biomass_mg_ha = (`Dry Mass + Dry Bag Mass` - `Dry Bag Mass`) * 0.01
+  ) |>
+  select(year, Plot, biomass_mg_ha)
+
+# Summary stats by year
+rye_biomass_summary <- rye_biomass |>
+  group_by(year) |>
+  summarise(
+    n     = n(),
+    mean  = mean(biomass_mg_ha, na.rm = TRUE),
+    sd    = sd(biomass_mg_ha, na.rm = TRUE),
+    se    = sd / sqrt(n),
+    min   = min(biomass_mg_ha, na.rm = TRUE),
+    max   = max(biomass_mg_ha, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Publication table
+table_s2 <- rye_biomass_summary |>
+  gt() |>
+  cols_label(
+    year = "Year",
+    n    = "n",
+    mean = "Mean",
+    sd   = "SD",
+    se   = "SE",
+    min  = "Min",
+    max  = "Max"
+  ) |>
+  fmt_number(columns = c(mean, sd, se, min, max), decimals = 2) |>
+  tab_header(
+    title = md("**Table S2. Cereal Rye (Cover Crop) Biomass**"),
+    subtitle = "Biomass in Mg ha⁻¹, measured at termination"
+  ) |>
+  cols_align(align = "center", columns = everything())
+
+table_s2
+
+gtsave(table_s2, "SubmissionFiguresTables/Table_S2_Cover_Crop_Biomass.rtf")
 ```
 
 # Save Tables and Figures
@@ -2720,14 +2985,14 @@ ggsave(
 # Figure 5: Nitrate Speciation
 ggsave(
   "SubmissionFiguresTables/SuppFigurex_Nitrate_Concentration_Proportion.png",
-  plot = p_density,
+  plot = fig_nh4no3,
   width = 174, height = 200, units = "mm", dpi = 600, bg = "white"
 )
 
 # Figure 6: Hydrology
 ggsave(
   "SubmissionFiguresTables/Figure6_Hydrology.png",
-  plot = figure_4,
+  plot = p_hydro,
   width = 174, height = 87, units = "mm", dpi = 600, bg = "white"
 )
 
@@ -2741,7 +3006,7 @@ ggsave(
 # --- TABLES ---
 # Table 1: Daily Flux Statistics (Supplementary)
 gtsave(
-  supp_table2,
+  supp_table1,
   "SubmissionFiguresTables/Table_S1_Daily_Flux_Statistics.rtf"
 )
 

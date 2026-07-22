@@ -1,0 +1,122 @@
+---
+title: "Table S1: Daily N₂O Flux Summary Statistics"
+format:
+  html:
+    self-contained: true
+    toc: false
+  docx:
+    reference-doc: default
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(gt)
+```
+
+```{r load-data}
+flux_data <- read_csv("data/cleaned_flux_data.csv") |>
+  mutate(date = as.Date(date))
+```
+
+```{r table-s1}
+# Determine whether a raw (pre-zero-clamped) flux column exists.
+# 'gnha_day_no_negative' clamps negatives to 0; 'gnha_day' (if present)
+# retains the original measured value including negative (uptake) fluxes.
+raw_col <- if ("gnha_day" %in% names(flux_data)) "gnha_day" else "gnha_day_no_negative"
+
+table_s1_data <- flux_data |>
+  filter(treatment %in% c("Sorghum", "Sorghum + Rye", "Corn", "Soy")) |>
+  mutate(
+    Treatment = case_when(
+      treatment == "Corn"          ~ "Maize",
+      treatment == "Soy"           ~ "Soybean",
+      treatment == "Sorghum + Rye" ~ "Sorghum + WCC",
+      TRUE                         ~ treatment
+    ),
+    Treatment = factor(Treatment,
+                       levels = c("Maize", "Soybean", "Sorghum", "Sorghum + WCC")),
+    year      = year(date),
+    raw_flux  = .data[[raw_col]]
+  ) |>
+  filter(year %in% c(2023, 2024)) |>
+
+  # Pool row & interrow to plot-level daily means
+  group_by(date, plot, Treatment, year) |>
+  summarise(
+    plot_flux     = mean(gnha_day_no_negative, na.rm = TRUE),
+    plot_flux_raw = mean(raw_flux,             na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+
+  # Summary statistics per Treatment × Year
+  group_by(year, Treatment) |>
+  summarise(
+    n        = sum(!is.na(plot_flux)),
+    mean_sd  = sprintf("%d (%d)",
+                       round(mean(plot_flux,     na.rm = TRUE)),
+                       round(sd(plot_flux,       na.rm = TRUE))),
+    minimum  = round(min(plot_flux_raw,          na.rm = TRUE)),   # includes negatives
+    q25      = round(quantile(plot_flux, 0.25,   na.rm = TRUE)),
+    median   = round(median(plot_flux,           na.rm = TRUE)),
+    q75      = round(quantile(plot_flux, 0.75,   na.rm = TRUE)),
+    maximum  = round(max(plot_flux,              na.rm = TRUE)),
+    .groups  = "drop"
+  )
+
+# Publication-ready table
+gt_s1 <- table_s1_data |>
+  gt(groupname_col = "year", rowname_col = "Treatment") |>
+  tab_header(
+    title    = md("**Table S1.** Summary statistics of daily nitrous oxide (N₂O) fluxes grouped by year and treatment"),
+    subtitle = md("Values in g N₂O-N ha⁻¹ d⁻¹. Mean and standard deviation rounded to nearest whole number. Minimum includes negative (net uptake) flux values.")
+  ) |>
+  cols_label(
+    n       = "Sample Number",
+    mean_sd = md("Mean (Std. Dev.)"),
+    minimum = md("Minimum"),
+    q25     = md("25^th^ Quantile"),
+    median  = "Median",
+    q75     = md("75^th^ Quantile"),
+    maximum = "Maximum"
+  ) |>
+  cols_align(align = "center", columns = -Treatment) |>
+  cols_align(align = "left",   columns = Treatment)  |>
+  tab_style(
+    style    = cell_text(weight = "bold"),
+    locations = cells_row_groups()
+  ) |>
+  tab_style(
+    style    = cell_borders(sides = "top", color = "black", weight = px(2)),
+    locations = cells_row_groups()
+  ) |>
+  tab_options(
+    table.font.names        = "Times New Roman",
+    table.font.size         = 11,
+    column_labels.font.weight = "bold",
+    row_group.font.weight   = "bold",
+    heading.align           = "left",
+    table.border.top.style  = "solid",
+    table.border.top.width  = px(2),
+    table.border.bottom.style = "solid",
+    table.border.bottom.width = px(2)
+  ) |>
+  tab_footnote(
+    footnote  = md("† Sorghum + WCC = Sorghum with Winter Cover Crop (cereal rye). Maize and Soybean are the reference grain crops in the rotation."),
+    locations = cells_column_labels(columns = Treatment)
+  )
+
+gt_s1
+```
+
+```{r save}
+# Save as RTF (opens cleanly in Word) and PNG
+gtsave(gt_s1, "SubmissionFiguresTables/Table_S1_Daily_Flux_Statistics.rtf")
+gtsave(gt_s1, "SubmissionFiguresTables/Table_S1_Daily_Flux_Statistics.png",
+       expand = 10)
+```

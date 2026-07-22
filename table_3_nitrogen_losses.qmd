@@ -1,0 +1,364 @@
+---
+title: "Table 3: Annual Nitrogen Losses"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(gt)
+library(emmeans)
+library(multcomp)
+
+plot_area_ha <- (120 * 160) / 107639.1041671
+
+# Display order and rename map
+trt_levels <- c("Maize", "Soy", "Sorghum", "Sorghum + WCC")
+trt_rename  <- c("Corn" = "Maize", "Soy" = "Soy",
+                 "Sorghum" = "Sorghum", "Sorghum + Rye" = "Sorghum + WCC")
+
+# Preza-Fontes environmental cost coefficients
+cost_n2o      <- 16.18   # USD kg-1 N2O-N
+cost_leaching <- 18.54   # USD kg-1 NO3-N
+```
+
+# Data
+
+## N₂O — interpolated cumulative per plot
+
+```{r n2o-data}
+flux_data <- read_csv("data/cleaned_flux_data.csv", show_col_types = FALSE) |>
+  mutate(date = as.Date(date), year = year(date))
+
+daily_flux_summary <- flux_data |>
+  group_by(plot, rowvs_interrow, treatment, year, date) |>
+  summarise(mean_flux = mean(gnha_day_no_negative, na.rm = TRUE), .groups = "drop") |>
+  arrange(plot, rowvs_interrow, treatment, year, date)
+
+interpolate_daily_flux <- function(data) {
+  combos <- data |> distinct(plot, rowvs_interrow, treatment, year)
+  purrr::map_dfr(seq_len(nrow(combos)), function(i) {
+    combo <- combos[i, ]
+    sub   <- data |>
+      filter(plot == combo$plot, rowvs_interrow == combo$rowvs_interrow,
+             treatment == combo$treatment, year == combo$year) |>
+      arrange(date)
+    all_days <- seq(as.Date(paste0(combo$year, "-01-01")),
+                    as.Date(paste0(combo$year, "-12-31")), by = "day")
+    valid <- sub[!is.na(sub$mean_flux), ]
+    flux_interp <- if (nrow(valid) >= 2)
+      approx(as.numeric(valid$date), valid$mean_flux,
+             xout = as.numeric(all_days), rule = 1)$y
+    else rep(NA_real_, length(all_days))
+    tibble(plot = combo$plot, rowvs_interrow = combo$rowvs_interrow,
+           treatment = combo$treatment, year = combo$year,
+           date = all_days, interpolated_flux = flux_interp)
+  })
+}
+
+interpolated_flux_data <- interpolate_daily_flux(daily_flux_summary)
+
+# Annual cumulative N2O per plot (g → kg); average across row/interrow
+plot_n2o <- interpolated_flux_data |>
+  group_by(plot, rowvs_interrow, treatment, year) |>
+  summarise(annual_cumulative_n2o = sum(interpolated_flux, na.rm = TRUE) / 1000,
+            .groups = "drop") |>
+  filter(is.finite(annual_cumulative_n2o)) |>
+  group_by(plot, treatment, year) |>
+  summarise(annual_cumulative_n2o = mean(annual_cumulative_n2o, na.rm = TRUE),
+            .groups = "drop") |>
+  mutate(Treatment = factor(recode(treatment, !!!trt_rename), levels = trt_levels))
+```
+
+## Leaching — cumulative per plot
+
+```{r leaching-data}
+leaching_data <- read_csv("data/clean_leaching.csv", show_col_types = FALSE) |>
+  clean_names() |>
+  mutate(date = as.Date(date), year = year(date)) |>
+  filter(year %in% c(2023, 2024))
+
+annual_leaching <- leaching_data |>
+  group_by(plot, treatment, year) |>
+  summarise(
+    annual_cumulative_leaching = (max(cumulative_n_loss_mg, na.rm = TRUE) / 1e6) / plot_area_ha,
+    .groups = "drop"
+  ) |>
+  filter(is.finite(annual_cumulative_leaching), annual_cumulative_leaching >= 0) |>
+  mutate(plot      = as.character(plot),
+         Treatment = factor(recode(treatment, !!!trt_rename), levels = trt_levels))
+```
+
+## Plot-level combined N loss and EDC
+
+```{r combined-data}
+plot_combined <- plot_n2o |>
+  mutate(plot = as.character(plot)) |>
+  inner_join(annual_leaching, by = c("plot", "treatment", "year")) |>
+  mutate(
+    Treatment       = Treatment.x,   # both identical after recode
+    combined_n_loss = annual_cumulative_n2o + annual_cumulative_leaching,
+    edc             = (annual_cumulative_n2o * cost_n2o) +
+                      (annual_cumulative_leaching * cost_leaching)
+  )
+
+cat("Plots with both N2O and leaching data:\n")
+count(plot_combined, year, Treatment)
+```
+
+# Tukey Letter Helper
+
+```{r letter-helper}
+compute_letters <- function(df, value_col) {
+  d    <- df |> filter(!is.na(.data[[value_col]]))
+  trts <- unique(as.character(d$Treatment))
+  if (length(trts) < 2) return(tibble(Treatment = factor(trts, trt_levels), letter = "a"))
+
+  fit <- lm(as.formula(paste(value_col, "~ Treatment")), data = d)
+  emm <- emmeans(fit, ~ Treatment)
+  cld(emm, adjust = "tukey", Letters = letters) |>
+    as_tibble() |>
+    transmute(Treatment, letter = gsub("\\s+", "", .group))
+}
+```
+
+# Summary Statistics with Tukey Letters
+
+```{r summaries}
+summarise_col <- function(df, value_col, result_col, with_letters = TRUE) {
+  letters_df <- if (with_letters) {
+    df |> group_by(year) |>
+      group_modify(~ compute_letters(.x, value_col)) |> ungroup()
+  } else NULL
+
+  out <- df |>
+    group_by(Treatment, year) |>
+    summarise(mean_v = mean(.data[[value_col]], na.rm = TRUE),
+              sd_v   = sd(.data[[value_col]],   na.rm = TRUE),
+              .groups = "drop")
+
+  if (with_letters) {
+    out <- out |> left_join(letters_df, by = c("Treatment", "year")) |>
+      mutate(!!result_col := sprintf("%.2f \u00b1 %.2f (%s)", mean_v, sd_v, letter))
+  } else {
+    out <- out |>
+      mutate(!!result_col := sprintf("$%.1f \u00b1 %.1f", mean_v, sd_v))
+  }
+  out
+}
+
+# Annual summaries
+n2o_summary      <- summarise_col(plot_n2o,       "annual_cumulative_n2o",      "n2o_result")
+leach_summary    <- summarise_col(annual_leaching, "annual_cumulative_leaching",  "leaching_result")
+combined_summary <- summarise_col(plot_combined,   "combined_n_loss",             "combined_result")
+edc_summary      <- summarise_col(plot_combined,   "edc",                         "edc_result",
+                                  with_letters = FALSE)
+
+# Add Tukey letters to EDC separately (same groupings as combined)
+edc_letters <- plot_combined |> group_by(year) |>
+  group_modify(~ compute_letters(.x, "edc")) |> ungroup()
+edc_summary <- plot_combined |>
+  group_by(Treatment, year) |>
+  summarise(mean_v = mean(edc, na.rm = TRUE), sd_v = sd(edc, na.rm = TRUE), .groups = "drop") |>
+  left_join(edc_letters, by = c("Treatment", "year")) |>
+  mutate(edc_result = sprintf("$%.2f \u00b1 %.2f (%s)", mean_v, sd_v, letter))
+```
+
+# Two-Year Totals (plot-level sums → ANOVA → Tukey letters)
+
+```{r two-year-totals}
+# Two-year rows: sum of annual treatment means, SD propagated in quadrature.
+# This is consistent for all treatments regardless of plot rotation.
+
+# Per-plot sums used only for Tukey letters (captures within-treatment variability
+# across plots; for rotating crops the plots are year-specific but the ranking is
+# still meaningful).
+plot_two_year <- plot_combined |>
+  group_by(plot, treatment, Treatment) |>
+  summarise(
+    n2o_2yr      = sum(annual_cumulative_n2o,      na.rm = TRUE),
+    leaching_2yr = sum(annual_cumulative_leaching,  na.rm = TRUE),
+    combined_2yr = sum(combined_n_loss,             na.rm = TRUE),
+    edc_2yr      = sum(edc,                         na.rm = TRUE),
+    .groups = "drop"
+  )
+
+get_two_year_letters <- function(value_col) {
+  fit <- lm(as.formula(paste(value_col, "~ Treatment")), data = plot_two_year)
+  emm <- emmeans(fit, ~ Treatment)
+  cld(emm, adjust = "tukey", Letters = letters) |>
+    as_tibble() |>
+    transmute(Treatment, letter = trimws(.group))
+}
+
+# Displayed two-year mean = sum of annual means; SD = quadrature from annual SDs.
+# annual_df must have columns: Treatment, year, mean_v, sd_v
+make_two_year <- function(result_col, annual_df, letters_df, dollar = FALSE) {
+  annual_df |>
+    group_by(Treatment) |>
+    summarise(
+      mean_v = sum(mean_v,      na.rm = TRUE),
+      sd_v   = sqrt(sum(sd_v^2, na.rm = TRUE)),
+      .groups = "drop"
+    ) |>
+    left_join(letters_df, by = "Treatment") |>
+    mutate(
+      year = "2023\u20132024",
+      !!result_col := if (dollar)
+        sprintf("$%.2f \u00b1 %.2f (%s)", mean_v, sd_v, letter)
+      else
+        sprintf("%.2f \u00b1 %.2f (%s)", mean_v, sd_v, letter)
+    )
+}
+
+two_yr_letters_n2o      <- get_two_year_letters("n2o_2yr")
+two_yr_letters_leach    <- get_two_year_letters("leaching_2yr")
+two_yr_letters_combined <- get_two_year_letters("combined_2yr")
+two_yr_letters_edc      <- get_two_year_letters("edc_2yr")
+
+n2o_two_year      <- make_two_year("n2o_result",      n2o_summary,      two_yr_letters_n2o)
+leach_two_year    <- make_two_year("leaching_result",  leach_summary,    two_yr_letters_leach)
+combined_two_year <- make_two_year("combined_result",  combined_summary, two_yr_letters_combined)
+edc_two_year      <- make_two_year("edc_result",       edc_summary,      two_yr_letters_edc, dollar = TRUE)
+```
+
+# ANOVA — Source of Variation
+
+```{r anova}
+fmt_p <- function(p) case_when(
+  p < 0.001 ~ "< 0.001",
+  p < 0.01  ~ sprintf("%.3f", p),
+  TRUE       ~ sprintf("%.2f",  p)
+)
+
+aov_n2o      <- aov(annual_cumulative_n2o      ~ factor(year) * Treatment, data = plot_n2o)
+aov_leach    <- aov(annual_cumulative_leaching  ~ factor(year) * Treatment, data = annual_leaching)
+aov_combined <- aov(combined_n_loss             ~ factor(year) * Treatment, data = plot_combined)
+aov_edc      <- aov(edc                         ~ factor(year) * Treatment, data = plot_combined)
+
+source_variation <- tibble(
+  Treatment        = c("Treatment", "Year", "Year \u00d7 Treatment"),
+  n2o_result       = map_chr(summary(aov_n2o)[[1]][2:1,      "Pr(>F)"] |> c(summary(aov_n2o)[[1]][3, "Pr(>F)"]), fmt_p),
+  leaching_result  = map_chr(summary(aov_leach)[[1]][2:1,    "Pr(>F)"] |> c(summary(aov_leach)[[1]][3, "Pr(>F)"]), fmt_p),
+  combined_result  = map_chr(summary(aov_combined)[[1]][2:1, "Pr(>F)"] |> c(summary(aov_combined)[[1]][3, "Pr(>F)"]), fmt_p),
+  edc_result       = map_chr(summary(aov_edc)[[1]][2:1,      "Pr(>F)"] |> c(summary(aov_edc)[[1]][3, "Pr(>F)"]), fmt_p),
+  year             = "",
+  year_order       = 4
+)
+```
+
+# Assemble Table
+
+```{r assemble}
+join_cols <- function(...) {
+  reduce(list(...), left_join, by = c("Treatment", "year"))
+}
+
+annual_rows <- join_cols(
+  n2o_summary      |> mutate(year = as.character(year)) |> select(Treatment, year, n2o_result),
+  leach_summary    |> mutate(year = as.character(year)) |> select(Treatment, year, leaching_result),
+  combined_summary |> mutate(year = as.character(year)) |> select(Treatment, year, combined_result),
+  edc_summary      |> mutate(year = as.character(year)) |> select(Treatment, year, edc_result)
+) |> mutate(year_order = case_when(year == "2023" ~ 1, year == "2024" ~ 2))
+
+totals_rows <- join_cols(
+  n2o_two_year      |> select(Treatment, year, n2o_result),
+  leach_two_year    |> select(Treatment, year, leaching_result),
+  combined_two_year |> select(Treatment, year, combined_result),
+  edc_two_year      |> select(Treatment, year, edc_result)
+) |> mutate(year_order = 3)
+
+separator <- tibble(
+  year = "Source of Variation", year_order = 3.5, Treatment = factor(NA, trt_levels),
+  n2o_result = "", leaching_result = "", combined_result = "", edc_result = ""
+)
+
+table3_complete <- bind_rows(annual_rows, totals_rows, separator, source_variation) |>
+  mutate(Treatment = as.character(Treatment)) |>
+  arrange(year_order, factor(Treatment, c(trt_levels, "Treatment", "Year", "Year \u00d7 Treatment"))) |>
+  mutate(
+    year_display   = case_when(
+      year == "Source of Variation" ~ year,
+      year != lag(year, default = "") ~ as.character(year),
+      TRUE ~ ""
+    ),
+    is_new_section = year != lag(year, default = "") & year != "Source of Variation"
+  )
+```
+
+# Table 3
+
+```{r table3}
+table3_gt <- table3_complete |>
+  select(
+    Year              = year_display,
+    Treatment,
+    `NO3-N Leaching`  = leaching_result,
+    `N2O Loss`        = n2o_result,
+    `Combined N Loss` = combined_result,
+    `EDC`             = edc_result,
+    is_new_section
+  ) |>
+  gt() |>
+  tab_header(title = md("**Table 3. Annual nitrogen losses and environmental costs**")) |>
+  cols_label(
+    `NO3-N Leaching`  = md("NO<sub>3</sub>\u2013N Leaching<br>(kg N ha<sup>\u22121</sup>)"),
+    `N2O Loss`        = md("N<sub>2</sub>O Loss<br>(kg N ha<sup>\u22121</sup>)"),
+    `Combined N Loss` = md("Combined N Loss<br>(kg N ha<sup>\u22121</sup>)"),
+    `EDC`             = md("Total Environmental Cost<br>(USD ha<sup>\u22121</sup>)")
+  ) |>
+  tab_style(
+    style     = cell_borders(sides = "top", weight = px(1), color = "gray"),
+    locations = cells_body(rows = is_new_section == TRUE)
+  ) |>
+  tab_style(
+    style     = cell_borders(sides = "top", weight = px(2)),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) |>
+  tab_style(
+    style     = cell_text(weight = "bold"),
+    locations = cells_body(rows = Year == "Source of Variation")
+  ) |>
+  cols_width(
+    Year              ~ px(95),
+    Treatment         ~ px(140),
+    `NO3-N Leaching`  ~ px(160),
+    `N2O Loss`        ~ px(155),
+    `Combined N Loss` ~ px(160),
+    `EDC`             ~ px(165)
+  ) |>
+  cols_hide(columns = is_new_section) |>
+  cols_align(align = "center", columns = -c(Year, Treatment)) |>
+  tab_footnote(
+    footnote = paste0(
+      "Values are mean \u00b1 SD. Letters indicate Tukey HSD groups within year (\u03b1\u2009=\u20090.05). ",
+      "Two-year row is the sum of annual means; SD propagated in quadrature. ",
+      "Combined N Loss = N\u2082O\u2013N + NO\u2083\u2013N leaching. ",
+      "Environmental costs based on Preza-Fontes cost coefficients: ",
+      "$", cost_n2o, " kg\u207b\u00b9 N\u2082O\u2013N and $", cost_leaching, " kg\u207b\u00b9 NO\u2083\u2013N."
+    )
+  )
+
+table3_gt
+```
+
+# Save
+
+```{r save}
+gtsave(table3_gt, "SubmissionFiguresTables/Table_3_Nitrogen_Losses.rtf")
+```

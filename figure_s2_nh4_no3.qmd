@@ -1,0 +1,270 @@
+---
+title: "Figure S2: Soil NH4/NO3 Proportions Over Time"
+author: "Jared Flater et al."
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: cosmo
+    code-fold: show
+    code-tools: true
+    self-contained: true
+    fig-width: 10
+    fig-height: 7
+execute:
+  warning: false
+  message: false
+  echo: true
+---
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(lubridate)
+library(patchwork)
+
+# ── Publication theme (matches figure_1_weather.qmd) ──────────────────────────
+theme_publication <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "Arial") +
+    theme(
+      panel.background   = element_rect(fill = "#ffffffff", color = NA),
+      plot.background    = element_rect(fill = "#ffffffff", color = NA),
+      strip.background   = element_rect(fill = alpha("#A5CAD2", 0.2)),
+      panel.grid.major   = element_line(color = alpha("#B7B5B3", 0.2)),
+      panel.grid.minor   = element_blank(),
+      panel.spacing      = unit(1.5, "lines"),
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 1),
+      text               = element_text(color = "#000000ff"),
+      axis.text          = element_text(color = "#000000ff", size = base_size * 0.8),
+      axis.title         = element_text(size = base_size),
+      axis.title.x       = element_text(margin = margin(t = 8)),
+      axis.title.y       = element_text(margin = margin(r = 8)),
+      axis.text.x        = element_text(angle = 45, hjust = 1, vjust = 1),
+      axis.line          = element_line(color = "black", linewidth = 0.5),
+      axis.ticks         = element_line(color = "black", linewidth = 0.5),
+      legend.position    = "top",
+      legend.justification = "center",
+      legend.direction   = "horizontal",
+      legend.box         = "horizontal",
+      legend.margin      = margin(b = 1, unit = "pt"),
+      legend.box.margin  = margin(b = 1, unit = "pt"),
+      legend.text        = element_text(size = base_size * 0.9),
+      legend.title       = element_text(size = base_size),
+      legend.key.width   = unit(0.8, "cm"),
+      legend.key.height  = unit(0.3, "cm"),
+      strip.text         = element_text(size = base_size * 0.9, face = "bold")
+    )
+}
+
+# ── Year colors (from figure_1_weather.qmd) ────────────────────────────────────
+year_colors <- c("2023" = "#E41A1C", "2024" = "#377EB8")
+
+# ── N-form fill colors (ASCII keys — avoids unicode factor-matching failures) ──
+# Label display is handled separately in scale_fill_manual(labels = ...)
+n_form_colors <- c(
+  "NO3-N" = "#4393C3",  # blue
+  "NH4-N" = "#D6604D"   # red-orange
+)
+
+n_form_labels <- c(
+  "NO3-N" = "NO\u2083\u207B-N",
+  "NH4-N" = "NH\u2084\u207A-N"
+)
+```
+
+# Data
+
+```{r data}
+soil_raw <- read_csv("data/soils/cleaned_soil_data.csv") |>
+  mutate(
+    date = as.Date(date),
+    year = year(date),
+    Treatment = case_when(
+      treatment == "Corn"          ~ "Maize",
+      treatment == "Soy"           ~ "Soybean",
+      treatment == "Sorghum + Rye" ~ "Sorghum + WCC",
+      TRUE                         ~ treatment
+    ),
+    Treatment = factor(Treatment,
+                       levels = c("Maize", "Soybean", "Sorghum", "Sorghum + WCC"))
+  ) |>
+  filter(
+    year %in% c(2023, 2024),
+    !is.na(nitrate_mg_per_kg),
+    !is.na(ammonia_mg_per_kg),
+    # Exclude confirmed outlier: plot 14, 2023-05-18 — ammonia_mg_per_kg = 234,
+    # ~100x higher than all other plots on that date (likely extraction error).
+    !(plot == "14" & date == as.Date("2023-05-18"))
+  )
+```
+
+# Sample Count Diagnostic
+
+```{r sample-counts}
+# Always verify balanced replication before summarising across plots.
+# Note: plot assignments rotate between years (crop rotation design).
+# Maize and Soybean swap plot IDs across years; Sorghum treatments are stable.
+# Soybean has n=3 plots in 2023 (its own plots) and n=4 in 2024 (former Maize plots).
+soil_raw |>
+  count(year, date, Treatment, plot) |>
+  count(year, date, Treatment, name = "n_plots") |>
+  arrange(year, date, Treatment) |>
+  print(n = 40)
+```
+
+# Option A — Stacked Proportion Bars
+
+```{r figure-a}
+soil_prop <- soil_raw |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    mean_no3 = mean(nitrate_mg_per_kg,  na.rm = TRUE),
+    mean_nh4 = mean(ammonia_mg_per_kg, na.rm = TRUE),
+    .groups  = "drop"
+  ) |>
+  mutate(
+    total   = mean_no3 + mean_nh4,
+    pct_no3 = mean_no3 / total * 100,
+    pct_nh4 = mean_nh4 / total * 100
+  ) |>
+  pivot_longer(
+    cols      = c(pct_nh4, pct_no3),   # NH4 first so it stacks on the bottom
+    names_to  = "N_form",
+    values_to = "pct"
+  ) |>
+  mutate(
+    # Use plain ASCII keys — these must exactly match names in n_form_colors
+    N_form = if_else(N_form == "pct_no3", "NO3-N", "NH4-N"),
+    N_form = factor(N_form, levels = c("NH4-N", "NO3-N"))
+  )
+
+make_prop_panel <- function(yr, tag_label) {
+  df        <- filter(soil_prop, year == yr)
+  dates     <- sort(unique(df$date))
+  date_labs <- format(dates, "%b %d")
+
+  ggplot(df, aes(x = factor(date), y = pct, fill = N_form)) +
+    geom_col(position = "stack", color = "white", linewidth = 0.3, width = 0.7) +
+    facet_wrap(~ Treatment, nrow = 1) +
+    scale_x_discrete(labels = date_labs) +
+    # coord_cartesian clips after stat computation — avoids bars being dropped
+    # by scale limits before stacking is finalized
+    coord_cartesian(ylim = c(0, 100)) +
+    scale_y_continuous(
+      labels = function(x) paste0(x, "%"),
+      breaks = seq(0, 100, 25)
+    ) +
+    scale_fill_manual(
+      values = n_form_colors,
+      labels = n_form_labels,
+      name   = "N Form"
+    ) +
+    labs(
+      tag   = tag_label,
+      x     = "",
+      y     = "Proportion of Inorganic N (%)",
+      title = as.character(yr)
+    ) +
+    theme_publication(base_size = 10) +
+    theme(
+      legend.position   = if (tag_label == "(a)") "top" else "none",
+      plot.tag          = element_text(face = "bold", size = 11),
+      plot.tag.position = "topleft",
+      plot.title        = element_text(
+        hjust = 0.5, face = "bold", size = 11,
+        color = year_colors[as.character(yr)]
+      )
+    )
+}
+
+fig_s2_prop <- make_prop_panel(2023, "(a)") / make_prop_panel(2024, "(b)")
+fig_s2_prop
+```
+
+```{r save-a}
+ggsave(
+  "SubmissionFiguresTables/FigureS2_option_A_proportions.tiff",
+  plot        = fig_s2_prop,
+  width       = 174, height = 160, units = "mm", dpi = 600, bg = "white",
+  compression = "lzw"
+)
+```
+
+# Option B — Raw Concentration Bars (mg kg⁻¹)
+
+```{r figure-b}
+soil_conc <- soil_raw |>
+  group_by(Treatment, year, date) |>
+  summarise(
+    mean_no3 = mean(nitrate_mg_per_kg,  na.rm = TRUE),
+    mean_nh4 = mean(ammonia_mg_per_kg, na.rm = TRUE),
+    se_no3   = sd(nitrate_mg_per_kg,  na.rm = TRUE) / sqrt(n()),
+    se_nh4   = sd(ammonia_mg_per_kg, na.rm = TRUE) / sqrt(n()),
+    .groups  = "drop"
+  ) |>
+  pivot_longer(
+    cols      = c(mean_no3, mean_nh4),
+    names_to  = "N_form",
+    values_to = "mean_conc"
+  ) |>
+  mutate(
+    se     = if_else(N_form == "mean_no3", se_no3, se_nh4),
+    # Use plain ASCII keys — must exactly match names in n_form_colors
+    N_form = if_else(N_form == "mean_no3", "NO3-N", "NH4-N"),
+    N_form = factor(N_form, levels = c("NH4-N", "NO3-N"))
+  )
+
+make_conc_panel <- function(yr, tag_label) {
+  df        <- filter(soil_conc, year == yr)
+  dates     <- sort(unique(df$date))
+  date_labs <- format(dates, "%b %d")
+
+  ggplot(df, aes(x = factor(date), y = mean_conc, fill = N_form)) +
+    geom_col(
+      position = position_dodge(width = 0.8),
+      width = 0.7, color = "white", linewidth = 0.3
+    ) +
+    geom_errorbar(
+      aes(ymin = mean_conc - se, ymax = mean_conc + se),
+      position = position_dodge(width = 0.8),
+      width = 0.25, linewidth = 0.4, color = "grey30"
+    ) +
+    facet_wrap(~ Treatment, nrow = 1) +
+    scale_x_discrete(labels = date_labs) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+    scale_fill_manual(
+      values = n_form_colors,
+      labels = n_form_labels,
+      name   = "N Form"
+    ) +
+    labs(
+      tag   = tag_label,
+      x     = "",
+      y     = expression("Inorganic N (mg kg"^{-1}*" soil)"),
+      title = as.character(yr)
+    ) +
+    theme_publication(base_size = 10) +
+    theme(
+      legend.position   = if (tag_label == "(a)") "top" else "none",
+      plot.tag          = element_text(face = "bold", size = 11),
+      plot.tag.position = "topleft",
+      plot.title        = element_text(
+        hjust = 0.5, face = "bold", size = 11,
+        color = year_colors[as.character(yr)]
+      )
+    )
+}
+
+fig_s2_conc <- make_conc_panel(2023, "(a)") / make_conc_panel(2024, "(b)")
+fig_s2_conc
+```
+
+```{r save-b}
+ggsave(
+  "SubmissionFiguresTables/FigureS2_option_B_concentrations.tiff",
+  plot        = fig_s2_conc,
+  width       = 174, height = 160, units = "mm", dpi = 600, bg = "white",
+  compression = "lzw"
+)
+```
